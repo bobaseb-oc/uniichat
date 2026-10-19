@@ -12,8 +12,9 @@
 // One executable per platform (the releases uniichat.com/install.sh
 // installs); once a day it asks bend-lang.com's /check (update_check) and
 // notes a newer one. `unii serve` runs the server it carries. The server:
-// the url given, else $UNII_URL, else uniichat.com; each server's session
-// is a file of its own (TOKEN).
+// the url given, else $UNII_URL, else http://127.0.0.1:8788 (this build;
+// upstream's is uniichat.com); each server's session is a file of its own
+// (TOKEN).
 //
 // Usage: USAGE (`unii help` prints it).
 
@@ -77,13 +78,13 @@ const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
-const OURS   = "https://uniichat.com";
+const OURS   = "http://127.0.0.1:8788";
 const SERVER = (ARGS.find((a) => WEB.test(a)) ?? process.env.UNII_URL ?? OURS).replace(/\/$/, "");
 const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
 
-const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else https://uniichat.com)
+const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http://127.0.0.1:8788)
        unii login [url]     sign in
-       unii update [url]    install the latest unii (curl | sh, shown first)
+       unii update [url]    disabled in this build (it ran curl | sh)
        unii version         this unii's version
        unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
                             (another port: set UNII_SITE to its address too),
@@ -1077,12 +1078,11 @@ function update_newer(ver: string): boolean {
   return a.length === 3 && a.every(Number.isInteger) && (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0;
 }
 
-// runs the installer again: the one way unii changes. The command prints
-// first, so one can run it alone.
+// this build never installs by `curl | sh` (the hosted installer): it
+// changes only as its source does
 function update_run(url: string): void {
-  const cmd = "curl -fsSL " + url + "/install.sh | sh";
-  console.error(cmd);
-  process.exitCode = child.spawnSync("sh", ["-c", cmd], { stdio: "inherit" }).status ?? 1;
+  console.error("unii update is disabled in this build; pull its source instead (not " + url + "/install.sh)");
+  process.exitCode = 1;
 }
 
 // Main

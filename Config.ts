@@ -20,6 +20,10 @@ const PATH = DIR + "/config.json";
 const FILE: Record<string, string> = fs.existsSync(PATH) ? JSON.parse(fs.readFileSync(PATH, "utf8")) : {};
 
 export const SITE    = config_get("site", "http://127.0.0.1:8788").replace(/\/$/, "");
+
+// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM)
+export const ANTHROPIC_URL = config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, "");
+
 export const OFFER: Offer = {
   vendors : config_vendors(config_get("vendors", "claude-api")),
   models  : config_get("models", LABELS.join()).split(",").map((m) => m.trim()),
@@ -35,6 +39,10 @@ export const PICK       = config_run("pick", config_get("pick", "claude-api:sonn
 export const COMPACTOR  = config_run("compactor", config_get("compactor", "claude-api:haiku-5.5:high:slow"));
 export const AGENTS     = config_get("agents", "") ? config_run("agents", config_get("agents", "")) : null;
 export const WORKERS    = Number(config_get("workers", "0"));
+
+// the most web searches a request of a turn or a subagent runs (0: no web
+// tool, as on a proxy whose backend has none, e.g. LiteLLM on Bedrock)
+export const SEARCHES   = Number(config_get("searches", "10"));
 
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and

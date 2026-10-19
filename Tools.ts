@@ -103,8 +103,8 @@ export type Tools = {
 
 export const MAIN = config.WORK + "/main";
 
-// the most web searches a request of a turn or a subagent runs
-export const SEARCHES = 10;
+// the most web searches a request of a turn or a subagent runs (Config.ts)
+export const SEARCHES = config.SEARCHES;
 
 // the chats' tools, by their secret; where those moved went (Tools.give);
 // what a chat on its way here waits on (Tools.coming); the server, once

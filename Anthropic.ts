@@ -14,6 +14,7 @@
 import type { Ask, Img } from "./AskAI.ts";
 import { Agent, type Emit, type Entry, type Item, type Step, type Tool, type Use, type Wire } from "./Agent.ts";
 import { Price, type Usage } from "./Price.ts";
+import { ANTHROPIC_URL } from "./Config.ts";
 
 // Types
 // =====
@@ -35,7 +36,7 @@ type State = {
 const MARK  = { type: "ephemeral" };
 const WEB   = { type: "web_search_20260318", name: "web_search" };
 const FAST  = "fast-mode-2026-02-01";
-const COUNT = "https://api.anthropic.com/v1/messages/count_tokens";
+const COUNT = ANTHROPIC_URL + "/v1/messages/count_tokens";
 
 // Anthropic
 // =========
@@ -301,7 +302,7 @@ export namespace Anthropic {
   export const wire: Wire<State> = {
     key     : "anthropic",
     idle    : 300e3,
-    url     : "https://api.anthropic.com/v1/messages",
+    url     : ANTHROPIC_URL + "/v1/messages",
     headers : Anthropic.headers,
     body    : Anthropic.body,
     count   : Anthropic.count,
