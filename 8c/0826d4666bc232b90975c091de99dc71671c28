@@ -1,0 +1,39 @@
+Lsp.test.ts
+  s_aa481f18fbfa7b::t_7226063c71f09f 1-152
+  s_aa481f18fbfa7b::t_d9c924a2258e64 153-187
+tasks/todo.md
+  s_aa481f18fbfa7b::t_1e602cf8aafc97 56-57
+  s_aa481f18fbfa7b::t_1225b26be192b2 58-65
+Lsp.ts
+  s_aa481f18fbfa7b::t_7afd1ab24cca37 1-169
+  s_aa481f18fbfa7b::t_a7d98e6d4fa31d 170-423
+Mcp.ts
+  s_aa481f18fbfa7b::t_dace26d03bb090 357-359,361-380,382-390,396,401-402,405-409,424
+  s_aa481f18fbfa7b::t_531761afdec9d2 46
+Tools.ts
+  s_aa481f18fbfa7b::t_5a586fe780f387 34,231-237,385,387,413-415
+local/mcp.test.ts
+  s_aa481f18fbfa7b::t_077c465baf87e8 85-98
+local/mcp.ts
+  s_aa481f18fbfa7b::t_93dad87e27b2dc 12-13,17-18,28,39-40,43,80-91,97-98,100
+local/tools/package-lock.json
+  s_aa481f18fbfa7b::t_4a7d13169208da 11
+local/tools/package.json
+  s_aa481f18fbfa7b::t_8753ff662a28ed 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c0826d4666bc232b90975c091de99dc71671c28",
+  "prompts": {},
+  "sessions": {
+    "s_aa481f18fbfa7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eaa68c24-0e31-4f10-a1be-d2372b6a82d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
