@@ -1,0 +1,31 @@
+Import.ts
+  s_23eecaba18a11d::t_66d4deac1c8f8c 109-118
+Local.test.ts
+  s_23eecaba18a11d::t_06cb97c2042ed9 102-109
+Term.ts
+  s_23eecaba18a11d::t_2d2bcedd9552c7 131-132
+local/prime/export.test.ts
+  s_23eecaba18a11d::t_49a8911937faee 1-30
+local/prime/export.ts
+  s_23eecaba18a11d::t_10f8b219f6cf4b 1-28
+local/unii-local.sh
+  s_23eecaba18a11d::t_56181b863b2e4e 76-81,122-123
+tasks/todo.md
+  s_23eecaba18a11d::t_6265f57880bcf5 26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b844360516edd0fa9de72192d9deccff16aa442c",
+  "prompts": {},
+  "sessions": {
+    "s_23eecaba18a11d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fd85f5d4-a94c-4674-8111-58dc6044d6f2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
