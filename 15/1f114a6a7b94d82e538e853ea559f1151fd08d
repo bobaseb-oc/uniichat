@@ -1,0 +1,31 @@
+tasks/todo.md
+  s_aa481f18fbfa7b::t_3392c7a4ae8ac4 40-45
+  s_aa481f18fbfa7b::t_ae224843646f8f 25
+  s_aa481f18fbfa7b::t_631def68b255cc 37-39,46-49
+Mcp.ts
+  s_aa481f18fbfa7b::t_dc02f6c7a1bfe4 1-44,46-186,189,191-218
+  s_aa481f18fbfa7b::t_3b09ccce939140 187-188,190
+  s_aa481f18fbfa7b::t_c18b45e9f851e6 219-449
+  s_aa481f18fbfa7b::t_598c535fdc6bbe 45
+Mcp.test.ts
+  s_aa481f18fbfa7b::t_13ef3abd6311c2 199-208
+  s_aa481f18fbfa7b::t_c485933cb0f2f5 1-80,83-198,209-231,235-237
+  s_aa481f18fbfa7b::t_092f3a280efa54 81-82
+  s_aa481f18fbfa7b::t_1e212f9d5edac9 232-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "151f114a6a7b94d82e538e853ea559f1151fd08d",
+  "prompts": {},
+  "sessions": {
+    "s_aa481f18fbfa7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eaa68c24-0e31-4f10-a1be-d2372b6a82d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
