@@ -44,6 +44,9 @@ export const WORKERS    = Number(config_get("workers", "0"));
 // tool, as on a proxy whose backend has none, e.g. LiteLLM on Bedrock)
 export const SEARCHES   = Number(config_get("searches", "10"));
 
+// a SearXNG on this computer, for the `search` tool (Search.ts; "": none)
+export const SEARXNG    = config_get("searxng_url", "");
+
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
