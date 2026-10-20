@@ -79,10 +79,16 @@ server_exec() {
     bun "$ROOT/Server.ts" "$PORT"
 }
 
+# Claude Code's logs staged anew (local/prime/logs.ts), redacted, so the
+# chat's import, asked at its start, finds what was said since the last
+logs_make() {
+  bun "$ROOT/local/prime/logs.ts" || echo "unii: Claude Code logs not staged" >&2
+}
+
 # the terminal: its /import reads only the redacted copy of Claude Code's
 # logs (local/prime/redact.ts), never ~/.claude or ~/.codex themselves
 term_exec() {
-  exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" bun "$ROOT/Term.ts" "$@"
+  exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" UNII_IMPORT_ASK="${UNII_IMPORT_ASK:-}" bun "$ROOT/Term.ts" "$@"
 }
 
 # the MCP servers the agents may use (local/mcp.ts): Claude Code's and
@@ -146,6 +152,6 @@ case "${1:-}" in
   log)   exec tail -f "$LOG" ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;
   mcp-logout) mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" --logout ;;
-  "")    server_start && term_exec "$URL" ;;
+  "")    server_start && logs_make && UNII_IMPORT_ASK=1 term_exec "$URL" ;;
   *)     term_exec "$@" ;;
 esac

@@ -131,12 +131,18 @@ function memories(): Line[] {
   return projects().flatMap((p) => dir_md(p + "/memory")).map((path) => ({ take: true, kind: "memory" as Kind, bytes: size(path), path }));
 }
 
+// a project folder of claude-mem's own sessions (its observer's), never
+// a person's chat
+export function mem_logs(dir: string): boolean {
+  return dir.includes("claude-mem-observer");
+}
+
 // each project's logs (top level: no subagents'), but claude-mem's own
 function chatlogs(): Line[] {
   return projects().flatMap((dir) => {
     const logs = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
     const bytes = logs.reduce((n, f) => n + size(dir + "/" + f), 0);
-    const mem = dir.includes("claude-mem-observer");
+    const mem = mem_logs(dir);
     return logs.length === 0 ? [] : [{ take: !mem, kind: "chatlog" as Kind, bytes, path: dir, note: logs.length + " logs" + (mem ? ", claude-mem's own" : "") }];
   });
 }

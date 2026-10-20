@@ -70,7 +70,16 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
    - [x] Merged into local/litellm at the user's request (2026-10-20), before the checklist was run
    - [ ] User: run the checklist in tasks/atlassian-oauth.md; answer the scope question
 
+## Ask to import new Claude Code chats at each start
+- [x] Tests first: `local/prime/logs.test.ts` (new/grown restaged, unchanged kept, claude-mem and manifest "-" skipped, env secret never staged)
+- [x] `local/prime/logs.ts` + shared `stage_log` (redact.ts) and `mem_logs` (collect.ts)
+- [x] Term: `UNII_IMPORT_ASK=1` runs the `/import claude` dry run at the first view, silent when nothing is new
+- [x] Wrapper: plain `unii` runs `logs_make`, then the terminal with the ask on
+- [x] Live: sync 25 restaged / 170 kept in 2.2 s, then 0 / 195 in 0.13 s; the terminal showed "Found 500 new messages … about $1.13 … /import claude go"
+- [ ] Not checked live: the silent case (needs nothing new, i.e. after that import)
+
 ## Later
+- Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.
 - Upstream bug to report: Bun 1.3.8 DecompressionStream hangs on a Bun.file slice stream (Import.ts zip_file).
 - Bigger import: tool I/O, older/full chat history, more pdf/xlsx, subagent transcripts.

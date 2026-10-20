@@ -271,7 +271,8 @@ function term_send(t: Term, msg: View.Client, sent?: View.Sent): void {
 }
 
 // a message of the server: to the view, then to the jobs and the page;
-// the update note comes under the first view, where it is seen
+// the import's ask (UNII_IMPORT_ASK) comes under the first view, where
+// it is seen
 function term_hear(t: Term, msg: View.Server): void {
   const first = msg.$ === "view" && t.v.parts.length === 0;
   const was   = t.v.page;
@@ -286,6 +287,9 @@ function term_hear(t: Term, msg: View.Server): void {
   term_print(t, msg);
   if (first) {
     term_history(t);
+    if (process.env.UNII_IMPORT_ASK === "1") {
+      void term_import(t, "claude", true);
+    }
   }
   term_draw(t);
   if (msg.$ === "state") {
@@ -546,7 +550,9 @@ async function term_export(t: Term): Promise<void> {
 // Import.Want: since a day; tools; -#n: not session n): without go,
 // what it finds and costs (sessions: and the list); with go, sent;
 // pause, resume: the import running
-async function term_import(t: Term, arg: string): Promise<void> {
+// ask: as asked at the start (UNII_IMPORT_ASK): it says nothing unless
+// there is something new to import
+async function term_import(t: Term, arg: string, ask = false): Promise<void> {
   if (/^(pause|resume)$/.test(arg)) {
     return term_send(t, { $: "go", on: arg === "resume" });
   }
@@ -559,7 +565,9 @@ async function term_import(t: Term, arg: string): Promise<void> {
     term_note(t, "Not understood. " + HOW);
     return;
   }
-  term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
+  if (!ask) {
+    term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
+  }
   const read = await Promise.all([...IMPORTS.map(term_sessions), ...files.map(export_sessions)]).catch((e) => String(e.message ?? e));
   if (typeof read === "string") {
     term_note(t, "Not imported: " + read);
@@ -576,7 +584,9 @@ async function term_import(t: Term, arg: string): Promise<void> {
   const plan  = Import.import_plan(sessions, want, old, View.view_count(t.v));
   const found = "Found " + Import.import_count(plan.msgs, "new ") + ". ";
   if (plan.msgs === 0) {
-    term_note(t, plan.first === "" ? Import.OLD : found + HOW);
+    if (!ask) {
+      term_note(t, plan.first === "" ? Import.OLD : found + HOW);
+    }
     return;
   }
   if (!words.includes("go")) {

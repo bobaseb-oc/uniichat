@@ -89,6 +89,17 @@ export function redact_json(line: string, secrets: string[], hits: Hits = {}): {
   return { text: JSON.stringify(walk(j)), hits };
 }
 
+// a Claude Code log staged: its lines redacted (those no JSON dropped, as
+// the importer drops them), dated as its source, so a later sync
+// (logs.ts) sees whether it changed
+export function stage_log(src: string, dst: string, secrets: string[], hits: Hits = {}): Hits {
+  const lines = fs.readFileSync(src, "utf8").split("\n").flatMap((line) => redact_json(line, secrets, hits)?.text ?? []);
+  fs.writeFileSync(dst, lines.join("\n") + "\n", { mode: 0o600 });
+  const { atime, mtime } = fs.statSync(src);
+  fs.utimesSync(dst, atime, mtime);
+  return hits;
+}
+
 // Extract
 // =======
 
@@ -179,8 +190,7 @@ if (import.meta.main) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const f of fs.readdirSync(l.path).filter((f) => f.endsWith(".jsonl"))) {
       const hits: Hits = {};
-      const out = fs.readFileSync(l.path + "/" + f, "utf8").split("\n").flatMap((line) => redact_json(line, secrets, hits)?.text ?? []);
-      fs.writeFileSync(dir + "/" + f, out.join("\n") + "\n", { mode: 0o600 });
+      stage_log(l.path + "/" + f, dir + "/" + f, secrets, hits);
       add(l.path + "/" + f, hits);
       logs += 1;
     }
