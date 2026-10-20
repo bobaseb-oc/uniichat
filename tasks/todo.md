@@ -64,7 +64,11 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
    - [x] Proof: 89/89 tests; 5 mutations each fail a test
    - [x] pyright told the nearest `.venv` at or above the root (uv workspaces): agent-foundations unresolved imports 4 → 0
    - Later: `Mcp.ts` has the same idle-mid-request pattern (unreachable with defaults)
-4. [ ] Atlassian OAuth draft (red zone, separate branch, user drives)
+4. Atlassian OAuth: red zone, user drives
+   - [x] Draft on branch `local/atlassian-oauth` (36e97d8): Auth.ts, `unii mcp-login`; spec, invariants I1-I9, checklist in tasks/atlassian-oauth.md there
+   - [x] Proof: 99/99 tests; 10 invariant mutations each fail a test; live discovery passes all checks
+   - [x] Merged into local/litellm at the user's request (2026-10-20), before the checklist was run
+   - [ ] User: run the checklist in tasks/atlassian-oauth.md; answer the scope question
 
 ## Later
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.
