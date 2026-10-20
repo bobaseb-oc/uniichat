@@ -22,7 +22,7 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 
 - [x] Live rules: `@`-imports in `rules`; local/rules.md imports ~/.claude/CLAUDE.md + repo-file instruction
 - [x] Skills index (local/skills.ts → ~/.unii/skills.md, 66 skills) imported by the rules
-- [ ] MCP client (context7, Atlassian, Playwright…): separate plan; Atlassian sign-in is a red zone (user drives)
+- [ ] MCP client, browsers, LSP: see "MCP, browsers, LSP" below
 - [ ] Restart server after the import (loads live rules + skills)
 
 ## Prime the memory tree
@@ -33,6 +33,19 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 - [x] Local estimate: 763 sessions, 9,404 msgs, 10.2 MB ≈ $23.44
 - [x] `/import` estimate → user go-ahead → import (running, started by the user; includes instruction files)
 - [ ] Recall check
+
+## MCP, browsers, LSP
+Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the user after each phase)
+1. `Mcp.ts` → verify: `bun test Mcp.test.ts`; each test fails with its feature reverted
+   - [x] Tests first: fake HTTP server (JSON, SSE), fake stdio server
+   - [x] Paging, names (64-char cap, hash suffix, unique), schema cleanup
+   - [x] Errors: won't start, missing ${VAR}, timeout, isError, bad JSON; one line, no secret
+   - [x] Children: own process groups, killed by `Mcp.end()`; pid-file sweep (start time checked)
+   - [x] Proof: 10/10 pass, full suite 72/72; 15 mutations, each fails ≥1 test; no leftover processes
+   - Note: tests need `ps` and local ports, so they run outside the Claude Code sandbox
+2. [ ] Wiring: Tools/Config, local/mcp.ts, mcp.extra.json, local/tools lockfile, claude-mem excluded
+3. [ ] `Lsp.ts` and the `lsp` tool
+4. [ ] Atlassian OAuth draft (red zone, separate branch, user drives)
 
 ## Later
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.
