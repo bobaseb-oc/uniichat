@@ -32,6 +32,7 @@ let tools = [
   { name: "pid", inputSchema: { type: "object" } },
   { name: "grow", inputSchema: { type: "object" } },
   { name: "dot.ted", inputSchema: { type: "object" } },
+  { name: "leak", inputSchema: { type: "object" } },
   { name: LONG + "one", inputSchema: { type: "object" } },
   { name: LONG + "two", inputSchema: { type: "object" } },
 ];
@@ -48,6 +49,7 @@ for await (const line of console) {
     case "pic": send({ id: m.id, result: { content: [{ type: "text", text: "a pic" }, { type: "image", data: "iVBOR", mimeType: "image/png" }, { type: "audio", data: "x" }] } }); break;
     case "bad": send({ id: m.id, result: { ...text("it broke"), isError: true } }); break;
     case "slow": break;
+    case "leak": send({ id: m.id, result: text(String(process.env.MCP_TEST_LEAK) + " " + (process.env.HOME ? "home" : "nohome")) }); break;
     case "noise": process.stdout.write("not json\\n"); send({ id: m.id, result: text("quiet") }); break;
     case "pid": {
       const kid = Bun.spawn(["sleep", "60"]);
@@ -97,7 +99,8 @@ function http(sse: boolean, broken = false) {
   return { seen, server, stop: () => srv.stop(true) };
 }
 
-const env = { FAKE_VAR: "from-env", TOKEN: SECRET };
+const VARS: Record<string, string> = { FAKE_VAR: "from-env", TOKEN: SECRET };
+const env = (name: string) => VARS[name];
 const go = () => new AbortController().signal;
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const wait = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
@@ -234,4 +237,47 @@ test("the next start kills children a crashed unii left, only if each is still t
   expect(other.signalCode).toBe(null); // a killed child stays a zombie (alive) until reaped
   expect(fs.readFileSync(file, "utf8")).toBe("");
   other.kill();
+});
+
+test("a child gets only PATH, HOME, the locale and its own env, never the server's other variables", async () => {
+  process.env.MCP_TEST_LEAK = "leaked";
+  const pool = Mcp.pool([fake()], { env });
+  await Mcp.list(pool, go());
+  const out = await Mcp.call(pool, "mcp__fake__leak", {}, go());
+  delete process.env.MCP_TEST_LEAK;
+  expect(out.text).toBe("undefined home");
+  Mcp.end();
+});
+
+test("load: a placeholder is read from the secrets file as the server opens, never put in the environment", async () => {
+  const h = http(false);
+  const file = DIR + "/mcp.json";
+  fs.writeFileSync(DIR + "/claude.json", JSON.stringify({ mcpServers: { web: { headers: { Authorization: SECRET } } } }));
+  fs.writeFileSync(file, JSON.stringify({ servers: [h.server], secrets: { file: DIR + "/claude.json", vars: { TOKEN: ["mcpServers", "web", "headers", "Authorization"] } } }));
+  const pool = Mcp.load(file);
+  expect(fs.readFileSync(file, "utf8")).not.toContain(SECRET);
+  expect((await Mcp.list(pool, go())).map((s) => s.name)).toEqual(["mcp__web__hi"]);
+  h.stop();
+  expect(h.seen[0].auth).toBe("Bearer " + SECRET);
+  expect(process.env.TOKEN).toBeUndefined();
+  expect(Mcp.load(DIR + "/no-such.json").conns).toEqual([]);
+});
+
+test("Tools: MCP tools are offered to the chat and its subagents, not to computer use; a call goes through", () => {
+  const file = DIR + "/tools-mcp.json";
+  fs.writeFileSync(file, JSON.stringify({ servers: [fake({ env: {} })] }));
+  const code = `
+    import { Tools } from "./Tools.ts";
+    import { Mcp } from "./Mcp.ts";
+    const tools = { agents: new Map([["Sub", { role: { $: "sub", effort: null } }], ["Hands", { role: { $: "hands", device: "d" } }]]) } as any;
+    const go = new AbortController().signal;
+    const has = async (who) => (await Tools.answer(tools, who, "tools/list", {}, go, "")).tools.some((t) => t.name === "mcp__fake__echo");
+    const call = async (who) => (await Tools.answer(tools, who, "tools/call", { name: "mcp__fake__echo", arguments: { s: "hi" } }, go, "")).content[0].text;
+    console.log(JSON.stringify({ main: await has("main"), sub: await has("Sub"), hands: await has("Hands"), call: await call("Sub"), refused: await call("Hands") }));
+    Mcp.end();
+    process.exit(0);
+  `;
+  const { UNII_MCP, ...rest } = process.env;
+  const run = Bun.spawnSync([process.execPath, "-e", code], { cwd: import.meta.dir, env: { ...rest, UNII_DIR: DIR, UNII_MCP: file } });
+  expect(JSON.parse(run.stdout.toString())).toEqual({ main: true, sub: true, hands: false, call: "hi env=undefined", refused: "No tool mcp__fake__echo." });
 });

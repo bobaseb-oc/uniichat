@@ -70,6 +70,7 @@ server_exec() {
     UNII_COMPACTOR="${UNII_COMPACTOR:-claude-api:haiku-5.5:high:slow}" \
     UNII_SEARCHES=0 \
     UNII_SEARXNG_URL="$SEARCH" \
+    UNII_MCP="$DIR/mcp.json" \
     UNII_RULES="${UNII_RULES:-$ROOT/local/rules.md}" \
     UNII_SITE="$URL" \
     bun "$ROOT/Server.ts" "$PORT"
@@ -79,6 +80,16 @@ server_exec() {
 # logs (local/prime/redact.ts), never ~/.claude or ~/.codex themselves
 term_exec() {
   exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" bun "$ROOT/Term.ts" "$@"
+}
+
+# the MCP servers the agents may use (local/mcp.ts): Claude Code's and
+# the extra ones installed in local/tools, no secret written (each is read
+# from ~/.claude.json as its server opens)
+mcp_make() {
+  if [[ ! -d "$ROOT/local/tools/node_modules" ]]; then
+    echo "unii: browser tools are not installed: npm ci --prefix $ROOT/local/tools" >&2
+  fi
+  bun "$ROOT/local/mcp.ts" "$DIR/mcp.json" >&2 || echo "unii: no MCP servers" >&2
 }
 
 # the skills index the rules import (local/skills.ts): what Claude Code
@@ -98,6 +109,7 @@ server_start() {
   fi
   searxng_start
   skills_make
+  mcp_make
   (trap '' HUP && server_exec) >>"$LOG" 2>&1 &
   echo "$!" >"$PID"
   for _ in $(seq 1 50); do
@@ -125,7 +137,7 @@ server_stop() {
 }
 
 case "${1:-}" in
-  serve) searxng_start && skills_make && server_exec ;;
+  serve) searxng_start && skills_make && mcp_make && server_exec ;;
   start) server_start ;;
   stop)  server_stop ;;
   log)   exec tail -f "$LOG" ;;

@@ -43,7 +43,16 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
    - [x] Children: own process groups, killed by `Mcp.end()`; pid-file sweep (start time checked)
    - [x] Proof: 10/10 pass, full suite 72/72; 15 mutations, each fails ≥1 test; no leftover processes
    - Note: tests need `ps` and local ports, so they run outside the Claude Code sandbox
-2. [ ] Wiring: Tools/Config, local/mcp.ts, mcp.extra.json, local/tools lockfile, claude-mem excluded
+2. Wiring and browsers
+   - [x] `local/mcp.ts` → ~/.unii/mcp.json: placeholders + paths into ~/.claude.json (user: read key from json, no Keychain)
+   - [x] `Mcp.load`: secrets read at connect, never in env; children get PATH/HOME/locale only
+   - [x] Tools: main + subagents get mcp__*, hands don't; Server: per-worker pid sweep, end() on exit
+   - [x] claude-mem excluded (shared EXCLUDE); rules line; wrapper `mcp_make`; README `mcp` key
+   - [x] local/tools lockfile (26 pkgs, integrity, no scripts), `npm ci --ignore-scripts` (user approved)
+   - [x] Flags checked: Playwright origins need `:*` for any port; chrome-devtools telemetry + CrUX off, URL allow-list
+   - [x] Live: context7 answers; Playwright page + screenshot image, example.com blocked; chrome-devtools console read, example.com blocked; 0 files in default Chrome profile; 0 processes left; 0 secret hits in mcp.json
+   - [x] Proof: 80/80 tests; 4 new mutations each fail a test
+   - [ ] User: `unii stop` then `unii` (restart loads MCP); then 0 secret hits in server.log
 3. [ ] `Lsp.ts` and the `lsp` tool
 4. [ ] Atlassian OAuth draft (red zone, separate branch, user drives)
 

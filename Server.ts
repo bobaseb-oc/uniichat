@@ -40,6 +40,7 @@ import { Cloud, type Account, type User } from "./Cloud.ts";
 import { Disk } from "./Disk.ts";
 import { Mail } from "./Mail.ts";
 import * as Import from "./Import.ts";
+import { Mcp } from "./Mcp.ts";
 import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
@@ -1665,6 +1666,7 @@ export namespace Main {
     const signed = (session: string) => (send === undefined ? Cloud.wake(Chat.cloud, session) : send({ $: "signed", session }));
     const post = (mail: object) => (send === undefined ? Mail.send(config.KEYS.resend, mail) : Main.mail(send, mail));
     const hand = HAND + Main.index;
+    Mcp.sweep(config.DIR + "/children." + Main.index + ".pids");
     Main.port = port;
     Chat.cloud = Cloud.open(change, signed, post);
     Main.back = await Main.dial(hand);
@@ -1737,6 +1739,7 @@ export namespace Main {
     }
     process.on("exit", () => {
       fs.rmSync(Main.addr, { force: true });
+      Mcp.end();
       for (const chat of Chat.chats.values()) {
         Chat.stop(chat, null);
         Memory.stop(chat.mem);

@@ -8,9 +8,12 @@
 // when it says they changed, so the prompt's tools stay the same. A tool
 // is offered as mcp__<server>__<tool>, cut to 64 characters with a hash
 // if longer, its description marked [server]. A "${VAR}" in a header or
-// env value is read from the pool's env as the server opens: no secret is
-// kept in mcp.json, and none is ever logged. A server that fails to open
-// is skipped, said once in a line; the others go on.
+// env value is looked up as the server opens (load: in the file mcp.json
+// names, ~/.claude.json), never in the environment: no secret is kept in
+// mcp.json, none reaches an agent's shell, none is ever logged. A child
+// gets only PATH, HOME and the locale of this process's environment. A
+// server that fails to open is skipped, said once in a line; the others
+// go on.
 // A server process runs in its own process group (detached), so what it
 // starts (a browser) is in it too; as unii quits, end() ends every group.
 // Their pids and start times are kept in a file (sweep), so the next unii
@@ -59,7 +62,7 @@ type Conn = {
 export type Pool = {
   conns : Conn[];
   tools : Map<string, [Conn, string]>; // by the name offered: its server, its own name
-  env   : Record<string, string | undefined>;
+  env   : (name: string) => string | undefined;
   log   : (line: string) => void;
   wait  : { open: number; call: number; idle: number };
 };
@@ -93,7 +96,43 @@ export namespace Mcp {
   export function pool(servers: Server[], opts: { env?: Pool["env"]; log?: Pool["log"]; open?: number; call?: number; idle?: number } = {}): Pool {
     const conns = servers.map((server) => ({ server, link: null, specs: null, timer: null, off: false }));
     const wait = { open: opts.open ?? OPEN, call: opts.call ?? CALL, idle: opts.idle ?? IDLE };
-    return { conns, tools: new Map(), env: opts.env ?? {}, log: opts.log ?? ((line) => console.error(line)), wait };
+    return { conns, tools: new Map(), env: opts.env ?? (() => undefined), log: opts.log ?? ((line) => console.error(line)), wait };
+  }
+
+  // the pool of mcp.json (local/mcp.ts; none if it is missing): its
+  // servers, its placeholders looked up in its secrets file (a variable
+  // to a path of keys there), read as each server opens
+  export function load(file: string, log?: Pool["log"]): Pool {
+    let got: { servers?: Server[]; secrets?: { file?: string; vars?: Record<string, string[]> } } = {};
+    try {
+      got = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {}
+    const secrets = got.secrets ?? {};
+    const env = (name: string) => {
+      const keys = secrets.vars?.[name];
+      if (secrets.file === undefined || !Array.isArray(keys)) {
+        return undefined;
+      }
+      try {
+        const val = keys.reduce((at: any, k) => at?.[k], JSON.parse(fs.readFileSync(secrets.file, "utf8")));
+        return typeof val === "string" ? val : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    return Mcp.pool(Array.isArray(got.servers) ? got.servers : [], { env, log });
+  }
+
+  // the tools of the servers listed so far (list() lists the rest)
+  export function cached(pool: Pool): Spec[] {
+    return pool.conns.flatMap((c) => c.specs ?? []);
+  }
+
+  // what a child inherits of this process's environment: where programs
+  // are, the user's home and locale; no key of the server's
+  export function base(): Record<string, string> {
+    const keep = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM"];
+    return Object.fromEntries(keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]!]));
   }
 
   // every tool offered, of the servers that open
@@ -238,14 +277,15 @@ export namespace Mcp {
     }
   }
 
-  // values with each "${VAR}" read from env; a variable unset fails, by
+  // values with each "${VAR}" looked up; a variable unset fails, by
   // its name only
   export function fill(vals: Record<string, string>, env: Pool["env"]): Record<string, string> {
     const one = (v: string) => v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
-      if (!env[name]) {
+      const val = env(name);
+      if (!val) {
         throw new Error("needs " + name + ", which is not set.");
       }
-      return env[name];
+      return val;
     });
     return Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, one(String(v))]));
   }
@@ -318,7 +358,7 @@ export namespace Mcp {
   // way (a line that is no JSON is ignored: a server's stray log); its
   // pings answered, its other requests refused
   export function stdio(command: string, args: string[], env: Record<string, string>, changed: () => void): Link {
-    const proc = Bun.spawn([command, ...args], { env: { ...process.env, ...env }, stdin: "pipe", stdout: "pipe", stderr: "ignore", detached: true });
+    const proc = Bun.spawn([command, ...args], { env: { ...Mcp.base(), ...env }, stdin: "pipe", stdout: "pipe", stderr: "ignore", detached: true });
     Mcp.adopt(proc.pid);
     const waits = new Map<number, (msg: any) => void>();
     let n = 0;

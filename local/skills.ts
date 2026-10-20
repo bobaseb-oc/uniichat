@@ -5,7 +5,7 @@
 // at each start, to ~/.unii/skills.md): the user's (~/.claude/skills,
 // links followed) and those of the plugins enabled for the user
 // (settings.json enabledPlugins), at their installed version
-// (installed_plugins.json), never a disabled one, one local to a
+// (installed_plugins.json), never a disabled or excluded one, one local to a
 // project, or an old version left in the cache. A plugin's skill is
 // named "plugin:skill", as Claude Code names it. The agent reads a
 // skill's SKILL.md when a task matches it, as Claude Code does.
@@ -20,6 +20,10 @@ export type Skill = { name: string; description: string; path: string };
 
 // Constants
 // =========
+
+// plugins and MCP servers left out (local/mcp.ts too): claude-mem, whose
+// memory the chat has its own of
+export const EXCLUDE = ["claude-mem"];
 
 // a description's most characters in the index
 const SAY = 250;
@@ -72,7 +76,7 @@ function folder(dir: string, prefix: string): Skill[] {
   });
 }
 
-function json(path: string): any {
+export function json(path: string): any {
   try {
     return JSON.parse(fs.readFileSync(path, "utf8"));
   } catch {
@@ -85,7 +89,7 @@ export function skills(home: string): Skill[] {
   const installed = json(home + "/.claude/plugins/installed_plugins.json").plugins ?? {};
   const plugins = Object.entries(installed).flatMap(([key, entries]) => {
     const user = (Array.isArray(entries) ? entries : [entries]).find((e: any) => e?.scope === "user");
-    return enabled[key] === true && user?.installPath ? folder(user.installPath + "/skills", key.split("@")[0] + ":") : [];
+    return enabled[key] === true && !EXCLUDE.includes(key.split("@")[0]) && user?.installPath ? folder(user.installPath + "/skills", key.split("@")[0] + ":") : [];
   });
   return [...folder(home + "/.claude/skills", ""), ...plugins];
 }

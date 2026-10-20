@@ -1,0 +1,11 @@
+{
+  "name": "unii-local-tools",
+  "private": true,
+  "description": "MCP and language servers for the local build, pinned; install with npm ci --prefix local/tools",
+  "dependencies": {
+    "@playwright/mcp": "0.0.83",
+    "chrome-devtools-mcp": "1.10.1",
+    "typescript": "7.0.2",
+    "typescript-language-server": "6.0.1"
+  }
+}

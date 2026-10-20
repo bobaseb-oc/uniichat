@@ -88,6 +88,8 @@ also be set as the variable `UNII_<KEY>`:
 - `work`: the agents' working dirs on each device (default
   ~/.unii/work).
 - `rules`: a file appended to every system prompt.
+- `mcp`: a JSON file of MCP servers whose tools the agents get (Mcp.ts;
+  local/mcp.ts makes one).
 - `after`: a shell command run after each turn.
 - `workers`: how many processes serve the users (default none: one
   process). With a number, `Server.ts` only routes, behind a proxy that

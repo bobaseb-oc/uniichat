@@ -3,7 +3,8 @@
 // `bun test local/skills.test.ts`. The skills index holds what Claude
 // Code loads: the user's skills (links followed) and the skills of the
 // plugins enabled for the user, at their installed version; nothing
-// disabled, local to a project, or left in the cache.
+// disabled, excluded (claude-mem), local to a project, or left in the
+// cache.
 
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -25,12 +26,14 @@ function home(): string {
   skill(cache + "/mk/on/1.0/skills/stale", "name: stale\ndescription: An old version's.");
   skill(cache + "/mk/off/1.0/skills/beta", "name: beta\ndescription: Disabled plugin.");
   skill(cache + "/mk/here/1.0/skills/gamma", "name: gamma\ndescription: Local to a project.");
+  skill(cache + "/mk/claude-mem/1.0/skills/recall", "name: recall\ndescription: Excluded plugin.");
   skill(cache + "/mk/on/2.0/skills/long", "name: long\ndescription: " + "x".repeat(400));
-  fs.writeFileSync(h + "/.claude/settings.json", JSON.stringify({ enabledPlugins: { "on@mk": true, "off@mk": false, "here@mk": true } }));
+  fs.writeFileSync(h + "/.claude/settings.json", JSON.stringify({ enabledPlugins: { "on@mk": true, "off@mk": false, "here@mk": true, "claude-mem@mk": true } }));
   fs.writeFileSync(h + "/.claude/plugins/installed_plugins.json", JSON.stringify({ version: 2, plugins: {
     "on@mk"   : [{ scope: "user", installPath: cache + "/mk/on/2.0" }],
     "off@mk"  : [{ scope: "user", installPath: cache + "/mk/off/1.0" }],
     "here@mk" : [{ scope: "local", projectPath: "/p", installPath: cache + "/mk/here/1.0" }],
+    "claude-mem@mk" : [{ scope: "user", installPath: cache + "/mk/claude-mem/1.0" }],
   } }));
   return h;
 }

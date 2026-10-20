@@ -47,6 +47,9 @@ export const SEARCHES   = Number(config_get("searches", "10"));
 // a SearXNG on this computer, for the `search` tool (Search.ts; "": none)
 export const SEARXNG    = config_get("searxng_url", "");
 
+// the MCP servers the agents may use (Mcp.ts; "": none)
+export const MCP        = config_path(config_get("mcp", ""));
+
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
