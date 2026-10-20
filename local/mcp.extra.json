@@ -11,5 +11,9 @@
       "--allowedUrlPattern", "http://localhost:*/*", "--allowedUrlPattern", "http://127.0.0.1:*/*",
       "--no-usage-statistics", "--no-performance-crux"
     ]
+  },
+  "atlassian": {
+    "url": "https://mcp.atlassian.com/v2/mcp",
+    "oauth": true
   }
 }

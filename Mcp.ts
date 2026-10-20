@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { Agent, type Out } from "./Agent.ts";
+import { Auth } from "./Auth.ts";
 import { AskAI } from "./AskAI.ts";
 import { clip, stream_lines } from "./Clip.ts";
 import type { Spec } from "./Machine.ts";
@@ -38,6 +39,7 @@ export type Server = {
   env?     : Record<string, string>;
   url?     : string;
   headers? : Record<string, string>;
+  oauth?   : boolean; // signed in to with OAuth (Auth.ts): a bearer token on each request
   tools?   : string[];
 };
 
@@ -64,6 +66,7 @@ export type Pool = {
   tools : Map<string, [Conn, string]>; // by the name offered: its server, its own name
   env   : (name: string) => string | undefined;
   log   : (line: string) => void;
+  auth  : (server: string) => Promise<string>; // an oauth server's token (throws: none)
   wait  : { open: number; call: number; idle: number };
 };
 
@@ -93,10 +96,13 @@ let PIDS = "";
 
 export namespace Mcp {
 
-  export function pool(servers: Server[], opts: { env?: Pool["env"]; log?: Pool["log"]; open?: number; call?: number; idle?: number } = {}): Pool {
+  export function pool(servers: Server[], opts: { env?: Pool["env"]; log?: Pool["log"]; auth?: Pool["auth"]; open?: number; call?: number; idle?: number } = {}): Pool {
     const conns = servers.map((server) => ({ server, link: null, specs: null, timer: null, off: false }));
     const wait = { open: opts.open ?? OPEN, call: opts.call ?? CALL, idle: opts.idle ?? IDLE };
-    return { conns, tools: new Map(), env: opts.env ?? (() => undefined), log: opts.log ?? ((line) => console.error(line)), wait };
+    const auth = opts.auth ?? (async (name: string) => {
+      throw new Error("no sign-in for " + name);
+    });
+    return { conns, tools: new Map(), env: opts.env ?? (() => undefined), log: opts.log ?? ((line) => console.error(line)), auth, wait };
   }
 
   // the pool of mcp.json (local/mcp.ts; none if it is missing): its
@@ -120,7 +126,8 @@ export namespace Mcp {
         return undefined;
       }
     };
-    return Mcp.pool(Array.isArray(got.servers) ? got.servers : [], { env, log });
+    const auth = (name: string) => Auth.token(name, Auth.keychain("unii-mcp"));
+    return Mcp.pool(Array.isArray(got.servers) ? got.servers : [], { env, log, auth });
   }
 
   // the tools of the servers listed so far (list() lists the rest)
@@ -265,7 +272,7 @@ export namespace Mcp {
       c.specs = null;
     };
     const link = s.url !== undefined
-      ? Mcp.http(s.url, Mcp.fill(s.headers ?? {}, pool.env), changed)
+      ? Mcp.http(s.url, Mcp.fill(s.headers ?? {}, pool.env), changed, s.oauth === true ? () => pool.auth(s.name) : undefined)
       : Mcp.stdio(s.command ?? "", s.args ?? [], Mcp.fill(s.env ?? {}, pool.env), changed);
     try {
       await link.ask("initialize", { protocolVersion: VERSION, capabilities: {}, clientInfo: { name: "unii", version: "1" } }, signal);
@@ -303,10 +310,10 @@ export namespace Mcp {
 
   // streamable HTTP: each message a POST, its answer JSON or SSE (one of
   // whose events answers it); the session id and version sent back
-  export function http(url: string, headers: Record<string, string>, changed: () => void): Link {
+  export function http(url: string, headers: Record<string, string>, changed: () => void, bearer?: () => Promise<string>): Link {
     const head: Record<string, string> = { ...headers, "content-type": "application/json", accept: "application/json, text/event-stream" };
     let n = 0;
-    const post = (msg: object, signal: AbortSignal) => fetch(url, { method: "POST", headers: head, body: JSON.stringify({ jsonrpc: "2.0", ...msg }), signal });
+    const post = async (msg: object, signal: AbortSignal) => fetch(url, { method: "POST", headers: await Mcp.bearer(head, bearer), body: JSON.stringify({ jsonrpc: "2.0", ...msg }), signal });
     const ask = async (method: string, params: object, signal: AbortSignal) => {
       const id = ++n;
       const res = await post({ id, method, params }, signal);
@@ -348,10 +355,15 @@ export namespace Mcp {
     };
     const close = () => {
       if (head["mcp-session-id"] !== undefined) {
-        fetch(url, { method: "DELETE", headers: head, signal: AbortSignal.timeout(OPEN) }).catch(() => {});
+        Mcp.bearer(head, bearer).then((h) => fetch(url, { method: "DELETE", headers: h, signal: AbortSignal.timeout(OPEN) })).catch(() => {});
       }
     };
     return { ask, tell, close };
+  }
+
+  // headers with an oauth server's token, fresh (Auth.token refreshes it)
+  export async function bearer(head: Record<string, string>, bearer?: () => Promise<string>): Promise<Record<string, string>> {
+    return bearer === undefined ? head : { ...head, authorization: "Bearer " + await bearer() };
   }
 
   // stdio: a child, a JSON message a line each way (a line that is no

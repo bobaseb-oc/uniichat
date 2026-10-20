@@ -28,6 +28,7 @@ function home(local: object | null = null): { home: string; root: string } {
   fs.writeFileSync(root + "/local/mcp.extra.json", JSON.stringify({
     browse  : { command: "local/tools/node_modules/.bin/browse", args: ["--user-data-dir", "~/.unii/browser/b"], allowed_origins: ["http://localhost", "http://127.0.0.1"] },
     missing : { command: "local/tools/node_modules/.bin/missing" },
+    remote  : { url: "https://mcp.example.test/v2/mcp", oauth: true },
   }));
   if (local !== null) {
     fs.mkdirSync(h + "/.unii", { recursive: true });
@@ -95,4 +96,11 @@ test("language servers: pyright from PATH, TypeScript's own from local/tools; on
   expect(none.lsp).toEqual({});
   expect(none.notes).toContain("lsp python: pyright-langserver not on PATH");
   expect(none.notes).toContain("lsp typescript: not installed (npm ci --prefix local/tools)");
+});
+
+test("an extra server by URL, signed in to with OAuth: kept with its flag, no headers, nothing to install", () => {
+  const h = home();
+  const got = mcp_config(h.home, h.root);
+  expect(got.servers.find((s) => s.name === "remote")).toEqual({ name: "remote", url: "https://mcp.example.test/v2/mcp", oauth: true });
+  expect(mcp_config(home({ remote: { enabled: false } }).home, h.root).servers.map((s) => s.name)).not.toContain("remote");
 });
