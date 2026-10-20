@@ -21,6 +21,7 @@ fs.writeFileSync(FAKE, `
 const PUSH = process.env.FAKE_PUSH === "1";
 const docs = new Map();
 let configured = false;
+let python = null;
 let hang = false; // as pyright 1.1.408 does for a client that says it supports workspace folders
 const send = async (msg, split = false) => {
   const body = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", ...msg }));
@@ -45,11 +46,11 @@ for await (const chunk of Bun.stdin.stream()) {
     const p = m.params ?? {};
     const doc = docs.get(p.textDocument?.uri);
     if (hang && m.method !== "initialize") continue;
-    if (m.id === 99 && m.method === undefined) { configured = Array.isArray(m.result) && m.result.length === 1; continue; }
+    if (m.id === 99 && m.method === undefined) { configured = Array.isArray(m.result) && m.result.length === 2; python = m.result?.[1]?.pythonPath ?? null; continue; }
     switch (m.method) {
       case "initialize": hang = p.capabilities?.workspace?.workspaceFolders === true;
         send({ id: m.id, result: { capabilities: { textDocumentSync: 1, ...(PUSH ? {} : { diagnosticProvider: {} }) } } }); break;
-      case "initialized": send({ id: 99, method: "workspace/configuration", params: { items: [{ section: "fake" }] } }); break;
+      case "initialized": send({ id: 99, method: "workspace/configuration", params: { items: [{ section: "fake" }, { section: "python" }] } }); break;
       case "textDocument/didOpen":
         docs.set(p.textDocument.uri, { version: p.textDocument.version, text: p.textDocument.text });
         if (PUSH) setTimeout(() => send({ method: "textDocument/publishDiagnostics", params: { uri: p.textDocument.uri, diagnostics: [{ range: at(2, 0), severity: 2, message: "push v" + p.textDocument.version }] } }), 50);
@@ -64,7 +65,8 @@ for await (const chunk of Bun.stdin.stream()) {
       case "textDocument/references": send({ id: m.id, result: p.context?.includeDeclaration ? [{ uri: p.textDocument.uri, range: at(0, 6) }, { uri: p.textDocument.uri, range: at(2, 9) }] : [] }); break;
       case "textDocument/hover": send({ id: m.id, result: { contents: { kind: "markdown", value: "é— v" + doc.version + " pid=" + process.pid + " " + doc.text.split("\\n")[0] } } }, true); break;
       case "textDocument/documentSymbol": send({ id: m.id, result: [{ name: "Outer", kind: 5, range: at(0, 0), selectionRange: at(0, 0), children: [{ name: "inner", kind: 6, range: at(1, 2), selectionRange: at(1, 2) }] }] }); break;
-      case "workspace/symbol": if (p.query === "slow") { setTimeout(() => send({ id: m.id, result: [] }), 300); break; }
+      case "workspace/symbol": if (p.query === "python") { const t0 = Date.now(); const reply = () => configured || Date.now() - t0 > 1000 ? send({ id: m.id, result: [{ name: "py_" + python, kind: 13, location: { uri: "file:///x.py", range: at(0, 0) } }] }) : setTimeout(reply, 10); reply(); break; }
+        if (p.query === "slow") { setTimeout(() => send({ id: m.id, result: [] }), 300); break; }
         send({ id: m.id, result: [{ name: "Thing_" + p.query, kind: 12, location: { uri: "file:///x/y.ts", range: at(9, 0) } }] }); break;
       case "textDocument/diagnostic": send({ id: m.id, result: { kind: "full", items: [{ range: at(0, 4), severity: 1, message: "pull v" + doc.version, source: "fake", code: 7 }] } }); break;
       case "shutdown": send({ id: m.id, result: null }); break;
@@ -183,5 +185,19 @@ test("Tools: lsp is offered to the chat and its subagents when mcp.json names a 
 test("a server is not closed while a request to it is still waiting, however short its idle time", async () => {
   const pool = Lsp.pool(LANGS, { idle: 50 });
   expect(await Lsp.run(pool, { operation: "workspaceSymbol", file: A, query: "slow" }, go())).toEqual({ text: "No symbols.", fail: false });
+  Mcp.end();
+});
+
+test("pyright is told the nearest .venv at or above the project (a uv workspace's root), TypeScript's server nothing", async () => {
+  fs.mkdirSync(PROJ + "/.venv/bin", { recursive: true });
+  fs.writeFileSync(PROJ + "/.venv/bin/python", "");
+  fs.mkdirSync(PROJ + "/libs/api/src", { recursive: true });
+  fs.writeFileSync(PROJ + "/libs/api/pyproject.toml", "");
+  fs.writeFileSync(PROJ + "/libs/api/src/m.py", "z = 1\n");
+  const pool = Lsp.pool(LANGS);
+  const py = await Lsp.run(pool, { operation: "workspaceSymbol", file: PROJ + "/libs/api/src/m.py", query: "python" }, go());
+  expect(py.text).toBe("py_" + PROJ + "/.venv/bin/python (variable) /x.py:1:1");
+  const ts = await Lsp.run(pool, { operation: "workspaceSymbol", file: A, query: "python" }, go());
+  expect(ts.text).toBe("py_null (variable) /x.py:1:1");
   Mcp.end();
 });

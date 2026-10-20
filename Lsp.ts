@@ -250,8 +250,8 @@ export namespace Lsp {
   }
 
   // what the server sends that answers no request of ours: diagnostics
-  // kept; its requests answered as a plain client does (undefined: none
-  // such)
+  // kept; its requests answered as a plain client does, pyright told
+  // its venv (undefined: no such method)
   export function other(srv: Srv, msg: any): unknown {
     switch (msg.method) {
       case "textDocument/publishDiagnostics": {
@@ -261,7 +261,7 @@ export namespace Lsp {
         return undefined;
       }
       case "workspace/configuration": {
-        return (msg.params?.items ?? []).map(() => null);
+        return (msg.params?.items ?? []).map((item: any) => (srv.name === "python" && item?.section === "python" ? Lsp.venv(srv.root) : null));
       }
       case "client/registerCapability":
       case "client/unregisterCapability":
@@ -271,6 +271,21 @@ export namespace Lsp {
       }
     }
     return undefined;
+  }
+
+  // pyright's python settings: the interpreter of the nearest .venv at or
+  // above the root (a uv workspace keeps it at its own root, above its
+  // packages), so imports installed there resolve; none: null
+  export function venv(root: string): { pythonPath: string } | null {
+    for (let dir = root; ; dir = path.dirname(dir)) {
+      const py = path.join(dir, ".venv", "bin", "python");
+      if (fs.existsSync(py)) {
+        return { pythonPath: py };
+      }
+      if (path.dirname(dir) === dir) {
+        return null;
+      }
+    }
   }
 
   // a message in its frame: a header, the length of its body in bytes
