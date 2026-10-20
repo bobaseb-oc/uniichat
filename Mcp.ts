@@ -43,7 +43,7 @@ export type Server = {
 
 // an open server: a request to it and its result, a notification to it,
 // its end
-type Link = {
+export type Link = {
   ask   : (method: string, params: object, signal: AbortSignal) => Promise<any>;
   tell  : (method: string, params: object) => Promise<void>;
   close : () => void;
@@ -354,34 +354,59 @@ export namespace Mcp {
     return { ask, tell, close };
   }
 
-  // stdio: a child in its own process group, a JSON message a line each
-  // way (a line that is no JSON is ignored: a server's stray log); its
-  // pings answered, its other requests refused
+  // stdio: a child, a JSON message a line each way (a line that is no
+  // JSON is ignored: a server's stray log); its pings answered, its other
+  // requests refused
   export function stdio(command: string, args: string[], env: Record<string, string>, changed: () => void): Link {
-    const proc = Bun.spawn([command, ...args], { env: { ...Mcp.base(), ...env }, stdin: "pipe", stdout: "pipe", stderr: "ignore", detached: true });
+    const proc = Mcp.child(command, args, env);
+    const got = (async function* () {
+      for await (const lines of stream_lines(proc.stdout)) {
+        yield lines.map((l) => l.trim()).filter((l) => l !== "").map((l) => Agent.parse(l));
+      }
+    })();
+    const cancel = (id: number) => ({ method: "notifications/cancelled", params: { requestId: id } });
+    const peer = Mcp.peer(proc, (msg) => JSON.stringify(msg) + "\n", got, cancel, (msg) => {
+      if (msg.method === "notifications/tools/list_changed") {
+        changed();
+      }
+      return msg.method === "ping" ? {} : undefined;
+    });
+    return { ask: peer.ask, tell: peer.tell, close: peer.close };
+  }
+
+  // a server process of this computer (Lsp.ts too): in its own process
+  // group, kept (adopt), with only the base of this environment
+  export function child(command: string, args: string[], env: Record<string, string>, cwd?: string) {
+    const proc = Bun.spawn([command, ...args], { cwd, env: { ...Mcp.base(), ...env }, stdin: "pipe", stdout: "pipe", stderr: "ignore", detached: true });
     Mcp.adopt(proc.pid);
+    return proc;
+  }
+
+  // JSON-RPC with a child: each message framed onto its stdin; its own
+  // (`got`, a batch at a time; null: none) an answer to a request of ours
+  // by id, else given to `other`, whose result answers a request of its
+  // (undefined: no such method); a request stopped is cancelled with
+  // `cancel`'s message; all waiting fail once it quits
+  export function peer(proc: { pid: number; stdin: Bun.FileSink }, frame: (msg: object) => string | Uint8Array, got: AsyncIterable<any[]>, cancel: (id: number) => object, other: (msg: any) => unknown): Link {
     const waits = new Map<number, (msg: any) => void>();
     let n = 0;
     let gone = false;
     const send = (msg: object) => {
       try {
-        proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\n");
+        proc.stdin.write(frame({ jsonrpc: "2.0", ...msg }));
         proc.stdin.flush();
       } catch {}
     };
     (async () => {
-      for await (const lines of stream_lines(proc.stdout)) {
-        for (const line of lines.map((l) => l.trim()).filter((l) => l !== "")) {
-          const msg = Agent.parse(line) as any;
-          if (msg === null || typeof msg !== "object") {
-            continue;
-          }
+      for await (const batch of got) {
+        for (const msg of batch.filter((m) => m !== null && typeof m === "object")) {
           if (msg.method === undefined) {
             waits.get(msg.id)?.(msg);
-          } else if (msg.method === "notifications/tools/list_changed") {
-            changed();
-          } else if (msg.id !== undefined) {
-            send(msg.method === "ping" ? { id: msg.id, result: {} } : { id: msg.id, error: { code: -32601, message: "Method not found" } });
+            continue;
+          }
+          const result = other(msg);
+          if (msg.id !== undefined) {
+            send(result === undefined ? { id: msg.id, error: { code: -32601, message: "Method not found" } } : { id: msg.id, result });
           }
         }
       }
@@ -396,7 +421,7 @@ export namespace Mcp {
       const id = ++n;
       const stop = () => {
         waits.delete(id);
-        send({ method: "notifications/cancelled", params: { requestId: id } });
+        send(cancel(id));
         no(signal.reason);
       };
       waits.set(id, (msg) => {

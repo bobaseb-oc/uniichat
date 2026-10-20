@@ -9,10 +9,13 @@
 // written: each header or env value becomes a placeholder, kept with the
 // path to it in ~/.claude.json, read as the server opens. Left out, each
 // said: the excluded (skills.ts), legacy SSE servers, and extra ones not
-// installed.
+// installed. Its "lsp" names the language servers of the `lsp` tool (Lsp.ts):
+// pyright from PATH, TypeScript's own (tsc --lsp) from local/tools.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
+import type { Lang } from "../Lsp.ts";
 import type { Server } from "../Mcp.ts";
 import { EXCLUDE, json } from "./skills.ts";
 
@@ -22,6 +25,7 @@ import { EXCLUDE, json } from "./skills.ts";
 export type Config = {
   servers : Server[];
   secrets : { file: string; vars: Record<string, string[]> };
+  lsp     : Record<string, Lang>;
   notes   : string[];
 };
 
@@ -32,10 +36,11 @@ type Extra = Omit<Server, "name"> & { allowed_origins?: string[] };
 // MCP config
 // ==========
 
-export function mcp_config(home: string, root: string): Config {
+// which: where a program is on PATH (null: nowhere)
+export function mcp_config(home: string, root: string, which: (cmd: string) => string | null = Bun.which): Config {
   const file = home + "/.claude.json";
   const local: Record<string, { enabled?: boolean; tools?: string[]; allowed_origins?: string[] }> = json(home + "/.unii/mcp.local.json");
-  const out: Config = { servers: [], secrets: { file, vars: {} }, notes: [] };
+  const out: Config = { servers: [], secrets: { file, vars: {} }, lsp: {}, notes: [] };
   const on = (name: string) => !EXCLUDE.includes(name) && local[name]?.enabled !== false;
   const tools = (name: string) => (Array.isArray(local[name]?.tools) ? { tools: local[name].tools } : {});
   // a header's or env value as a placeholder, its path kept
@@ -72,13 +77,25 @@ export function mcp_config(home: string, root: string): Config {
     const args = [...(x.args ?? []).map(whole), ...(origins ? ["--allowed-origins", origins.join(";")] : [])];
     out.servers.push({ name, command, args, ...(x.env ? { env: x.env } : {}), ...tools(name) });
   }
+  const pyright = which("pyright-langserver");
+  if (pyright === null) {
+    out.notes.push("lsp python: pyright-langserver not on PATH");
+  } else {
+    out.lsp.python = { command: pyright, args: ["--stdio"] };
+  }
+  const tsc = root + "/local/tools/node_modules/.bin/tsc";
+  if (fs.existsSync(tsc)) {
+    out.lsp.typescript = { command: tsc, args: ["--lsp", "--stdio"] };
+  } else {
+    out.notes.push("lsp typescript: not installed (npm ci --prefix local/tools)");
+  }
   return out;
 }
 
 if (import.meta.main) {
   const out = process.argv[2] ?? os.homedir() + "/.unii/mcp.json";
-  const got = mcp_config(os.homedir(), import.meta.dir + "/..");
-  fs.writeFileSync(out, JSON.stringify({ servers: got.servers, secrets: got.secrets }, null, 2) + "\n", { mode: 0o600 });
+  const got = mcp_config(os.homedir(), path.resolve(import.meta.dir, ".."));
+  fs.writeFileSync(out, JSON.stringify({ servers: got.servers, secrets: got.secrets, lsp: got.lsp }, null, 2) + "\n", { mode: 0o600 });
   got.notes.forEach((note) => console.error("mcp: " + note));
-  console.log("mcp:", got.servers.map((s) => s.name).join(", ") || "no servers", "in", out);
+  console.log("mcp:", got.servers.map((s) => s.name).join(", ") || "no servers", "| lsp:", Object.keys(got.lsp).join(", ") || "none", "in", out);
 }

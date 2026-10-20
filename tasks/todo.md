@@ -53,7 +53,16 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
    - [x] Live: context7 answers; Playwright page + screenshot image, example.com blocked; chrome-devtools console read, example.com blocked; 0 files in default Chrome profile; 0 processes left; 0 secret hits in mcp.json
    - [x] Proof: 80/80 tests; 4 new mutations each fail a test
    - [ ] User: `unii stop` then `unii` (restart loads MCP); then 0 secret hits in server.log
-3. [ ] `Lsp.ts` and the `lsp` tool
+3. `Lsp.ts` and the `lsp` tool → verify: `bun test Lsp.test.ts`; live on this repo (TS) and a Python repo
+   - [x] TS 7 has no tsserver.js, so typescript-language-server can't use it: use `tsc --lsp --stdio` (tsgo), dropped typescript-language-server (lock 26 → 25)
+   - [x] Tests first: fake LSP server (split frames, multibyte), each operation, push and pull diagnostics, didChange on mtime, server requests answered, root detection, bad input
+   - [x] `Lsp.ts`: one server per (root, language), idle close, children via `Mcp.child`/`Mcp.peer` (shared JSON-RPC, moved out of `Mcp.stdio`)
+   - [x] Wiring: `lsp` section in mcp.json (local/mcp.ts), `lsp` tool for main + subagents
+   - [x] Bug found by a flaky test: the idle timer could close a server mid-request → `busy` count, test with idle < request
+   - [x] Bug found live: pyright 1.1.408 hangs after initialize if the client declares `workspace.workspaceFolders` → dropped; the fake hangs the same way
+   - [x] Live: TS (this repo) definition/hover/references/workspaceSymbol/diagnostics < 1 s; Python (agent-foundations) definition 0.8 s, hover, symbols, diagnostics; 0 processes left; 0 files changed in either repo
+   - [x] Proof: 89/89 tests; 5 mutations each fail a test
+   - Later: pyright doesn't see a uv workspace's root `.venv` (imports unresolved); `Mcp.ts` has the same idle-mid-request pattern (unreachable with defaults)
 4. [ ] Atlassian OAuth draft (red zone, separate branch, user drives)
 
 ## Later

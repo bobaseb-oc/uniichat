@@ -31,6 +31,7 @@ import { report_text } from "./Call.ts";
 import { clip_page } from "./Clip.ts";
 import * as config from "./Config.ts";
 import { COMPUTER, INT, STR, TOOLS, spec, type Job, type Spec } from "./Machine.ts";
+import { Lsp, OPS } from "./Lsp.ts";
 import { Mcp } from "./Mcp.ts";
 import { Memory } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
@@ -227,6 +228,13 @@ const SEARCH: Spec[] = config.SEARXNG === "" ? [] : [
 // the MCP servers' tools (Mcp.ts), for the chat and its subagents
 const MCP = Mcp.load(config.MCP);
 
+// the language servers of this computer (Lsp.ts), for the chat and its
+// subagents, if mcp.json names any
+const LSP = Lsp.load(config.MCP);
+const CODE: Spec[] = Object.keys(LSP.langs).length === 0 ? [] : [
+  spec("lsp", "Ask a language server about code (" + Object.keys(LSP.langs).join(", ") + "): a symbol's definition, references or hover type, a file's symbols, the workspace's symbols by name (query), or a file's diagnostics (type errors). It reads files on " + os.hostname() + " only, the computer unii's server runs on, not other devices; the file is an absolute path there, its project the nearest folder up with .git, pyproject.toml, package.json or tsconfig.json. Positions are 1-based, as an editor shows them. Answers come as path:line:col, with the source line.", { operation: { type: "string", enum: OPS }, file: STR, line: INT, character: INT, query: { type: "string", description: "The name to look for, for workspaceSymbol." } }, ["operation", "file"]),
+];
+
 const OWN: Spec[] = [
   spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
   spec("date", "The date and time of message id.", { id: INT }, ["id"]),
@@ -374,9 +382,9 @@ export namespace Tools {
 
   export function list(tools: Tools, who: string): Spec[] {
     if (who === "main") {
-      return [...OWN, ...BOSS, ...kit(who), HAND, ...Mcp.cached(MCP)];
+      return [...OWN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
-    return tools.agents.get(who)?.role.$ === "hands" ? [COMPUTER] : [...OWN, ...kit(who), ...Mcp.cached(MCP)];
+    return tools.agents.get(who)?.role.$ === "hands" ? [COMPUTER] : [...OWN, ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
   // id: a job's, if it starts one
@@ -401,6 +409,9 @@ export namespace Tools {
       }
       case "search": {
         return Search.web(config.SEARXNG, String(args.query ?? ""), Number(args.n), signal);
+      }
+      case "lsp": {
+        return Lsp.run(LSP, args, signal);
       }
       case "spawn": {
         const effort = args.effort === undefined ? null : String(args.effort);

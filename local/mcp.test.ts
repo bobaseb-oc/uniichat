@@ -82,3 +82,17 @@ test("no ~/.claude.json, no extras: no servers, no failure", () => {
   const h = fs.mkdtempSync(os.tmpdir() + "/unii-mcp-none-");
   expect(mcp_config(h, h).servers).toEqual([]);
 });
+
+test("language servers: pyright from PATH, TypeScript's own from local/tools; one missing is said", () => {
+  const h = home();
+  fs.writeFileSync(h.root + "/local/tools/node_modules/.bin/tsc", "");
+  const got = mcp_config(h.home, h.root, (cmd) => (cmd === "pyright-langserver" ? "/opt/bin/pyright-langserver" : null));
+  expect(got.lsp).toEqual({
+    python     : { command: "/opt/bin/pyright-langserver", args: ["--stdio"] },
+    typescript : { command: h.root + "/local/tools/node_modules/.bin/tsc", args: ["--lsp", "--stdio"] },
+  });
+  const none = mcp_config(h.home, h.root + "/elsewhere", () => null);
+  expect(none.lsp).toEqual({});
+  expect(none.notes).toContain("lsp python: pyright-langserver not on PATH");
+  expect(none.notes).toContain("lsp typescript: not installed (npm ci --prefix local/tools)");
+});
