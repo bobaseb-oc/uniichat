@@ -1,0 +1,62 @@
+tasks/todo.md
+  s_aa481f18fbfa7b::t_5a64f7658f6b43 46-55
+local/mcp.test.ts
+  s_aa481f18fbfa7b::t_7caa6df6f51b07 1-84
+local/mcp.ts
+  s_aa481f18fbfa7b::t_b801e05d441b0f 1-84
+local/mcp.extra.json
+  s_aa481f18fbfa7b::t_a923d71b62742c 1-4,6-8,14-15
+  s_aa481f18fbfa7b::t_d808d06797e026 5,9-13
+local/skills.test.ts
+  s_aa481f18fbfa7b::t_37c15da2ffe1f5 6-7
+  s_184c131b79ce85::t_97f30aff21f449 29,31,36
+local/tools/package.json
+  s_aa481f18fbfa7b::t_1c936f2146e65b 1-11
+tasks/lessons.md
+  s_aa481f18fbfa7b::t_9dcb5ae41c4a7b 1-3
+Mcp.ts
+  s_aa481f18fbfa7b::t_69387e0b575ddb 102-135,284,288
+  s_aa481f18fbfa7b::t_5fd2dbc1f2e627 11-16,65,99-101,280,285,361
+Config.ts
+  s_aa481f18fbfa7b::t_2e06c880a5a20a 50-52
+Mcp.test.ts
+  s_aa481f18fbfa7b::t_2a6d7c2460a177 35,52,102-103,241-283
+README.md
+  s_aa481f18fbfa7b::t_6c90837b7fdacc 91-92
+Server.ts
+  s_aa481f18fbfa7b::t_2a7356460f84aa 43,1669,1742
+Tools.ts
+  s_aa481f18fbfa7b::t_6fd78e53f31148 34,227-229,358,377,379,384-386
+local/rules.md
+  s_aa481f18fbfa7b::t_1bbf7f786c38a4 11-14
+local/skills.ts
+  s_aa481f18fbfa7b::t_5768488713dc6c 8,24-27,79,92
+local/tools/package-lock.json
+  s_aa481f18fbfa7b::t_a58c1757b05851 1-450
+local/unii-local.sh
+  s_aa481f18fbfa7b::t_4aa38da740873d 73,85-94,112,140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b902ae3f0509fed1f28fc403b60b7ced9d9534c",
+  "prompts": {},
+  "sessions": {
+    "s_184c131b79ce85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d098bc08-7db7-4aff-8fba-c3121fd3cf13",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_aa481f18fbfa7b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eaa68c24-0e31-4f10-a1be-d2372b6a82d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
