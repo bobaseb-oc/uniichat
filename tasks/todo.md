@@ -20,13 +20,18 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 - [x] Alias in ~/.zshrc
 - [ ] Server starts, sign-in, "hi" answered by Opus 5.5
 
+- [x] Live rules: `@`-imports in `rules`; local/rules.md imports ~/.claude/CLAUDE.md + repo-file instruction
+- [x] Skills index (local/skills.ts → ~/.unii/skills.md, 66 skills) imported by the rules
+- [ ] MCP client (context7, Atlassian, Playwright…): separate plan; Atlassian sign-in is a red zone (user drives)
+- [ ] Restart server after the import (loads live rules + skills)
+
 ## Prime the memory tree
 - [x] `local/prime/collect.ts` → manifest.txt (user review)
 - [x] `local/prime/redact.ts` + tests → ~/.unii-prime (user check-in)
 - [x] `local/prime/export.ts` → ~/.unii-prime/context.json (587 chats)
 - [x] `UNII_IMPORT_DIRS`: /import reads only the redacted copy (not ~/.claude, ~/.codex)
 - [x] Local estimate: 763 sessions, 9,404 msgs, 10.2 MB ≈ $23.44
-- [ ] `/import` estimate → user go-ahead → import
+- [x] `/import` estimate → user go-ahead → import (running, started by the user; includes instruction files)
 - [ ] Recall check
 
 ## Later

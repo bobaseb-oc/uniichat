@@ -81,6 +81,13 @@ term_exec() {
   exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" bun "$ROOT/Term.ts" "$@"
 }
 
+# the skills index the rules import (local/skills.ts): what Claude Code
+# has installed and enabled now, so a plugin installed there shows here
+# at the next start
+skills_make() {
+  bun "$ROOT/local/skills.ts" "$DIR/skills.md" >&2 || echo "unii: no skills index" >&2
+}
+
 server_up() {
   curl -fsS --max-time 2 -o /dev/null "$URL/" 2>/dev/null
 }
@@ -90,6 +97,7 @@ server_start() {
     return 0
   fi
   searxng_start
+  skills_make
   (trap '' HUP && server_exec) >>"$LOG" 2>&1 &
   echo "$!" >"$PID"
   for _ in $(seq 1 50); do
@@ -117,7 +125,7 @@ server_stop() {
 }
 
 case "${1:-}" in
-  serve) searxng_start && server_exec ;;
+  serve) searxng_start && skills_make && server_exec ;;
   start) server_start ;;
   stop)  server_stop ;;
   log)   exec tail -f "$LOG" ;;
