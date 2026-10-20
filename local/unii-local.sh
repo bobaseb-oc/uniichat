@@ -3,7 +3,7 @@
 # ==========
 # UniiChat from this source, on the LiteLLM proxy ($LITELLM_API_BASE,
 # $LITELLM_API_KEY): the server's key and Claude API origin are set for
-# the server process only. Never runs upstream's installer.
+# the server process only. Term.ts opens loopback servers only.
 #
 #   unii              start the server if it is not running, open the chat
 #   unii serve        run the server in the foreground
@@ -18,8 +18,6 @@ URL="http://127.0.0.1:$PORT"
 DIR="${UNII_DIR:-$HOME/.unii}"
 LOG="$DIR/server.log"
 PID="$DIR/server.pid"
-
-export UNII_NO_TELEMETRY=1
 
 mkdir -p "$DIR"
 chmod 700 "$DIR"

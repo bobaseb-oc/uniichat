@@ -16,8 +16,4 @@ I'll remember:
 
 How? No new model. No magic. Just a regular chatbot with a neat memory system.
 
-I can also work from your terminal:
-
-```
-curl -fsSL {install} | sh
-```
+I can also work from your terminal: run `unii` there (this build's `local/unii-local.sh`).

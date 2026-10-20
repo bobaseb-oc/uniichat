@@ -9,9 +9,9 @@
 // done or halted; all they left running dies as this unii quits. From a
 // pipe, each line is a message.
 //
-// One executable per platform (the releases uniichat.com/install.sh
-// installs); once a day it asks bend-lang.com's /check (update_check) and
-// notes a newer one. `unii serve` runs the server it carries. The server:
+// One executable per platform (upstream releases it; this build runs
+// from its source, asks no one for updates and sends no telemetry).
+// `unii serve` runs the server it carries. The server:
 // the url given, else $UNII_URL, else http://127.0.0.1:8788 (this build;
 // upstream's is uniichat.com); each server's session is a file of its own
 // (TOKEN).
@@ -82,6 +82,14 @@ const OURS   = "http://127.0.0.1:8788";
 const SERVER = (ARGS.find((a) => WEB.test(a)) ?? process.env.UNII_URL ?? OURS).replace(/\/$/, "");
 const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
 
+// this build talks to a server on this computer only (upstream's may be
+// any, by default the hosted one): a job it is sent runs here
+const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
+if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
+  console.error("unii: " + SERVER + " refused: this build opens servers on this computer only (" + LOOPBACK.join(", ") + ")");
+  process.exit(1);
+}
+
 const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http://127.0.0.1:8788)
        unii login [url]     sign in
        unii update [url]    disabled in this build (it ran curl | sh)
@@ -94,17 +102,8 @@ const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http:/
 UNII_WORK: where the agent works on this computer (default
 ~/.unii/work). UNII_COMPUTER=1: it may use the screen. UNII_HOME: where
 it keeps its sign-in (default ~/.unii).
-Once a day, unii asks bend-lang.com for the latest version, sending only
-its version, OS and CPU type, and whether this computer ever ran its own
-server. UNII_NO_TELEMETRY=1 turns that off.
+This build sends no telemetry and opens no server but this computer's.
 In the chat, /help lists every command and key.`;
-
-// the daily version check: what it asks, its cache, and the self-host
-// flag: a file made once this computer serves or opens a server not OURS
-const CHECK   = "https://bend-lang.com/check?p=unii&v=" + VERSION + "&os=" + process.platform + "&arch=" + process.arch;
-const CHECKED = HOME + "/check.json";
-const SELF    = HOME + "/self";
-const DAY     = 86400000;
 
 // this device's name, as the agent sees it: on macOS its local host name
 // (Bonjour's, unique on its network), else the host's
@@ -292,7 +291,6 @@ function term_hear(t: Term, msg: View.Server): void {
   term_print(t, msg);
   if (first) {
     term_history(t);
-    update_check(t);
   }
   term_draw(t);
   if (msg.$ === "state") {
@@ -1038,46 +1036,6 @@ function login_fail(why: string): never {
 // Update
 // ======
 
-// marks this computer as one that self-hosted (SELF), for good
-function self_mark(): void {
-  fs.writeFileSync(SELF, "");
-}
-
-// update_check is the whole telemetry: once a day, a GET of CHECK (plus
-// &self=1 once SELF exists; no account, no id), its answer {ver, notice}
-// cached in CHECKED (stamped before the request: one a day); a cached
-// ver newer than this one is a note. It never delays nor fails the chat
-async function update_check(t: Term): Promise<void> {
-  if (process.env.UNII_NO_TELEMETRY) {
-    return;
-  }
-  let last = { t: 0, ver: VERSION, notice: "" };
-  try {
-    last = { ...last, ...JSON.parse(fs.readFileSync(CHECKED, "utf8")) };
-  } catch {}
-  try {
-    if (Date.now() - last.t > DAY) {
-      last.t = Date.now();
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-      const got = await (await fetch(CHECK + (fs.existsSync(SELF) ? "&self=1" : ""), { signal: AbortSignal.timeout(3000) })).json() as { ver?: unknown; notice?: unknown };
-      last.ver = typeof got.ver === "string" ? got.ver : VERSION;
-      last.notice = typeof got.notice === "string" ? got.notice : "";
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-    }
-  } catch {}
-  if (update_newer(last.ver)) {
-    const notice = last.notice.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 200);
-    term_note(t, "unii " + last.ver + " is available: run unii update" + (notice === "" ? "" : ". " + notice));
-  }
-}
-
-// whether ver (major.minor.patch) is newer than this unii
-function update_newer(ver: string): boolean {
-  const a = ver.split(".").map(Number);
-  const b = VERSION.split(".").map(Number);
-  return a.length === 3 && a.every(Number.isInteger) && (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0;
-}
-
 // this build never installs by `curl | sh` (the hosted installer): it
 // changes only as its source does
 function update_run(url: string): void {
@@ -1118,16 +1076,12 @@ if (HELP || ODD !== undefined) {
 } else if (UPDATE) {
   update_run(SERVER);
 } else if (SERVE) {
-  self_mark();
   await (await import("./Server.ts")).serve(Number(PORT ?? 8788), null);
 } else if (LOGIN) {
   await login_run(SERVER);
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);
-  }
-  if (SERVER !== OURS) {
-    self_mark();
   }
   const t = term_new(SERVER);
   term_connect(t);

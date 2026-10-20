@@ -79,3 +79,23 @@ test("web searches per request: 10 unless `searches` sets them (0: no web tool)"
   expect(out.stdout.toString().trim()).toBe("10");
   expect(run(code, { UNII_SEARCHES: "0" })).toBe("0");
 });
+
+test("unii refuses a server not on this computer, given or from UNII_URL", () => {
+  for (const [args, env] of [[["https://uniichat.invalid"], {}], [[], { UNII_URL: "https://example.invalid" }]] as const) {
+    const out = term([...args], env);
+    expect(out.code).not.toBe(0);
+    expect(out.text).toContain("this computer only");
+  }
+});
+
+// the code this build runs (not docs, tests, nor the iOS app it never
+// builds), each line not a comment
+test("no code names uniichat.com or bend-lang.com", () => {
+  const files = Bun.spawnSync(["git", "ls-files"], { cwd: import.meta.dir }).stdout.toString().split("\n")
+    .filter((f) => /\.(ts|js|html|sh|txt|swift|css)$|^hello\.md$/.test(f) && !f.endsWith(".test.ts") && !f.startsWith("ios/"));
+  const hits = files.flatMap((f) => fs.readFileSync(import.meta.dir + "/" + f, "utf8").split("\n")
+    .map((line, n) => [f + ":" + (n + 1), line] as const)
+    .filter(([, line]) => /uniichat\.com|bend-lang\.com/.test(line) && !/^\s*(\/\/|#)/.test(line))
+    .map(([at]) => at));
+  expect(hits).toEqual([]);
+});
