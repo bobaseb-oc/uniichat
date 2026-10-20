@@ -128,13 +128,8 @@ const FRAME = 16;
 // would print the whole page again (ms)
 const SETTLE = 100;
 
-// where Claude Code and Codex keep their sessions
-const CODEX   = process.env.CODEX_HOME ?? os.homedir() + "/.codex";
-const IMPORTS = [
-  (process.env.CLAUDE_CONFIG_DIR ?? os.homedir() + "/.claude") + "/projects",
-  CODEX + "/sessions",
-  CODEX + "/archived_sessions",
-];
+// where Claude Code and Codex keep their sessions (Import.import_dirs)
+const IMPORTS = Import.import_dirs(process.env, os.homedir());
 
 // what /import takes: its day; a site's export (its zip, or its
 // conversations.json)

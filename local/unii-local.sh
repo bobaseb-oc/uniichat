@@ -73,6 +73,12 @@ server_exec() {
     bun "$ROOT/Server.ts" "$PORT"
 }
 
+# the terminal: its /import reads only the redacted copy of Claude Code's
+# logs (local/prime/redact.ts), never ~/.claude or ~/.codex themselves
+term_exec() {
+  exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" bun "$ROOT/Term.ts" "$@"
+}
+
 server_up() {
   curl -fsS --max-time 2 -o /dev/null "$URL/" 2>/dev/null
 }
@@ -113,6 +119,6 @@ case "${1:-}" in
   start) server_start ;;
   stop)  server_stop ;;
   log)   exec tail -f "$LOG" ;;
-  "")    server_start && exec bun "$ROOT/Term.ts" "$URL" ;;
-  *)     exec bun "$ROOT/Term.ts" "$@" ;;
+  "")    server_start && term_exec "$URL" ;;
+  *)     term_exec "$@" ;;
 esac

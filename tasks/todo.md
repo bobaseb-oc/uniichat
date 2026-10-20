@@ -23,7 +23,9 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 ## Prime the memory tree
 - [x] `local/prime/collect.ts` → manifest.txt (user review)
 - [x] `local/prime/redact.ts` + tests → ~/.unii-prime (user check-in)
-- [ ] `local/prime/export.ts` → conversations.json
+- [x] `local/prime/export.ts` → ~/.unii-prime/context.json (587 chats)
+- [x] `UNII_IMPORT_DIRS`: /import reads only the redacted copy (not ~/.claude, ~/.codex)
+- [x] Local estimate: 763 sessions, 9,404 msgs, 10.2 MB ≈ $23.44
 - [ ] `/import` estimate → user go-ahead → import
 - [ ] Recall check
 

@@ -106,6 +106,16 @@ const SKIP = /^(<command-|<local-command|\[Request interrupted)/;
 // Import
 // ======
 
+// the folders a terminal's import reads: Claude Code's and Codex's, or
+// those UNII_IMPORT_DIRS names (":"-separated), and no others
+export function import_dirs(env: Record<string, string | undefined>, home: string): string[] {
+  if (env.UNII_IMPORT_DIRS) {
+    return env.UNII_IMPORT_DIRS.split(":").filter((d) => d !== "");
+  }
+  const codex = env.CODEX_HOME ?? home + "/.codex";
+  return [(env.CLAUDE_CONFIG_DIR ?? home + "/.claude") + "/projects", codex + "/sessions", codex + "/archived_sessions"];
+}
+
 // a path the import reads: a session's file
 export function import_file(path: string): boolean {
   const session = /(^|\/)(projects|sessions|archived_sessions)\//.test(path);

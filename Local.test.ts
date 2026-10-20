@@ -99,3 +99,11 @@ test("no code names uniichat.com or bend-lang.com", () => {
     .map(([at]) => at));
   expect(hits).toEqual([]);
 });
+
+test("import reads Claude Code's and Codex's folders, unless UNII_IMPORT_DIRS names others", () => {
+  const code = 'import { import_dirs } from "./Import.ts"; console.log(JSON.stringify(import_dirs(process.env, "/h")))';
+  const { UNII_IMPORT_DIRS, CLAUDE_CONFIG_DIR, CODEX_HOME, ...rest } = process.env;
+  const out = (env: Record<string, string>) => JSON.parse(Bun.spawnSync([process.execPath, "-e", code], { cwd: import.meta.dir, env: { ...rest, ...env } }).stdout.toString());
+  expect(out({})).toEqual(["/h/.claude/projects", "/h/.codex/sessions", "/h/.codex/archived_sessions"]);
+  expect(out({ UNII_IMPORT_DIRS: "/s/claude/projects:/t" })).toEqual(["/s/claude/projects", "/t"]);
+});
