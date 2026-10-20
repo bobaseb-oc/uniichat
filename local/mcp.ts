@@ -29,8 +29,9 @@ export type Config = {
   notes   : string[];
 };
 
-// an extra server: as a Server, its program's path from the repo's root,
-// and the origins its browser may open (passed as --allowed-origins)
+// an extra server: as a Server, a URL (signed in to with OAuth if oauth)
+// or a program, its path from the repo's root, and the origins its
+// browser may open (passed as --allowed-origins)
 type Extra = Omit<Server, "name"> & { allowed_origins?: string[] };
 
 // MCP config
@@ -66,6 +67,10 @@ export function mcp_config(home: string, root: string, which: (cmd: string) => s
   const whole = (p: string) => (p.startsWith("~/") ? home + p.slice(1) : p);
   for (const [name, x] of Object.entries<Extra>(json(root + "/local/mcp.extra.json"))) {
     if (!on(name)) {
+      continue;
+    }
+    if (typeof x.url === "string") {
+      out.servers.push({ name, url: x.url, ...(x.oauth === true ? { oauth: true } : {}), ...tools(name) });
       continue;
     }
     const command = x.command?.startsWith("/") ? x.command : root + "/" + x.command;
