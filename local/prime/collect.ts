@@ -3,7 +3,8 @@
 // `bun local/prime/collect.ts`. What primes the memory tree, as a
 // manifest to review (~/.unii-prime/manifest.txt): one line per source,
 // "+" taken, "-" left out (edit the sign to change it). Kinds:
-// instructions (AGENTS/CLAUDE files, deduplicated by content), memory
+// instructions (AGENTS/CLAUDE files, deduplicated by content; left out
+// by default, as local/rules.md loads them live), memory
 // (Claude Code's memory files), doc (text, and a few picked documents),
 // chatlog (a Claude Code project's logs, by folder). Reads names and
 // sizes only; nothing is copied or sent.
@@ -113,9 +114,9 @@ function instructions(): Line[] {
     const key = sha(path);
     const line = seen.get(key);
     if (line === undefined) {
-      seen.set(key, { take: true, kind: "instructions", bytes: size(path), path });
+      seen.set(key, { take: false, kind: "instructions", bytes: size(path), path, note: "live in rules" });
     } else {
-      line.note = "+" + (Number(line.note?.slice(1) ?? 0) + 1) + " identical";
+      line.note = "live in rules, +" + (Number(line.note?.match(/\+(\d+)/)?.[1] ?? 0) + 1) + " identical";
     }
   }
   return [...seen.values()];

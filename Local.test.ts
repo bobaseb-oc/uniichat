@@ -107,3 +107,46 @@ test("import reads Claude Code's and Codex's folders, unless UNII_IMPORT_DIRS na
   expect(out({})).toEqual(["/h/.claude/projects", "/h/.codex/sessions", "/h/.codex/archived_sessions"]);
   expect(out({ UNII_IMPORT_DIRS: "/s/claude/projects:/t" })).toEqual(["/s/claude/projects", "/t"]);
 });
+
+// Tools.rules on a tree of files in its own process (Config reads
+// UNII_RULES once): its text at each `step` (files written before it)
+function rules_at(files: Record<string, string>, steps: Record<string, string>[]): string[] {
+  const root = fs.mkdtempSync(os.tmpdir() + "/unii-rules-");
+  const write = (fs_: Record<string, string>) => Object.entries(fs_).forEach(([f, text]) => (fs.mkdirSync(require("node:path").dirname(root + "/" + f), { recursive: true }), fs.writeFileSync(root + "/" + f, text.replaceAll("$ROOT", root))));
+  write(files);
+  fs.writeFileSync(root + "/steps.json", JSON.stringify(steps));
+  const code = [
+    'import { Tools } from "./Tools.ts"; import * as fs from "node:fs";',
+    "const root = " + JSON.stringify(root) + "; const out = [];",
+    'for (const step of JSON.parse(fs.readFileSync(root + "/steps.json", "utf8"))) {',
+    '  for (const [f, t] of Object.entries(step)) fs.writeFileSync(root + "/" + f, t);',
+    "  out.push(Tools.rules());",
+    "}",
+    "console.log(JSON.stringify(out));",
+  ].join("\n");
+  const run = Bun.spawnSync([process.execPath, "-e", code], { cwd: import.meta.dir, env: { ...process.env, UNII_DIR: DIR, UNII_RULES: root + "/top.md" } });
+  return JSON.parse(run.stdout.toString() || '["' + run.stderr.toString().replace(/["\\\n]/g, " ") + '"]');
+}
+
+test("rules expand @imports as Claude Code's: relative, absolute, nested; fences, missing files and loops kept", () => {
+  const [text] = rules_at({
+    "top.md"      : "Top\n@sub/a.md\n@$ROOT/abs.md\n```\n@sub/a.md\n```\n@nowhere.md\nmail me @ noon",
+    "sub/a.md"    : "A\n@b.md",
+    "sub/b.md"    : "B\n@../top.md",
+    "abs.md"      : "Abs",
+  }, [{}]);
+  expect(text).toBe("Top\nA\nB\n@../top.md\nAbs\n```\n@sub/a.md\n```\n@nowhere.md\nmail me @ noon");
+});
+
+test("rules are read anew at each call: an edited import shows at the next", () => {
+  const [before, after] = rules_at({ "top.md": "@inc.md", "inc.md": "old rule" }, [{}, { "inc.md": "new rule" }]);
+  expect(before).toBe("old rule");
+  expect(after).toBe("new rule");
+});
+
+test("rules stop expanding at depth 5", () => {
+  const files: Record<string, string> = { "top.md": "@d1.md" };
+  for (let i = 1; i <= 7; i++) files["d" + i + ".md"] = "L" + i + "\n@d" + (i + 1) + ".md";
+  const [text] = rules_at(files, [{}]);
+  expect(text).toBe("L1\nL2\nL3\nL4\nL5\n@d6.md");
+});

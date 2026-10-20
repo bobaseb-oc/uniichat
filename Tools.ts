@@ -23,6 +23,8 @@
 // there anew).
 
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { AskAI, type Ask, type Bill, type Block, type Call, type Event, type Kind, type Pay } from "./AskAI.ts";
 import type { Out } from "./Agent.ts";
 import { report_text } from "./Call.ts";
@@ -190,6 +192,30 @@ const DEVICES_NONE = "(None is open now.)";
 // a subagent's prompt: its part, then the view's and the devices' docs
 const SUB = SUB_HEAD + "\n\n" + VIEW_DOC + "\n\n" + DEVICES;
 
+// how deep a rules file's @imports go (Claude Code's limit)
+const RULES_DEPTH = 5;
+
+// a rules file with its @imports expanded as Claude Code's are: a line
+// that is only "@path" (relative to its file, absolute, or "~/") is that
+// file's rules; one in a code fence, missing, already open (a loop) or
+// past RULES_DEPTH stays as it is
+function rules_read(file: string, depth: number, open: string[]): string {
+  const stack = [...open, file];
+  let fence = false;
+  return fs.readFileSync(file, "utf8").split("\n").map((line) => {
+    if (/^\s*```/.test(line)) {
+      fence = !fence;
+      return line;
+    }
+    const at = line.trim().match(/^@(\S+)$/);
+    if (fence || at === null || depth >= RULES_DEPTH) {
+      return line;
+    }
+    const to = at[1].startsWith("~/") ? os.homedir() + at[1].slice(1) : path.resolve(path.dirname(file), at[1]);
+    return stack.includes(to) || !fs.existsSync(to) ? line : rules_read(to, depth + 1, stack);
+  }).join("\n");
+}
+
 // the tools of everyone (OWN), the master's (BOSS), those that run on a
 // device (`kit`: Machine.ts's), and the master's computer tasks (HAND),
 // whose agents get only COMPUTER, on their device
@@ -270,8 +296,10 @@ export namespace Tools {
     return { text: "Agents at work now: " + (names.length === 0 ? "none." : names.join(", ") + ".") + "\n\n", mark: false };
   }
 
+  // the rules file, read anew at each call, its @imports expanded
+  // (rules_read)
   export function rules(): string {
-    return config.RULES ? fs.readFileSync(config.RULES, "utf8") : "";
+    return config.RULES ? rules_read(config.RULES, 0, []) : "";
   }
 
   // MCP

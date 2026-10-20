@@ -60,7 +60,8 @@ searxng_start() {
 
 # the server: its key and origin from LiteLLM, Opus 5.5 by default, Haiku
 # 5.5 for summaries, search by SearXNG instead of Anthropic's server tool
-# (LiteLLM serves Claude from Bedrock, which has none), no mail or push keys
+# (LiteLLM serves Claude from Bedrock, which has none), your Claude Code
+# rules live (local/rules.md), no mail or push keys
 server_exec() {
   exec env -u RESEND_API_KEY -u APNS_KEY -u OPENAI_API_KEY \
     ANTHROPIC_API_KEY="${LITELLM_API_KEY:?set LITELLM_API_KEY}" \
@@ -69,6 +70,7 @@ server_exec() {
     UNII_COMPACTOR="${UNII_COMPACTOR:-claude-api:haiku-5.5:high:slow}" \
     UNII_SEARCHES=0 \
     UNII_SEARXNG_URL="$SEARCH" \
+    UNII_RULES="${UNII_RULES:-$ROOT/local/rules.md}" \
     UNII_SITE="$URL" \
     bun "$ROOT/Server.ts" "$PORT"
 }
