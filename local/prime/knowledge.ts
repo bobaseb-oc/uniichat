@@ -15,7 +15,10 @@
 //   paragraph, or its package's description), language, newest commit;
 //   all one chat, a card a message, oldest first, so a run later brings
 //   only the cards of repos with new commits (Import.ts import_new)
-// Nothing is fetched: the repos are read as last pulled.
+// - a card of each OnCorps repo on GitHub not cloned here (ORG, by `gh`,
+//   read only): its description, else its README's first paragraph (an
+//   archived one: its description alone), dated by its last push
+// Nothing is fetched into a repo: the clones are read as last pulled.
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -49,6 +52,9 @@ const CARDS = GIT + "/all_oncorps";
 
 const GROUP = "all_oncorps repo cards";
 
+// the GitHub org whose repos not cloned here get cards too
+const ORG = "OnCorps";
+
 // a digest's most characters; a README's and another doc's in it
 const DIGEST = 40 * 1024;
 const README = 12 * 1024;
@@ -66,6 +72,12 @@ const COPIES = /(^|\/)(node_modules|vendor|\.venv|dist|build)\//;
 const AUDITS = /security[-_ ]?audit/i;
 
 const CODE = new Set(["py", "ts", "tsx", "js", "jsx", "php", "sql", "scala", "java", "go", "rs", "cs", "rb", "sh", "swift", "kt", "r"]);
+
+// Types
+// =====
+
+// a repo as `gh repo list --json` gives it
+export type GhRepo = { name: string; isArchived: boolean; pushedAt: string; description: string; primaryLanguage: { name: string } | null; defaultBranchRef: { name: string } | null };
 
 // Git
 // ===
@@ -222,6 +234,31 @@ export function card(dir: string, secrets: string[]): Staged {
   return { kind: "repo-card", path: dir, date: iso(date || new Date().toISOString()), text: clean(secrets)(text), group: GROUP };
 }
 
+// the org's repos cloned nowhere here (`local`: folder names, a ".git"
+// suffix dropped)
+export function remote_new(repos: GhRepo[], local: Set<string>): GhRepo[] {
+  const here = new Set([...local].map((n) => n.replace(/\.git$/, "")));
+  return repos.filter((r) => !here.has(r.name));
+}
+
+// top: its top-level files, said when nothing else says what it is
+export function remote_card(r: GhRepo, readme: string | null, secrets: string[], top: string[] = []): Staged {
+  const what = r.description || (readme === null ? "" : purpose(readme));
+  const none = "(no description" + (top.length > 0 ? "; top level: " + top.slice(0, 12).join(", ") : "") + ")";
+  const text = [
+    r.name + ": " + (what || none),
+    "language: " + (r.primaryLanguage?.name ?? "none") + "; default branch " + (r.defaultBranchRef?.name ?? "none") + "; not cloned here (github.com/" + ORG + "/" + r.name + ")" + (r.isArchived ? "; archived" : ""),
+    "last push " + r.pushedAt.slice(0, 10),
+  ].join("\n");
+  return { kind: "repo-card", path: "github.com/" + ORG + "/" + r.name, date: iso(r.pushedAt), text: clean(secrets)(text), group: GROUP };
+}
+
+// `gh` read only: its output, or null (not signed in, offline, a 404)
+function gh(...args: string[]): string | null {
+  const out = Bun.spawnSync(["gh", ...args]);
+  return out.exitCode === 0 ? out.stdout.toString() : null;
+}
+
 if (import.meta.main) {
   const secrets = env_secrets(process.env);
   const docs: Staged[] = [];
@@ -250,9 +287,21 @@ if (import.meta.main) {
       skip(d, err);
     }
   }
+  const listed = gh("repo", "list", ORG, "--limit", "5000", "--json", "name,isArchived,pushedAt,description,primaryLanguage,defaultBranchRef");
+  if (listed === null) {
+    skip("GitHub's " + ORG + " repos", "gh repo list failed (gh auth status?)");
+  } else {
+    const local = new Set([...fs.readdirSync(CARDS), ...DIGESTS.map((d) => path.basename(d))]);
+    for (const r of remote_new(JSON.parse(listed), local)) {
+      const readme = r.description || r.isArchived ? null : gh("api", "repos/" + ORG + "/" + r.name + "/readme", "-H", "Accept: application/vnd.github.raw");
+      const bare = !r.description && !r.isArchived && (readme === null || purpose(readme) === "");
+      const top = bare ? (gh("api", "repos/" + ORG + "/" + r.name + "/contents", "--jq", ".[].name") ?? "").split("\n").filter((n) => n !== "") : [];
+      docs.push(remote_card(r, readme, secrets, top));
+    }
+  }
   fs.mkdirSync(OUT, { recursive: true, mode: 0o700 });
   const out = chats(docs);
   fs.writeFileSync(OUT + "/knowledge.json", JSON.stringify(out), { mode: 0o600 });
   const count = (kind: string) => docs.filter((d) => d.kind === kind).length;
-  console.log("knowledge.json:", out.length, "chats:", count("knowledge"), "documents,", count("repo-digest"), "digests,", count("repo-card"), "cards;", (JSON.stringify(out).length / 1e6).toFixed(2), "MB");
+  console.log("knowledge.json:", out.length, "chats:", count("knowledge"), "documents,", count("repo-digest"), "digests,", count("repo-card"), "cards (" + docs.filter((d) => d.path.startsWith("github.com/")).length + " not cloned here);", (JSON.stringify(out).length / 1e6).toFixed(2), "MB");
 }

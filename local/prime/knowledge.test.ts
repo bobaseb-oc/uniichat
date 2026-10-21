@@ -9,7 +9,7 @@
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { card, digest, graphify, okf } from "./knowledge.ts";
+import { card, digest, graphify, okf, remote_card, remote_new } from "./knowledge.ts";
 import { chats } from "./export.ts";
 
 const KEY = "sk-ant-api03-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6";
@@ -124,4 +124,32 @@ test("no source brings a security audit: not OKF's copies, not a repo's docs", (
   const dir = repo({ "src/docs/source_docs/SECURITY_AUDIT_RECON.md": "weak spots", "src/docs/a.md": "ok", "docs/security-audit-2026.md": "weak spots", "README.md": "# R\n\nok" });
   expect(okf(dir, "main", []).map((d) => d.path.split(":").pop())).toEqual(["src/docs/a.md"]);
   expect(digest(dir, []).text).not.toContain("weak spots");
+});
+
+// a repo as `gh repo list --json` gives it
+function gh(over: Record<string, unknown>): any {
+  return { name: "new-app", isArchived: false, pushedAt: "2026-10-16T09:00:00Z", description: "", primaryLanguage: { name: "Python" }, defaultBranchRef: { name: "main" }, ...over };
+}
+
+test("the org's repos not cloned here: none cloned anywhere (a .git suffix too)", () => {
+  const repos = [gh({ name: "a" }), gh({ name: "b" }), gh({ name: "c" })];
+  expect(remote_new(repos, new Set(["a", "c.git"])).map((r) => r.name)).toEqual(["b"]);
+});
+
+test("a remote card: its description, else its README's first paragraph; dated by its last push; redacted", () => {
+  const described = remote_card(gh({ description: "Exports AO data." }), null, []);
+  expect(described.text).toContain("new-app: Exports AO data.");
+  expect(described.text).toContain("language: Python; default branch main; not cloned here (github.com/OnCorps/new-app)");
+  expect(described.date).toBe("2026-10-16T09:00:00.000Z");
+  expect(described.group).toBe("all_oncorps repo cards");
+  expect(described.path).toBe("github.com/OnCorps/new-app");
+  const readme = remote_card(gh({}), "# T\n\nRegisters files. Key: " + KEY + "\n", []);
+  expect(readme.text).toContain("new-app: Registers files. Key: [REDACTED:anthropic]");
+  expect(remote_card(gh({ isArchived: true, description: "Old." }), null, []).text).toContain("; archived");
+  expect(remote_card(gh({ primaryLanguage: null }), null, []).text).toContain("new-app: (no description)\nlanguage: none;");
+});
+
+test("a remote card with nothing to quote lists its top-level files instead", () => {
+  const c = remote_card(gh({}), "# new-app\n", [], ["README.md", "pyproject.toml", "src"]);
+  expect(c.text).toContain("new-app: (no description; top level: README.md, pyproject.toml, src)");
 });

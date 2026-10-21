@@ -86,6 +86,7 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
 - [x] Found in the real data: OKF keeps copies of the 4 security audits → excluded from every source (AUDITS), with a test
 - [x] Proof: 8/8 tests, 3 mutations each fail a test; real run 43 s, 0 skipped; 0 secret env values, 0 key shapes, 0 URL credentials, 0 audit sources
 - [x] `unii knowledge` rebuilds it (not at every start: ~40 s)
+- [x] Cards for OnCorps repos not cloned here (gh, read only): 51 (11 active, 40 archived); description, else README's first paragraph, else top-level files; archived: description only
 - [ ] User: `/import ~/.unii-prime/knowledge.json` in the chat (estimate shown first)
 
 ## Later
