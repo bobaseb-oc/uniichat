@@ -1,0 +1,23 @@
+local/prime/knowledge.test.ts
+  s_23eecaba18a11d::t_59407d31c647d6 12,128-155
+local/prime/knowledge.ts
+  s_23eecaba18a11d::t_78b29d5309bce6 18-21,55-57,76-81,237-261,290-301,306
+tasks/todo.md
+  s_23eecaba18a11d::t_85f7e0e1e835c3 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90eb57204f5a2d365e49c8986477a87e587239e8",
+  "prompts": {},
+  "sessions": {
+    "s_23eecaba18a11d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fd85f5d4-a94c-4674-8111-58dc6044d6f2",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
