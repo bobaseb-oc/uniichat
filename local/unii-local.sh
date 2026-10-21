@@ -11,6 +11,8 @@
 #   unii serve        run the server in the foreground
 #   unii start|stop   start (background) or stop the server and SearXNG
 #   unii log          follow the server's log (sign-in links print there)
+#   unii knowledge    rebuild ~/.unii-prime/knowledge.json (OKF, graphify guides,
+#                     repo digests and cards; local/prime/knowledge.ts)
 #   unii mcp-login S  sign in to the MCP server S with OAuth (e.g. atlassian);
 #                     the grant goes to the Keychain only
 #   unii mcp-logout S delete that grant
@@ -150,6 +152,7 @@ case "${1:-}" in
   start) server_start ;;
   stop)  server_stop ;;
   log)   exec tail -f "$LOG" ;;
+  knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "unii: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;
   mcp-logout) mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" --logout ;;
   "")    server_start && logs_make && UNII_IMPORT_ASK=1 term_exec "$URL" ;;

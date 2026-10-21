@@ -42,8 +42,9 @@ const SECRET_PARTS = new Set(["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "S
 // a count per secret's name
 export type Hits = Record<string, number>;
 
-// a document staged
-export type Staged = { kind: string; path: string; date: string; text: string };
+// a document staged; group: the chat it joins, a message of it (else a
+// chat of its own)
+export type Staged = { kind: string; path: string; date: string; text: string; group?: string };
 
 // Redact
 // ======
