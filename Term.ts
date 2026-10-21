@@ -601,11 +601,18 @@ async function term_import(t: Term, arg: string, ask = false): Promise<void> {
 }
 
 // a dir's sessions (none if it is missing), a file at a time
+// a file to import, read whole into memory: a Bun.file streamed ends a
+// raw stdin at its next key (Bun 1.3.8), so what was typed was sent and
+// the terminal quit
+function import_blob(path: string): Blob {
+  return new Blob([fs.readFileSync(path)]);
+}
+
 async function term_sessions(dir: string): Promise<Import.Session[]> {
   const files = fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).map((f) => dir + "/" + f).filter(Import.import_file) : [];
   const found: Import.Session[] = [];
   for (const f of files) {
-    found.push(...[await Import.import_session(Bun.file(f), "log")].filter((s) => s !== null));
+    found.push(...[await Import.import_session(import_blob(f), "log")].filter((s) => s !== null));
   }
   return found;
 }
@@ -615,7 +622,7 @@ async function export_sessions(path: string): Promise<Import.Session[]> {
   if (!fs.existsSync(path)) {
     throw new Error("no file " + path);
   }
-  return Import.import_export(Bun.file(path));
+  return Import.import_export(import_blob(path));
 }
 
 async function term_topup(t: Term, arg: string): Promise<void> {

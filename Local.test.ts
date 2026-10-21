@@ -150,3 +150,15 @@ test("rules stop expanding at depth 5", () => {
   const [text] = rules_at(files, [{}]);
   expect(text).toBe("L1\nL2\nL3\nL4\nL5\n@d6.md");
 });
+
+// Bun 1.3.8: a Bun.file streamed (the importer reads a session's file as
+// a stream) ends a raw stdin at its next key, so the terminal sent what
+// was typed and quit; Term reads import files whole into memory instead
+test("the terminal reads import files whole, never as Bun.file streams", () => {
+  const term = fs.readFileSync(import.meta.dir + "/Term.ts", "utf8");
+  const body = (name: string) => term.slice(term.indexOf("async function " + name), term.indexOf("\n}\n", term.indexOf("async function " + name)));
+  for (const name of ["term_sessions", "export_sessions"]) {
+    expect(body(name)).not.toContain("Bun.file(");
+    expect(body(name)).toContain("import_blob(");
+  }
+});

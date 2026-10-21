@@ -77,6 +77,8 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
 - [x] Wrapper: plain `unii` runs `logs_make`, then the terminal with the ask on
 - [x] Live: sync 25 restaged / 170 kept in 2.2 s, then 0 / 195 in 0.13 s; the terminal showed "Found 500 new messages … about $1.13 … /import claude go"
 - [ ] Not checked live: the silent case (needs nothing new, i.e. after that import)
+- [x] Bug (user): a key sent itself and the terminal quit. Cause: Bun 1.3.8 ends a raw stdin at the next key after Bun.file streams (the ask's log scan; a manual /import too). Fix: Term reads import files whole (`import_blob`); guard test; live: key + backspace, terminal stays open, nothing sent
+- [ ] Ask user: upgrade Bun 1.3.8 → 1.3.14 (upstream's, per Term.ts note); may fix this and the zip_file hang at the root
 
 ## Later
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
