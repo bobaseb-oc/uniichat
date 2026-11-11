@@ -1,0 +1,21 @@
+failsafe.test.ts
+  s_b63b8af83c3adf::t_6ee6456c2dabac 241-291
+Agent.ts
+  s_b63b8af83c3adf::t_1b327131a4f9ca 10-11,429-431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7165b9890244d1368ce399c8ef7b2e45cd78ec7d",
+  "prompts": {},
+  "sessions": {
+    "s_b63b8af83c3adf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee0cba36-7424-4946-8e13-1564ccefd438",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
