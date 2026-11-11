@@ -58,3 +58,14 @@ test("a stop still kills a shell that may be sent away", async () => {
   expect(out.text).not.toContain("never");
   expect(out.text).toContain("(stopped in ");
 });
+
+// Unii's jobs (cwd "main") run in the device's home repo when it has one;
+// an agent's in its own dir under the work dir, home or not
+test("Unii's jobs run in the home repo; an agent's in its own work dir", async () => {
+  const home = fs.mkdtempSync(os.tmpdir() + "/unii-home-");
+  const work = DIR + "/work";
+  const pwd = async (cwd: string, h?: string) => (await Machine.run({ name: "shell", input: { command: "pwd -P" }, cwd }, work, new AbortController().signal, undefined, h)).text.split("\n")[0].trim();
+  expect(await pwd("main", home)).toBe(fs.realpathSync(home));
+  expect(await pwd("FireAnt", home)).toBe(fs.realpathSync(work) + "/FireAnt");
+  expect(await pwd("main")).toBe(fs.realpathSync(work) + "/main");
+});

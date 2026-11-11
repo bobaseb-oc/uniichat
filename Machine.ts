@@ -121,9 +121,11 @@ export function spec(name: string, info: string, fields: object, need: string[])
 
 export namespace Machine {
 
-  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
-    const root = work.startsWith("~/") ? os.homedir() + work.slice(1) : work;
-    const cwd = path.join(root, path.basename(job.cwd));
+  // in <work>/<its caller>, Unii's (main) in the home repo if there is one
+  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal, home?: string): Promise<Out> {
+    const tilde = (p: string) => (p.startsWith("~/") ? os.homedir() + p.slice(1) : p);
+    const root = tilde(work);
+    const cwd = job.cwd === "main" && home ? tilde(home) : path.join(root, path.basename(job.cwd));
     const input = job.input;
     const file = path.resolve(cwd, String(input.path));
     try {

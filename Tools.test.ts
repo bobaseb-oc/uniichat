@@ -141,3 +141,17 @@ test("the crew: each agent's tier, starter, model and status; one dismissed is g
   expect(Tools.crew(tools).map((c) => c.name)).not.toContain("Old");
   Tools.close(tools);
 });
+
+test("the devices line names a device's home repo, and Unii's tools say they run there", () => {
+  const tools = Tools.serve({} as any, {} as any);
+  Tools.attach(tools, "t1", "mac", "u", { send: () => {}, live: () => true, computer: false, work: "~/.unii/work", home: "~/repos/home" });
+  Tools.attach(tools, "t2", "box", "u", { send: () => {}, live: () => true, computer: false, work: "~/.unii/work" });
+  const text = Tools.devices(tools).text;
+  expect(text).toContain("- mac, work dir ~/.unii/work, home repo ~/repos/home");
+  expect(text).toMatch(/- box, work dir ~\/\.unii\/work\n/);
+  const shell = (who: string) => Tools.list(tools, who).find((t) => t.name === "shell")!.info;
+  expect(shell("main")).toContain("home repo");
+  working(tools, "Wkr");
+  expect(shell("Wkr")).not.toContain("home repo");
+  Tools.close(tools);
+});

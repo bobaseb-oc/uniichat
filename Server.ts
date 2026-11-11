@@ -63,7 +63,7 @@ import style_css from "./web/style.css" with { type: "file" };
 
 // a socket: its user, sign-in (hashed), its query's fields, its device,
 // the parts it was shown (Chat.teach), the agents whose pages it asked for
-type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; device: string | null; seen: Set<string>; watch: Set<string> }>;
+type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; home: string | null; device: string | null; seen: Set<string>; watch: Set<string> }>;
 
 // a body: its file, its size so far
 type Body = { fh: fs.promises.FileHandle; size: number };
@@ -1119,7 +1119,7 @@ export namespace Chat {
   // a view joins on the chat as it is now; a terminal's device too (told
   // its name if its host's was taken)
   export function join(chat: Chat, sock: Sock): void {
-    const { tab, host, computer, work } = sock.data;
+    const { tab, host, computer, work, home } = sock.data;
     chat.socks.add(sock);
     Chat.send(sock, Chat.state(chat));
     Chat.show(chat, sock);
@@ -1127,7 +1127,7 @@ export namespace Chat {
     if (host === null) {
       return;
     }
-    const link = { send: (msg: object) => Chat.send(sock, msg), live: () => chat.socks.has(sock), computer, work };
+    const link = { send: (msg: object) => Chat.send(sock, msg), live: () => chat.socks.has(sock), computer, work, home: home ?? undefined };
     sock.data.device = Tools.attach(chat.tools, tab, host, sock.data.who, link);
     if (sock.data.device !== host) {
       Chat.send(sock, { $: "note", text: host + " was taken: Unii calls this computer " + sock.data.device + "." });
@@ -1655,7 +1655,8 @@ export namespace Main {
         const q    = new URL(req.url).searchParams;
         const who  = Cloud.hash(Cloud.token(req));
         const work = q.get("work") ?? "~/.unii/work";
-        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, device: null, seen: new Set<string>(), watch: new Set<string>() };
+        const home = q.get("home") || null;
+        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, home, device: null, seen: new Set<string>(), watch: new Set<string>() };
         return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
       }
       const chat = Chat.open(user);

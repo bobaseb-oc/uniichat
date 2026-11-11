@@ -72,7 +72,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.140";
+const VERSION = "1.0.141";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -120,6 +120,9 @@ const DEVICE = LOCAL || os.hostname();
 // where the agent's tools work on this device: in WORK/main (the agent)
 // and WORK/<name> (each subagent)
 const WORK = process.env.UNII_WORK || "~/.unii/work";
+// the home repo: where Unii's own jobs run, its AGENTS.md pointing to the
+// other repos (none: <work>/main)
+const HOME_REPO = process.env.UNII_HOME_REPO || "";
 
 // whether the agent may use this device's screen, mouse and keyboard
 const COMPUTER = process.env.UNII_COMPUTER === "1";
@@ -246,7 +249,7 @@ function term_new(url: string): Term {
 
 // connects, by View's link, naming this device
 function term_connect(t: Term): void {
-  const dev = "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK);
+  const dev = "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
   View.link_open(t.v, {
     open : (query) => new WebSocket(t.url.replace(/^http/, "ws") + "/ws" + query + dev, { headers: term_auth() } as any),
     post : (path, body) => fetch(t.url + path, { method: "POST", headers: term_auth(), body }),
@@ -1037,7 +1040,7 @@ async function term_run(t: Term, id: string, job: Job): Promise<void> {
   const away  = new AbortController();
   t.jobs.set(id, { abort, away, name: job.name });
   const no   = { text: "This terminal does no computer use.", fail: true };
-  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal, away.signal);
+  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal, away.signal, HOME_REPO || undefined);
   const size = Buffer.byteLength(JSON.stringify(out));
   const most = View.FRAME - 1024;
   const big  = { text: "The output, " + size + " bytes, is over the " + most + " a tool may send.", fail: true };

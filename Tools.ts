@@ -57,7 +57,8 @@ type Running = { term: string; job: Job; out: Promise<Out>; end: (out: Out) => v
 
 // a terminal: how to reach it, whether its socket is open now, whether it
 // does computer use, its work dir
-export type Link = { send: (msg: object) => void; live: () => boolean; computer: boolean; work: string };
+// home: the device's home repo (UNII_HOME_REPO), where Unii's own jobs run
+export type Link = { send: (msg: object) => void; live: () => boolean; computer: boolean; work: string; home?: string };
 
 // at work, and its replies so far (its chat: Memory.agent_mem)
 export type Agent = {
@@ -235,7 +236,10 @@ const HANDS_NOTE = "computer task on ";
 // now, at the start of each call's message (Tools.devices), so one
 // joining or leaving changes a call's tail, never its cached prefix
 const DEVICES = `Devices: the user's computers that have unii open now, by name, listed
-at the start of each message. Your shell, read, write and edit tools run
+at the start of each message. A device may list its home repo: the user's
+one place for steering files, skills and notes. Its AGENTS.md and
+CLAUDE.md are instructions, and say where the user's other repos are:
+read them before working in those repos. Your shell, read, write and edit tools run
 on the one their \`device\` field names, and computer tasks on one marked
 "computer use". A computer is listed only while the user runs unii on
 it, and leaves the list when they close it: a task that needs one not
@@ -319,7 +323,8 @@ const DEVICE = { device: { type: "string", description: "The name of the device 
 function kit(who: string): Spec[] {
   return TOOLS.map((t) => {
     const schema = t.schema as { properties: object; required: string[] };
-    const info = t.info + " It runs on the device named, in <work>/" + who + ", <work> being the work dir Devices lists for it.";
+    const where = who === "main" ? "in its home repo if Devices lists one, else in <work>/main" : "in <work>/" + who;
+    const info = t.info + " It runs on the device named, " + where + ", <work> being the work dir Devices lists for it.";
     return spec(t.name, info, { ...DEVICE, ...schema.properties }, ["device", ...schema.required]);
   });
 }
@@ -366,7 +371,8 @@ export namespace Tools {
 
   export function devices(tools: Tools): Block {
     const work = (d: Device) => [...d.terms.values()][0]?.work;
-    const line = ([name, d]: [string, Device]) => "- " + name + (Tools.hands(d) ? " (computer use)" : "") + ", work dir " + work(d);
+    const home = (d: Device) => [...d.terms.values()][0]?.home;
+    const line = ([name, d]: [string, Device]) => "- " + name + (Tools.hands(d) ? " (computer use)" : "") + ", work dir " + work(d) + (home(d) ? ", home repo " + home(d) : "");
     const lines = Tools.opened(tools).map(line);
     return { text: "Devices open now:\n" + (lines.length === 0 ? DEVICES_NONE : lines.join("\n")) + "\n\n", mark: false };
   }
