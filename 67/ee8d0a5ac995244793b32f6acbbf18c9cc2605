@@ -1,0 +1,38 @@
+agents.test.ts
+  s_8af7231ad1662b::t_3476133139e6ad 307
+  s_8af7231ad1662b::t_ba37bf2d129a38 53-56,58-60,77-79,218,236,259,291-306,308-323
+  s_8af7231ad1662b::t_85c16fd97a3e2b 324-325
+prompt.txt
+  s_8af7231ad1662b::t_d9fc3ff98ab073 30,35-42,51
+crash.test.ts
+  s_8af7231ad1662b::t_7062409cb6ec9b 45
+  s_8af7231ad1662b::t_b452f45d958d60 36
+tasks/todo.md
+  s_8af7231ad1662b::t_4f0fc2c9b50662 119-120
+Config.ts
+  s_8af7231ad1662b::t_f7bfb891ba9756 40-43
+Server.test.ts
+  s_8af7231ad1662b::t_d8bf146b6210d7 126
+Server.ts
+  s_8af7231ad1662b::t_f3d7ab9dba3028 989
+Tools.test.ts
+  s_8af7231ad1662b::t_b19068b56d0263 33-35,38,42-43,70-128
+Tools.ts
+  s_8af7231ad1662b::t_3f0b9b7734cd6a 38,65-66,73,76-81,136-138,143-172,219-221,224-227,245-249,253,301-315,376,456-460,494-496,501-507,510-513,516-517,519,643-645,648-650,653-654,663-736,743,746-753,757,767,771-773,775,777,779-780,784,788,791,794-796,799,801,804,813-815,822-824,826,847-879,887-890,897-899,905,912,914-918,931,967,969,973-975,983,985-987
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67ee8d0a5ac995244793b32f6acbbf18c9cc2605",
+  "prompts": {},
+  "sessions": {
+    "s_8af7231ad1662b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72fcd55a-a6a0-4ecd-85e6-248279a1cd71",
+        "model": "unknown"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
