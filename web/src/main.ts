@@ -321,6 +321,9 @@ function pics(imgs: Blob[]): void {
 
 function act(a: View.Act): void {
   const said = a.$ === "Send" ? a.text.trim() : "";
+  if (a.$ === "Send" && "Notification" in window && Notification.permission === "default") {
+    void Notification.requestPermission();
+  }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
   for (const msg of View.view_act(v, a)) {
@@ -489,8 +492,26 @@ function hear(msg: View.Server): void {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
   P.rows ||= msg.$ === "state" ? v.agents.join() !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  if (msg.$ === "state") {
+    View.view_alerts(v, Date.now()).forEach(notify);
+  }
   import_welcome();
   draw(true);
+}
+
+// an alert (View.view_alerts) as a desktop notification, while the page
+// is hidden and the person allowed them (asked at their first message);
+// a click shows its agent
+function notify(alert: View.Alert): void {
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
+  note.onclick = () => {
+    window.focus();
+    act({ $: "Goto", name: alert.name });
+    note.close();
+  };
 }
 
 // Import

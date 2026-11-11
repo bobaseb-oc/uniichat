@@ -24,6 +24,7 @@ import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
 import * as Import from "./Import.ts";
 import { Machine, type Job } from "./Machine.ts";
+import * as Notify from "./Notify.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
@@ -55,6 +56,8 @@ type Term = {
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
   crew?   : boolean; // the crew panel hidden (/crew)
+  away?   : boolean; // the terminal not in front (it told FocusOut): alerts notify
+  goto?   : string | null; // the last alert's agent, shown as the terminal comes back
 };
 
 // a job running here: its stop, its send to the background (a shell's)
@@ -69,7 +72,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.139";
+const VERSION = "1.0.140";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -304,6 +307,30 @@ function term_hear(t: Term, msg: View.Server): void {
   term_draw(t);
   if (msg.$ === "state") {
     term_idle(t);
+    View.view_alerts(t.v, Date.now()).forEach((alert) => t.away && term_notify(t, alert));
+  }
+}
+
+// the terminal went to the back (alerts notify) or came to the front: to
+// the last alert's agent, if one came meanwhile
+function term_focus(t: Term, away: boolean): void {
+  t.away = away;
+  if (!away && t.goto !== undefined) {
+    term_act(t, { $: "Goto", name: t.goto });
+    t.goto = undefined;
+    term_draw(t);
+  }
+}
+
+// a desktop notification (Notify.ts): by the terminal's escape sequence,
+// or osascript on a Mac, its text as arguments
+function term_notify(t: Term, alert: View.Alert): void {
+  const way = Notify.notify_way(process.env);
+  t.goto = alert.name;
+  if (way === "osc777" || way === "osc9") {
+    process.stdout.write(Notify.notify_osc(way, alert.title, alert.body));
+  } else if (way === "osascript" && process.platform === "darwin") {
+    Bun.spawn(["osascript", ...Notify.notify_args(alert.title, alert.body)], { stdout: "ignore", stderr: "ignore" });
   }
 }
 
@@ -379,6 +406,9 @@ function term_idle(t: Term): void {
 
 // a key ("": text typed): its line of COMMANDS
 function term_press(t: Term, key: string): void {
+  if (key === "FocusIn" || key === "FocusOut") {
+    return term_focus(t, key === "FocusOut");
+  }
   const cmd = term_commands(t.v).find((c) => c[1] !== "" && c[1].split(", ").includes(key));
   if (cmd !== undefined) {
     cmd[3](t, cmd[0] === "" ? key : "");

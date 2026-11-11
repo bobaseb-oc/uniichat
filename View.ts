@@ -77,6 +77,14 @@ export type State = {
 export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer"; model: string; status: Status; since: number };
 export type Status = "working" | "waiting" | "failed" | "stopped" | "done";
 
+// a desktop alert (view_alerts): its key (debounced by), what it says,
+// the agent to show on a click (null: UniiChat)
+export type Alert = { key: string; title: string; body: string; name: string | null };
+
+// what the last alerts were worked out from: whether a turn ran, each
+// agent's status
+export type Heard = { busy: boolean; status: Map<string, Status> };
+
 // a crew row as drawn: its agent, how deep under Unii, its text
 export type CrewRow = Crew & { depth: number; text: string };
 
@@ -96,6 +104,8 @@ export type View = State & {
   minds : Map<number, string[]>;
   pages : Map<string, Page>;
   page  : Page | null;
+  heard : Heard | null;
+  alerted : Map<string, number>;
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -283,6 +293,8 @@ export function Cap(text: string): Row {
 // a crew row's mark by status, and the order siblings are listed in
 const CREW: Record<Status, string> = { failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
 const STATUSES: Status[] = ["failed", "working", "waiting", "stopped", "done"];
+// the least time between two alerts of a key (a turn's ends: one in a run)
+const ALERT_GAP = 20000;
 
 export function view_new(): View {
   return {
@@ -306,6 +318,8 @@ export function view_new(): View {
     minds     : new Map(),
     pages     : new Map(),
     page      : null,
+    heard     : null,
+    alerted   : new Map(),
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -595,6 +609,27 @@ export function view_crew(v: View, now: number): CrewRow[] {
   };
   add("main", 0);
   return rows;
+}
+
+// what the person is alerted to since the state last asked (a client
+// shows them only when it isn't in front): an agent that failed, a turn
+// that ended; none from the first state heard, each key at most once in
+// ALERT_GAP ms
+export function view_alerts(v: View, now: number): Alert[] {
+  const was = v.heard;
+  v.heard = { busy: v.busy, status: new Map(v.crew.map((c) => [c.name, c.status])) };
+  if (was === null) {
+    return [];
+  }
+  const failed = v.crew.filter((c) => c.status === "failed" && was.status.get(c.name) !== "failed").map((c): Alert => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }));
+  const ended: Alert[] = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  return [...failed, ...ended].filter((a) => {
+    const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
+    if (due) {
+      v.alerted.set(a.key, now);
+    }
+    return due;
+  });
 }
 
 // the agents that need the person: failed ones

@@ -110,3 +110,13 @@ test("a frame never passes its width, however long its title", () => {
   const rows = View.entry_rows(1, "echo", diff);
   expect(Paint.rows_lines(rows, 60).map((l) => Paint.text_width(l.map((r) => r.x).join("")))).toEqual([60, 60, 60, 60]);
 });
+
+// the terminal tells focus (CSI ?1004h asked): CSI I in, CSI O out, as
+// keys, never typed
+test("focus in and out come as keys, never as text", () => {
+  expect(Screen.MODES_ON).toContain("\x1b[?1004h");
+  splits("a\x1b[Ib\x1b[O", (text, keys) => {
+    expect(text).toBe("ab");
+    expect(keys).toEqual(["FocusIn", "FocusOut"]);
+  });
+});

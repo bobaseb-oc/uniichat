@@ -74,3 +74,25 @@ test("tabs follow the crew: UniiChat, then its agents in crew order", () => {
   expect(View.view_named(v, "do")).toBe("Done");
   expect(View.view_named(v, "zz")).toBe("zz");
 });
+
+// alerts: an agent failing, a turn ending; none for the state a view
+// first hears, none for one told again, none twice within the debounce
+test("alerts: an agent that fails, a turn that ends; not on connect, not twice", () => {
+  const v = View.view_new();
+  const hear = (busy: boolean, list: View.Crew[]) => View.view_hear(v, { $: "state", ...v, busy, crew: list });
+  hear(true, [crew("Mgr", "main", "manager", "working"), crew("Old", "main", "worker", "failed")]);
+  expect(View.view_alerts(v, 0)).toEqual([]);
+  hear(true, [crew("Mgr", "main", "manager", "failed"), crew("Old", "main", "worker", "failed")]);
+  expect(View.view_alerts(v, 1000)).toEqual([{ key: "Mgr failed", title: "Mgr failed", body: "manager · sonnet-5.5: open it to see why.", name: "Mgr" }]);
+  expect(View.view_alerts(v, 2000)).toEqual([]);
+  hear(false, [crew("Mgr", "main", "manager", "failed")]);
+  expect(View.view_alerts(v, 3000)).toEqual([{ key: "turn", title: "UniiChat answered", body: "Its turn ended: your move.", name: null }]);
+  hear(true, []);
+  View.view_alerts(v, 4000);
+  hear(false, []);
+  expect(View.view_alerts(v, 5000)).toEqual([]);
+  hear(true, []);
+  View.view_alerts(v, 30000);
+  hear(false, []);
+  expect(View.view_alerts(v, 40000)).toHaveLength(1);
+});

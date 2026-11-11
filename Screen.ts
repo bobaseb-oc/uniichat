@@ -66,11 +66,12 @@ const SYNC_ON  = "\x1b[?2026h";
 const SYNC_OFF = "\x1b[?2026l";
 const WIPE     = "\x1b[2J\x1b[3J\x1b[H";
 
-// bracketed paste, kitty's keys at flags 1 and 4 (popped before pushed:
-// 4, a shifted key's alternate, so Shift+/ comes with ?), the flags
-// asked (a kitty terminal answers CSI ? flags u); off
-export const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>5u\x1b[?u";
-const MODES_OFF = "\x1b[?2004l\x1b[<u";
+// bracketed paste, focus told (CSI I, CSI O: FocusIn, FocusOut), kitty's
+// keys at flags 1 and 4 (popped before pushed: 4, a shifted key's
+// alternate, so Shift+/ comes with ?), the flags asked (a kitty terminal
+// answers CSI ? flags u); off
+export const MODES_ON  = "\x1b[?2004h\x1b[?1004h\x1b[<u\x1b[>5u\x1b[?u";
+const MODES_OFF = "\x1b[?2004l\x1b[?1004l\x1b[<u";
 
 // a sequence: CSI params [intermediates] final, or SS3 final (kitty's:
 // CSI code[:alts] [; mods] u; modifyOtherKeys': CSI 27 ; mods ; code ~);
@@ -97,6 +98,8 @@ const KEYS: Record<string, string> = {
   H     : "Home",
   F     : "End",
   Z     : "Shift+Tab",
+  I     : "FocusIn",
+  O     : "FocusOut",
   "1~"  : "Home",
   "3~"  : "Delete",
   "4~"  : "End",

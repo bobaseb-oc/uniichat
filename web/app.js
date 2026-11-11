@@ -906,6 +906,7 @@ function Cap(text) {
 }
 var CREW = { failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
 var STATUSES = ["failed", "working", "waiting", "stopped", "done"];
+var ALERT_GAP = 20000;
 function view_new() {
   return {
     busy: false,
@@ -928,6 +929,8 @@ function view_new() {
     minds: new Map,
     pages: new Map,
     page: null,
+    heard: null,
+    alerted: new Map,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1168,6 +1171,22 @@ function view_crew(v, now) {
   };
   add("main", 0);
   return rows;
+}
+function view_alerts(v, now) {
+  const was = v.heard;
+  v.heard = { busy: v.busy, status: new Map(v.crew.map((c) => [c.name, c.status])) };
+  if (was === null) {
+    return [];
+  }
+  const failed = v.crew.filter((c) => c.status === "failed" && was.status.get(c.name) !== "failed").map((c) => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }));
+  const ended = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  return [...failed, ...ended].filter((a) => {
+    const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
+    if (due) {
+      v.alerted.set(a.key, now);
+    }
+    return due;
+  });
 }
 function ago(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -1832,6 +1851,9 @@ function pics(imgs) {
 }
 function act(a) {
   const said = a.$ === "Send" ? a.text.trim() : "";
+  if (a.$ === "Send" && "Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
   for (const msg of view_act(v, a)) {
@@ -1971,8 +1993,22 @@ function hear(msg) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
   P.rows ||= msg.$ === "state" ? v.agents.join() !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  if (msg.$ === "state") {
+    view_alerts(v, Date.now()).forEach(notify);
+  }
   import_welcome();
   draw(true);
+}
+function notify(alert) {
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
+  note.onclick = () => {
+    window.focus();
+    act({ $: "Goto", name: alert.name });
+    note.close();
+  };
 }
 function importer() {
   const form = $("#import form");
