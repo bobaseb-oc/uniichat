@@ -18,3 +18,12 @@ test("a turn's wait names its model", () => {
   View.view_hear(v, { $: "state", ...v, wait: "" });
   expect(tail(v)).toEqual([]);
 });
+
+// /agent starts an agent on the task (both clients share view_act); with
+// no task it says how, and sends nothing
+test("/agent <task> asks to spawn an agent; no task, a note", () => {
+  const v = View.view_new();
+  expect(View.view_act(v, { $: "Send", text: "/agent  fix x " })).toEqual([{ $: "spawn", task: "fix x" }]);
+  expect(View.view_act(v, { $: "Send", text: "/agent" })).toEqual([]);
+  expect(v.notes.at(-1)).toBe("/agent needs a task: /agent <task>.");
+});

@@ -42,7 +42,7 @@ type Term = {
   v       : View.View;
   scr     : Screen.Screen;
   url     : string;
-  jobs    : Map<string, AbortController>;
+  jobs    : Map<string, Run>;
   ended   : boolean;
   pending : number;
   last    : number;
@@ -55,6 +55,9 @@ type Term = {
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
 };
+
+// a job running here: its stop, its send to the background (a shell's)
+type Run = { abort: AbortController; away: AbortController; name: string };
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
 // does; it runs on its argument, or by a key on "" (or the key's name)
@@ -161,6 +164,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/image <path>",     "",                        "attach an image to the next message",            term_image],
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
       ["/close #id",        "",                        "close block #id and keep it closed",             (t, a) => term_block(t, a, false)],
+      ["/bg",               "Ctrl+B",                  "send the shell commands running here to the background: they go on, output to a file (Ctrl+B eaten? type /bg)", term_bg],
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
       ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options, costs)", term_import],
       ["/export",           "",                        "save memory and account as ./unii-memory.json",  term_export],
@@ -180,6 +184,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Agents", [
       ["",                  "Tab",                     "the next tab",                                   term_cycle],
       ["/tab [name]",       "",                        "the tabs; with a name, that one",               term_tab],
+      ["/agent <task>",     "",                        "start an agent on a task; its report waits in the chat, starting no turn", (t, a) => term_act(t, { $: "Send", text: "/agent " + a })],
       ["/stop [name]",      "",                        "stop all work, agents too; or that agent",       term_stop],
     ]],
     ["Account", [
@@ -321,13 +326,33 @@ function term_back(t: Term, sent: View.Sent): void {
   t.imgs = sent.images ?? [];
 }
 
-// the page shown was `was`: another prints below, after its name (a
-// wipe and whole print took seconds on a long page)
+// the page shown was `was`: another prints below, after its name and the
+// end of what of it printed before, so it shows as it was left, not the
+// last page's end (a wipe and whole print took seconds on a long page)
 function term_went(t: Term, was: View.Page | null): void {
-  if (t.v.page !== was) {
-    term_rows(t, t.v.page === null ? [View.Cap(View.MAIN)] : [], false);
-    term_show(t);
+  const page = t.v.page;
+  if (page === was) {
+    return;
   }
+  const from = page === null ? 0 : t.logs.get(page.name) ?? 0;
+  if (page === null) {
+    const done = t.v.parts.filter(([id, n]) => id + n - 1 <= t.last && !t.wait.some(([w, m]) => w === id && m === n));
+    term_rows(t, [View.Cap(View.MAIN)], false);
+    term_recap(t, t.v.fold === null ? View.view_rows(t.v, done).flat() : []);
+  } else if (from > 0) {
+    const [head, ...seen] = View.page_rows(t.v, { ...page, log: page.log?.slice(0, from) ?? null });
+    term_rows(t, [head], false);
+    term_recap(t, seen);
+  }
+  term_show(t);
+}
+
+// rows printed again, their last screen's worth (the rest is up the
+// scrollback)
+function term_recap(t: Term, rows: View.Row[]): void {
+  const lines = Paint.rows_lines(rows, term_inner()).slice(1 - (process.stdout.rows || 24));
+  t.out = t.out.concat(term_inset(lines.length === 0 ? [] : [[], ...lines]));
+  term_draw(t);
 }
 
 // the input's history: the user's messages known
@@ -790,7 +815,8 @@ function term_show(t: Term): void {
   if (page !== null) {
     const from = t.logs.get(page.name) ?? 0;
     t.logs.set(page.name, Math.max(from, page.log?.length ?? 0));
-    return term_rows(t, View.page_rows(t.v, page, from), false);
+    const rows = View.page_rows(t.v, page, from);
+    return term_rows(t, from === 0 ? rows : rows.slice(1), false);
   }
   if (t.v.fold === null) {
     return term_after(t);
@@ -945,9 +971,9 @@ function term_jobs(t: Term, msg: View.Server & { $: "jobs" | "job" }): void {
     }
     return;
   }
-  for (const [id, abort] of t.jobs) {
+  for (const [id, run] of t.jobs) {
     if (!msg.ids.includes(id)) {
-      abort.abort();
+      run.abort.abort();
     }
   }
 }
@@ -957,14 +983,30 @@ function term_jobs(t: Term, msg: View.Server & { $: "jobs" | "job" }): void {
 // size instead, failed (sent, it would close the socket at every try)
 async function term_run(t: Term, id: string, job: Job): Promise<void> {
   const abort = new AbortController();
-  t.jobs.set(id, abort);
+  const away  = new AbortController();
+  t.jobs.set(id, { abort, away, name: job.name });
   const no   = { text: "This terminal does no computer use.", fail: true };
-  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal);
+  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal, away.signal);
   const size = Buffer.byteLength(JSON.stringify(out));
   const most = View.FRAME - 1024;
   const big  = { text: "The output, " + size + " bytes, is over the " + most + " a tool may send.", fail: true };
   t.jobs.delete(id);
   term_send(t, { $: "out", job: id, out: size > most ? big : out });
+}
+
+// the shell commands running here, sent to the background: each answers
+// now and goes on, its output to a file; dropped from the jobs, so the
+// server's ids no longer stop them (quitting does)
+function term_bg(t: Term): void {
+  const shells = [...t.jobs].filter(([, run]) => run.name === "shell");
+  if (shells.length === 0) {
+    return term_note(t, "No shell command is running here.");
+  }
+  for (const [id, run] of shells) {
+    t.jobs.delete(id);
+    run.away.abort();
+  }
+  term_note(t, "Sent " + shells.length + (shells.length === 1 ? " shell command" : " shell commands") + " to the background; each one's output goes to a file the AI is told of.");
 }
 
 // Login

@@ -135,6 +135,7 @@ export type Client =
   | { $: "zoom"; part: Part }
   | { $: "root" }
   | { $: "agent"; name: string }
+  | { $: "spawn"; task: string } // an agent the person starts (/agent)
   | { $: "guess"; body: Body }; // an import's cost
 
 // an act not answered: with its id, the socket it went by, what its
@@ -379,8 +380,9 @@ export function view_act(v: View, act: Act): Client[] {
       const text   = act.text.trim();
       const images = act.images ?? [];
       // a `/word` reaching here is no command (the terminal ran its
-      // own), but /goal (a message, sent as typed, set as the goal) and
-      // /halt: it errs, never goes to the AI as a message
+      // own), but /goal (a message, sent as typed, set as the goal),
+      // /halt and /agent (an agent on the task): it errs, never goes to
+      // the AI as a message
       const word   = /^\/[a-z]+(?=\s|$)/i.exec(text)?.[0];
       const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
@@ -391,6 +393,11 @@ export function view_act(v: View, act: Act): Client[] {
       }
       if (word === "/halt") {
         return [{ $: "goal", text: null }];
+      }
+      if (word === "/agent") {
+        const task = text.slice(word.length).trim();
+        v.notes.push(...(task === "" ? ["/agent needs a task: /agent <task>."] : []));
+        return task === "" ? [] : [{ $: "spawn", task }];
       }
       if (goal === "") {
         v.notes.push("/goal needs one: /goal <message>.");

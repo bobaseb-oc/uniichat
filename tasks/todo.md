@@ -22,6 +22,13 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 
 - [x] Live rules: `@`-imports in `rules`; local/rules.md imports ~/.claude/CLAUDE.md + repo-file instruction
 - [x] Skills index (local/skills.ts → ~/.unii/skills.md, 66 skills) imported by the rules
+- [x] Rules: subagents get a git worktree only when their edits could collide (local/rules.md "Parallel work in git repos")
+- [x] `stop` tool for the main agent (a `tell` "STOP" only reads between tool calls, so 3 hung agents could not be ended)
+  - [x] Tests first (Tools.test.ts): stops the named, says which were not at work, refused to a subagent, listed for main only
+  - [x] Tools.ts: `stop` spec in BOSS, `case "stop"` → Tools.stop; suite passes; tests fail with it reverted
+  - [x] Proof: 3/3 Tools tests, suite 117/117; guard or stop call removed each fails a test
+  - [ ] User: restart the server (`unii stop`, then `unii`) to load it
+- [ ] Live check: two subagents editing one throwaway repo → two worktrees, main checkout untouched; one alone → no worktree
 - [ ] MCP client, browsers, LSP: see "MCP, browsers, LSP" below
 - [ ] Restart server after the import (loads live rules + skills)
 
@@ -88,6 +95,19 @@ Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md (check in with the
 - [x] `unii knowledge` rebuilds it (not at every start: ~40 s)
 - [x] Cards for OnCorps repos not cloned here (gh, read only): 51 (11 active, 40 archived); description, else README's first paragraph, else top-level files; archived: description only
 - [ ] User: `/import ~/.unii-prime/knowledge.json` in the chat (estimate shown first)
+
+## Ctrl+B background, /agent for the person
+Plan: ~/.claude/plans/shall-we-consider-adding-quizzical-pine.md
+- [x] Fix (user): Tab back to UniiChat showed the last agent's end; `term_went` reprints the page's last screen (`term_recap`)
+- [x] Part 1 tests first (Machine.test.ts): `away` answers early, the file gets the rest and the exit; no `away` still waits (and writes no file when sent late); a stop still kills. Red before, green after
+- [x] Part 1: `Machine.shell`/`run` take `away`; Term `t.jobs` keeps it (`Run`); `/bg`, Ctrl+B (`term_bg`)
+- [x] Part 2 tests first (View.test.ts, Server.test.ts): `/agent` → spawn; a person's agent reports without a turn; the AI's still takes one. Red before; mutations (gate removed, `/agent` unmatched) each fail a test
+- [x] Part 2: `spawn` Client act, `Tools.begin`, `Agent.user`, `Chat.report` gate, `/agent` row
+- [x] Proof: full suite outside the sandbox, 120 pass, 2 fail (the known `local/prime/logs.test.ts` ones); tsc: no new errors in changed files
+- [ ] By hand in unii (Ctrl+B on `sleep 60; echo done`, `/agent`, `/bg` idle): needs the user's terminal
+- [ ] Ask user: rebuild `web/app.js` for the site's `/agent` (Bun 1.4.4's bundle renames ~180 unrelated lines)
+
+Review: the test harness found that an idle chat with no view closes itself (`Chat.free`), so the Server test keeps a stand-in view open. Backgrounded jobs aren't stopped by `/stop`; quitting unii ends them. The output kept before Ctrl+B is the head and tail if it was already cut.
 
 ## Later
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.

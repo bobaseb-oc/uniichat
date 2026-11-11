@@ -717,7 +717,7 @@ export namespace Chat {
     Chat.hold(chat, () => {
       chat.posts += 1;
       const msg = Chat.chats.get(chat.acct.user) !== chat ? null : Chat.push(chat, null, "work", text);
-      if (msg !== null && !stopped && Chat.cloud.billing.refuse(chat.acct.user, 0) === null) {
+      if (msg !== null && !stopped && !agent.user && Chat.cloud.billing.refuse(chat.acct.user, 0) === null) {
         Chat.take(chat, msg);
       }
       chat.posts -= 1;
@@ -1263,6 +1263,25 @@ export namespace Chat {
       }
       case "out": {
         Tools.done(chat.tools, device, String(msg.job), msg.out);
+        return {};
+      }
+      case "spawn": {
+        // refused as a post is, short of credit
+        const task = String(msg.task ?? "").trim();
+        const billing = Chat.cloud.billing;
+        if (task === "") {
+          return { error: "No task." };
+        }
+        if (billing.refuse(chat.acct.user, 0) !== null) {
+          await billing.balance(chat.acct.user);
+        }
+        const refused = billing.refuse(chat.acct.user, 0);
+        if (refused !== null) {
+          return refused;
+        }
+        Chat.mark(chat, id, {});
+        const begun = await Tools.begin(chat.tools, task);
+        Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
         return {};
       }
     }

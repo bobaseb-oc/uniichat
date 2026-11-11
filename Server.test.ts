@@ -86,3 +86,57 @@ test("a turn's wait names the model it runs on, not one picked since", async () 
   expect(out.picked).toBe(out.to);
   expect(out.after).toBe(out.model);
 });
+
+// an agent the person starts (/agent) reports into the chat and starts no
+// turn; one the AI started takes a turn with its report. Its own process,
+// as TURN's: every call is stubbed (summaries' too), an agent's ended by
+// the test, found by its tools' address
+const SPAWN = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+chat.socks.add({ send: () => {}, data: { seen: new Set() } }); // a view open: an idle chat with none ends
+const works = [];
+const push = Chat.push;
+Chat.push = (c, agent, kind, ...rest) => (agent === null && kind === "work" && works.push(rest[0]), push(c, agent, kind, ...rest));
+const calls = [];
+AskAI.ask = (ask, on) => {
+  const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  calls.push({ server: String(ask.server ?? ""), sink });
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 200 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const end = async (name, text) => {
+  await until(() => calls.some((c) => c.server.includes(name)));
+  calls.find((c) => c.server.includes(name)).sink.end({ ok: true, text, left: [] });
+};
+const acted = await Chat.act(chat, "s1", { $: "spawn", task: "count to 3" }, "");
+const started = Chat.state(chat).agents;
+await end(started[0], "1 2 3");
+const reported = await until(() => works.length === 1);
+await Bun.sleep(100);
+const mine = { reported, busy: chat.busy, working: Chat.state(chat).agents.length };
+const ai = Tools.start(chat.tools, { $: "sub", effort: null }, "count to 2", []);
+await end(ai, "1 2");
+const ais = { reported: await until(() => works.length === 2), busy: await until(() => chat.busy) };
+console.log(JSON.stringify({ acted, started, mine, ais }));
+process.exit(0);
+`;
+
+test("a person's agent reports without a turn; the AI's takes one", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/spawn.ts", SPAWN);
+  const proc = Bun.spawn([process.execPath, dir + "/spawn.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.acted).toEqual({});
+  expect(out.started).toHaveLength(1);
+  expect(out.mine).toEqual({ reported: true, busy: false, working: 0 });
+  expect(out.ais).toEqual({ reported: true, busy: true });
+});

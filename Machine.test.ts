@@ -24,3 +24,37 @@ test("a shell's output is decoded whole: a char split over writes, a broken one 
   const broken = await Machine.shell(DIR, "printf 'ab\\303'", live);
   expect(broken.text).toStartWith("ab�\n(exit 0 in ");
 });
+
+test("a shell sent away answers at once; its file gets the rest and the exit", async () => {
+  const stop = new AbortController();
+  const away = new AbortController();
+  const run  = Machine.shell(DIR, "echo early; sleep 0.5; echo late", stop.signal, away.signal);
+  await Bun.sleep(150);
+  away.abort();
+  const out  = await run;
+  const file = DIR + "/" + /bg-\d+\.log/.exec(out.text)![0];
+  expect(out.fail).toBe(false);
+  expect(out.text).toContain("still running");
+  expect(fs.readFileSync(file, "utf8")).toBe("early\n");
+  await Bun.sleep(700);
+  expect(fs.readFileSync(file, "utf8")).toMatch(/^early\nlate\n\(exit 0 in [\d.]+ s\)\n$/);
+});
+
+test("a shell not sent away waits for its command to end", async () => {
+  const away = new AbortController();
+  const out  = await Machine.shell(DIR, "sleep 0.3; echo done", new AbortController().signal, away.signal);
+  expect(out.text).toStartWith("done\n(exit 0 in ");
+  const logs = () => fs.readdirSync(DIR).filter((f) => f.startsWith("bg-")).length;
+  const was  = logs();
+  away.abort();
+  expect(logs()).toBe(was);
+});
+
+test("a stop still kills a shell that may be sent away", async () => {
+  const stop = new AbortController();
+  const run  = Machine.shell(DIR, "sleep 5; echo never", stop.signal, new AbortController().signal);
+  setTimeout(() => stop.abort(), 100);
+  const out  = await run;
+  expect(out.text).not.toContain("never");
+  expect(out.text).toContain("(stopped in ");
+});

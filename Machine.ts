@@ -121,7 +121,7 @@ export function spec(name: string, info: string, fields: object, need: string[])
 
 export namespace Machine {
 
-  export async function run(job: Job, work: string, signal: AbortSignal): Promise<Out> {
+  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
     const root = work.startsWith("~/") ? os.homedir() + work.slice(1) : work;
     const cwd = path.join(root, path.basename(job.cwd));
     const input = job.input;
@@ -130,7 +130,7 @@ export namespace Machine {
       fs.mkdirSync(cwd, { recursive: true });
       switch (job.name) {
         case "shell": {
-          return await Machine.shell(cwd, String(input.command), signal);
+          return await Machine.shell(cwd, String(input.command), signal, away);
         }
         case "read": {
           return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
@@ -157,8 +157,11 @@ export namespace Machine {
   // marked UNII_RUN, its output decoded as one stream (a char split over
   // reads stays whole; a broken one at its end shows) and cut as it
   // comes. A stop kills the group and ends the wait at once, whatever
-  // still holds its output
-  export async function shell(cwd: string, command: string, signal: AbortSignal): Promise<Out> {
+  // still holds its output. Sent `away` (the person's Ctrl+B), it answers
+  // at once and goes on: what it printed so far, then the rest and its
+  // exit, go to bg-<pid>.log in cwd (the head and tail kept so far, if
+  // it was cut)
+  export function shell(cwd: string, command: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
     SHELLS.forEach((p) => Machine.group(p) || SHELLS.delete(p));
     const start = performance.now();
     const proc = Bun.spawn([SHELL, "-c", "exec 2>&1\n" + command], {
@@ -176,18 +179,38 @@ export namespace Machine {
       Machine.kill(-proc.pid);
       reader.cancel().catch(() => {});
     };
+    const file = path.join(cwd, "bg-" + proc.pid + ".log");
+    let [gone, over] = [false, false];
     signal.addEventListener("abort", kill, { once: true });
-    try {
-      for (let got = await reader.read(); !got.done; got = await reader.read()) {
-        out.add(got.value);
+    const ran = (async (): Promise<Out> => {
+      try {
+        for (let got = await reader.read(); !got.done; got = await reader.read()) {
+          gone ? fs.appendFileSync(file, got.value) : out.add(got.value);
+        }
+      } catch {}
+      signal.removeEventListener("abort", kill);
+      const code = await proc.exited;
+      const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
+      const exit = signal.aborted ? "stopped" : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
+      over = true;
+      if (gone) {
+        fs.appendFileSync(file, "(" + exit + " in " + time + ")\n");
       }
-    } catch {}
-    signal.removeEventListener("abort", kill);
-    const code = await proc.exited;
-    const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
-    const exit = signal.aborted ? "stopped" : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
-    const text = out.text().replace(/\n$/, "");
-    return { text: (text === "" ? "" : text + "\n") + "(" + exit + " in " + time + ")", fail: exit !== "exit 0" };
+      const text = out.text().replace(/\n$/, "");
+      return { text: (text === "" ? "" : text + "\n") + "(" + exit + " in " + time + ")", fail: exit !== "exit 0" };
+    })();
+    if (away === undefined) {
+      return ran;
+    }
+    const sent = new Promise<Out>((resolve) => away.addEventListener("abort", () => {
+      if (over) {
+        return;
+      }
+      gone = true;
+      fs.writeFileSync(file, out.text());
+      resolve({ text: "Sent to the background by the user, still running (pid " + proc.pid + "). Its output so far, the rest as it comes, and at its end its exit, go to " + path.basename(file) + " in your working directory: read that file for it.", fail: false });
+    }, { once: true }));
+    return Promise.race([ran, sent]);
   }
 
   // whether a shell's process group may still hold a job: the shell runs,

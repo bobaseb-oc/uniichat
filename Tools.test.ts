@@ -29,3 +29,38 @@ test("a call's MCP requests follow its chat past a process that ended", async ()
   expect(await (await ask()).text()).toBe("c /" + tools.key + "/main");
   c.stop(true);
 });
+
+// an agent at work, its call a stub that counts its stops
+function working(tools: any, name: string): { stops: number } {
+  const seen = { stops: 0 };
+  const call = { stop: () => (seen.stops += 1) };
+  tools.agents.set(name, { name, role: { $: "sub", effort: null }, call, live: [], calls: {}, stop: false, view: [], replies: [], user: false });
+  return seen;
+}
+
+test("the main agent stops agents at work by name, which tell can't", async () => {
+  const tools = Tools.serve({} as any, {} as any);
+  const a = working(tools, "HungA");
+  const b = working(tools, "HungB");
+  const c = working(tools, "Busy");
+  const out = await Tools.call(tools, "main", "stop", { names: ["HungA", "HungB", "Nobody"] }, new AbortController().signal, "1");
+  expect(out.fail).toBe(false);
+  expect(out.text).toContain("Stopped HungA, HungB.");
+  expect(out.text).toContain("Nobody");
+  expect([a.stops, b.stops, c.stops]).toEqual([1, 1, 0]);
+  expect(tools.agents.get("HungA")!.stop).toBe(true);
+  expect(tools.agents.get("Busy")!.stop).toBe(false);
+  Tools.close(tools);
+});
+
+test("a subagent can't stop another, nor sees the stop tool", async () => {
+  const tools = Tools.serve({} as any, {} as any);
+  const a = working(tools, "Victim");
+  working(tools, "Rogue");
+  const out = await Tools.call(tools, "Rogue", "stop", { names: ["Victim"] }, new AbortController().signal, "1");
+  expect(out.fail).toBe(true);
+  expect(a.stops).toBe(0);
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("stop");
+  expect(Tools.list(tools, "Rogue").map((t) => t.name)).not.toContain("stop");
+  Tools.close(tools);
+});

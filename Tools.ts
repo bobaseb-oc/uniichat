@@ -69,6 +69,7 @@ export type Agent = {
   stop    : boolean; // its call was stopped: the report stays unanswered
   view    : Block[];
   replies : string[];
+  user    : boolean; // the person started it (/agent): its report takes no turn
 };
 
 // a chat's tools as they move to another process (Tools.give): the
@@ -243,6 +244,7 @@ const OWN: Spec[] = [
 const BOSS: Spec[] = [
   spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." } }, ["tasks"]),
   spec("tell", "Send a message to an agent (a subagent or a computer task), by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
+  spec("stop", "Stop agents at work (subagents or computer tasks), by name, at once: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped agent can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
 ];
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
 function kit(who: string): Spec[] {
@@ -423,6 +425,12 @@ export namespace Tools {
       case "tell": {
         return { text: await Tools.tell(tools, String(args.name), String(args.message)), fail: false };
       }
+      case "stop": {
+        if (who !== "main") {
+          return { text: "Only Unii stops agents.", fail: true };
+        }
+        return { text: Tools.halt(tools, (args.names ?? []).map(String)), fail: false };
+      }
       case "computer": {
         const role = tools.agents.get(who)?.role;
         if (role?.$ === "hands") {
@@ -583,9 +591,16 @@ export namespace Tools {
     return "Sent. " + name + "'s reply will reach you as a message.";
   }
 
-  export function start(tools: Tools, role: Agent["role"], task: string, view: Block[]): string {
+  // an agent the person starts (/agent), on the chat's view as spawn's;
+  // its name, else why not
+  export async function begin(tools: Tools, task: string): Promise<{ name: string } | { why: string }> {
+    const view = await Tools.view(tools);
+    return typeof view === "string" ? { why: view } : { name: Tools.start(tools, { $: "sub", effort: null }, task, view, true) };
+  }
+
+  export function start(tools: Tools, role: Agent["role"], task: string, view: Block[], user = false): string {
     const name = Memory.agent_new(tools.mem);
-    const agent = { name, role, call: null, live: [], calls: {}, stop: false, view, replies: [] };
+    const agent = { name, role, call: null, live: [], calls: {}, stop: false, view, replies: [], user };
     fs.mkdirSync(config.WORK + "/" + name, { recursive: true });
     tools.agents.set(name, agent);
     tools.hooks.push(agent, "note", role.$ === "sub" ? SUB_NOTE + (role.effort === null ? "" : SUB_AT + role.effort) : HANDS_NOTE + role.device);
@@ -602,7 +617,7 @@ export namespace Tools {
     if (sub || note.startsWith(HANDS_NOTE)) {
       const effort = note === SUB_NOTE ? null : note.slice((SUB_NOTE + SUB_AT).length);
       const role: Agent["role"] = sub ? { $: "sub", effort } : { $: "hands", device: note.slice(HANDS_NOTE.length) };
-      tools.agents.set(name, { name, role, call: null, live: [], calls: {}, stop: false, view: [], replies: [] });
+      tools.agents.set(name, { name, role, call: null, live: [], calls: {}, stop: false, view: [], replies: [], user: false });
     }
     return tools.agents.get(name) ?? null;
   }
@@ -706,6 +721,16 @@ export namespace Tools {
 
   export function working(tools: Tools): Agent[] {
     return [...tools.agents.values()].filter((a) => a.call !== null);
+  }
+
+  // the stop tool: the named at work stopped (Tools.stop), the rest told
+  export function halt(tools: Tools, names: string[]): string {
+    const at = new Set(Tools.working(tools).map((a) => a.name));
+    const stopped = names.filter((n) => at.has(n));
+    const not = names.filter((n) => !at.has(n));
+    stopped.forEach((n) => Tools.stop(tools, n));
+    const said = stopped.length === 0 ? "Stopped none." : "Stopped " + stopped.join(", ") + ". Each one's report will reach you as a message.";
+    return said + (not.length === 0 ? "" : " Not at work: " + not.join(", ") + ".");
   }
 
   // every agent at work (name null), or the one named
