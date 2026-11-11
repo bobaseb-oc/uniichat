@@ -119,6 +119,7 @@ type Chat = {
   ending: { all: boolean; then: () => void } | null;
   writes: Promise<unknown>;
   held  : Array<() => void> | null;
+  rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
 };
 
@@ -168,6 +169,9 @@ const LEAVE      = 500;
 const ENDED      = "the server process that ran it ended";
 // a turn's head, as a summary's is "Compaction:": one prompt serves both
 const HEAD       = "Turn: the user's new message:\n\n";
+// a turn asked again as its call rolled over (Agent.ts): the user's
+// message whole, then what the turn did since, its lines as "i|kind: text"
+const ROLLED     = "\n\nYour call for this message rolled over, its context too long: it was asked again from the chat above, which summarizes all you did. What you did since the message, as \"i|kind: text\" lines (zoom an id for more), then go on:\n\n";
 // a goal's check (Chat.check): its own system prompt (Unii's, which says
 // a call is a turn or a compaction, made the model summarize the chat
 // instead of answering), asked after the chat (the view, its latest
@@ -298,7 +302,7 @@ export namespace Chat {
     const chat: Chat = {
       acct, mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, posts: 1, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null, ending: null,
-      writes: Promise.resolve(), held: null, wallet,
+      writes: Promise.resolve(), held: null, wallet, rolled: false,
     };
     // a saved pick not offered gave way: told once
     const saved = mem.pick === null ? null : Pick.label(mem.pick as Pick);
@@ -543,9 +547,12 @@ export namespace Chat {
       }
     }
     const msgs = (chat.sent = chat.wait.splice(0));
-    const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
+    const rolled = chat.rolled;
+    chat.rolled = false;
+    const says = (rolled ? msgs : msgs.filter((m) => m.end > from)).map((m) => Memory.say(mem, rolled ? m.id : Math.max(m.id, from), m.end));
     const view = Memory.view(mem, from);
-    const text = says.map((say) => say.text).join("\n\n");
+    const after = Math.max(from, msgs.at(-1)!.end);
+    const text = says.map((say) => say.text).join("\n\n") + (rolled ? ROLLED + Memory.tail(mem, after) : "");
     const imgs = says.flatMap((say) => say.imgs);
     const server = Tools.at(chat.tools, "main");
     chat.eye = Chat.eye(mem, from);
@@ -568,6 +575,10 @@ export namespace Chat {
     Chat.unanswered(chat, null);
     Chat.live(chat, null, []);
     chat.wait.unshift(...chat.sent.slice(chat.sent.length - end.left.length));
+    if (end.roll && !halt.signal.aborted) {
+      chat.wait.unshift(...chat.sent);
+      chat.rolled = true;
+    }
     if (!end.ok && !halt.signal.aborted) {
       Chat.failed(chat, end.text);
     }

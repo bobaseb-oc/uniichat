@@ -1259,8 +1259,9 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
 
   // what an agent's call sees, as a turn sees the chat (Server.ts
   // Chat.call): its view's lines up to its latest task or message, its
-  // summaries waited for, then its log from there raw. A string: why
-  // not (Memory.settle)
+  // summaries waited for, then its log from there raw; that task or
+  // message word for word even if older (a roll's lines summarize the
+  // rest). A string: why not (Memory.settle)
   export async function agent_blocks(mem: Memory, name: string, signal: AbortSignal): Promise<Seen | string> {
     const sub = Memory.agent_mem(mem, name);
     if (sub === null) {
@@ -1270,13 +1271,20 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
     while (last > 0 && Memory.message(sub, last)?.kind !== "user") {
       last -= 1;
     }
-    const from = Memory.whole(sub, Math.max(0, last));
+    last = Math.max(0, last);
+    const from = Memory.whole(sub, last);
     const why = await Memory.settle(sub, from, signal);
     if (why !== null) {
       return why;
     }
-    const log = Array.from({ length: sub.count - from }, (_, k) => Memory.agent_line(Memory.message(sub, from + k)!));
-    return { view: Memory.view(sub, from), log: { text: log.join("\n\n"), mark: true } };
+    const task = last < from ? Memory.agent_line(Memory.message(sub, last)!) + "\n\n" : "";
+    return { view: Memory.view(sub, from), log: { text: task + Memory.tail(sub, from), mark: true } };
+  }
+
+  // the messages from `from` on, as "i|kind: text" lines: an agent's
+  // latest, a rolled turn's steps (Server.ts)
+  export function tail(mem: Memory, from: number): string {
+    return Array.from({ length: mem.count - from }, (_, k) => Memory.agent_line(Memory.message(mem, from + k)!)).join("\n\n");
   }
 
 }

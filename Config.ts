@@ -40,6 +40,10 @@ export const COMPACTOR  = config_run("compactor", config_get("compactor", "claud
 export const AGENTS     = config_get("agents", "") ? config_run("agents", config_get("agents", "")) : null;
 export const WORKERS    = Number(config_get("workers", "0"));
 
+// a call's input past which it rolls over (Agent.ts): its request's
+// tokens in, as the API tells them (input, cache writes and reads)
+export const ROLL       = Number(config_get("roll", "150000"));
+
 // the most web searches a request of a turn or a subagent runs (0: no web
 // tool, as on a proxy whose backend has none, e.g. LiteLLM on Bedrock)
 export const SEARCHES   = Number(config_get("searches", "10"));

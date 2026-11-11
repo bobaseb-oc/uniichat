@@ -4,7 +4,10 @@
 // OpenAI.ts) shapes requests and reads streams. Each step sends every
 // item and streams one output; tool calls run in order, a message sent
 // mid-run follows the next results, and the call ends at a step with no
-// tools and nothing sent. A request goes again, TRIES times at most,
+// tools and nothing sent, or rolls over (End.roll) once a step with tools
+// took more than config.ROLL tokens in: all it did is logged, so its asker
+// asks again from its tree (Server.ts Chat.call, Tools.ts run), as the
+// steps it resent would grow without end. A request goes again, TRIES times at most,
 // after its retry-after or a doubling wait, for a passing reason (`busy`:
 // no connection, a retry status, a stream error, cut short or silent for
 // the wire's `idle`, its keep-alive pings not counted: a stuck request
@@ -87,6 +90,7 @@ export type Step = {
   stop    : "done" | "tools" | "again" | "busy" | "down" | "lost" | "fail";
   why     : string;
   note    : string;
+  tokens? : number; // its request's, in, as the API told them
 };
 
 export type Emit = (kind: Kind, text: string, fresh?: boolean) => void;
@@ -220,6 +224,12 @@ export namespace Agent {
         const parts = says.filter((say) => say.text !== "").map((say) => ({ text: say.text, mark: false }));
         const imgs = says.flatMap((say) => say.imgs);
         items.push({ $: "User", parts, imgs });
+      }
+      if ((step.tokens ?? 0) > config.ROLL) {
+        end.ok   = true;
+        end.text = text;
+        end.roll = true;
+        return;
       }
     }
   }
@@ -381,7 +391,8 @@ export namespace Agent {
     const use = res?.ok ? Agent.used(wire.usage(st), read, json) : null;
     grant.end(use && { run: { vendor, model, effort, speed }, use });
     const cut = use !== null && use.output >= grant.max ? grant.cut : null;
-    return { res, step: cut === null ? step : Agent.fail(cut, seen) };
+    const tokens = use === null ? undefined : use.input + use.write + use.read;
+    return { res, step: cut === null ? { ...step, tokens } : Agent.fail(cut, seen) };
   }
 
   // a request's usage: the API's, once its stream ended; else (cut short,

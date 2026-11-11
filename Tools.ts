@@ -674,8 +674,8 @@ export namespace Tools {
   }
 
   // calls while a message waits in its log (told too late for the call
-  // before), the first `call` if it runs (its chat moved here); then its
-  // report. Detached: a throw ends it as a failed reply, still reported
+  // before) or one rolled over (Agent.ts), the first `call` if it runs
+  // (its chat moved here); then its report. Detached: a throw ends it as a failed reply, still reported
   export async function run(tools: Tools, agent: Agent, call: Call | null = null): Promise<void> {
     try {
       for (let more = true; more; call = null) {
@@ -688,8 +688,10 @@ export namespace Tools {
         tools.hooks.change();
         const end = await agent.call.done;
         agent.call = null;
-        agent.replies.push(end.ok ? end.text : "failed: " + end.text);
-        more = end.ok && end.left.length > 0;
+        if (!end.roll || end.text !== "") {
+          agent.replies.push(end.ok ? end.text : "failed: " + end.text);
+        }
+        more = end.ok && (end.left.length > 0 || end.roll === true);
       }
     } catch (err: any) {
       agent.call = null;

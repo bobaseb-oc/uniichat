@@ -140,3 +140,47 @@ test("a person's agent reports without a turn; the AI's takes one", async () => 
   expect(out.mine).toEqual({ reported: true, busy: false, working: 0 });
   expect(out.ais).toEqual({ reported: true, busy: true });
 });
+
+// a turn's call past ROLL tokens ends rolled (Agent.ts): the turn asks
+// again from the chat's tree, the user's message word for word and what
+// the turn did since raw, never ending on it. Its own process, as TURN's
+const ROLL = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+chat.socks.add({ send: () => {}, data: { seen: new Set() } });
+const asks = [];
+AskAI.ask = (ask, on) => {
+  const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  asks.push({ ask, sink });
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 200 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const main = () => asks.filter((a) => String(a.ask.server ?? "").endsWith("/main"));
+Chat.take(chat, Chat.push(chat, null, "user", "the user's own words"));
+await until(() => main().length === 1);
+Chat.push(chat, null, "tool", "shell(ls)");
+Chat.push(chat, null, "echo", "a.txt b.txt");
+main()[0].sink.end({ ok: true, text: "", left: [], roll: true });
+const again = await until(() => main().length === 2);
+const blocks = again ? main()[1].ask.blocks.map((b) => b.text).join("") : "";
+const busy = chat.busy;
+if (again) main()[1].sink.end({ ok: true, text: "done", left: [] });
+await until(() => !chat.busy);
+console.log(JSON.stringify({ again, busy, words: blocks.includes("the user's own words"), echo: /\\|echo: a\\.txt b\\.txt/.test(blocks), rolled: blocks.includes("rolled over") }));
+process.exit(0);
+`;
+
+test("a turn past ROLL tokens rolls over: asked again from the tree, the user's words and its steps kept", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/roll.ts", ROLL);
+  const proc = Bun.spawn([process.execPath, dir + "/roll.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({ again: true, busy: true, words: true, echo: true, rolled: true });
+});

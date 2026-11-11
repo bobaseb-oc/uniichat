@@ -114,7 +114,8 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
 - [x] 0. Pending work committed on local/litellm in 4 topic commits; baseline outside the sandbox 124 pass, 2 known logs fails
 - [x] 1a. A Memory tree per agent (own view in `Tools.ask`, parent snapshot kept); old .jsonl logs read on; handover carries agent summaries. Proof: agents.test.ts 4/4, 4 mutations each fail a test; suite 128 pass, 2 known fails; tsc: no new errors
 - [x] 1b. Brief (the view's latest 8 KB of lines) and the agent's own tree replace the parent snapshot; `zoom`/`date`: id own, `^id` the starter's chat, `Name`/`Name:id` Unii's or its own. Proof: agents.test.ts 6/6, 3 mutations each fail one test (re-run after a parse error made the first run void); suite 130 pass, 2 known fails; tsc: no new errors
-- [ ] 1c. Roll-over: past ROLL (150K tokens) a call ends at a step boundary and asks again from its tree view (agents and main chat)
+- [x] 1c. Roll-over: past ROLL (150K tokens in, as the API tells them) a call ends after a tool step and is asked again from its tree view (agents and main chat); the task / user's message stays word for word. Proof: agents.test.ts 8/8 and the Server roll test; 5 mutations each fail one test (baseline 13/13 first); suite 133 pass, 2 known fails; tsc: no new errors
+  - Edge: an entry held while an upload logs (Chat.hold) could land after a roll's next call is built; it's in the tree, just not in that call's raw tail
 - [ ] 2. Tiers (`TIERS`), model override downward only, depth 3, scoped spawn/tell/stop, subtree stop, report wakes the parent
 - [ ] 3. View tree model: status, per-path subscribe, typing tells the focused agent, finished agents stay
 - [ ] 4. Terminal UI: sidebar tree, focused pane, badges, footer totals

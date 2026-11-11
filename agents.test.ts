@@ -46,6 +46,22 @@ function answer(text: string): Response {
 // the requests that weren't summaries (an agent's calls): their bodies
 const calls: any[] = [];
 
+// rolling: an agent's first call asks the date tool, its request told
+// as 200K tokens in (past config.ROLL)
+let rolling = false;
+
+function tooled(): Response {
+  const events = [
+    { type: "message_start", message: { usage: { input_tokens: 2000, cache_read_input_tokens: 198000 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "date", input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"id": 0}' } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+    { type: "message_stop" },
+  ];
+  return new Response(events.map((ev) => "data: " + JSON.stringify(ev) + "\n\n").join(""));
+}
+
 async function vendor(url: string, init: any): Promise<Response> {
   if (String(url).startsWith("http://127.0.0.1:")) {
     return real.fetch(url, init);
@@ -55,7 +71,7 @@ async function vendor(url: string, init: any): Promise<Response> {
   const task: string = content[content.length - 1].text;
   if (!task.startsWith("Compaction:")) {
     calls.push(body);
-    return answer("the report");
+    return rolling && calls.length === 1 ? tooled() : answer("the report");
   }
   asked += 1;
   if (hold) {
@@ -173,12 +189,13 @@ test("an agent's summaries are paid by the chat's payer, even one set after the 
 const { Tools } = await import("./Tools.ts");
 const { Pick } = await import("./Pick.ts");
 
-// a chat's tools, its agents' entries logged on their trees, reports kept
+// a chat's tools, its agents' entries logged on their trees (as Chat.on
+// does, in short), reports kept
 function served(mem: any, reports: string[]) {
   const pick = Pick.load(null, config.OFFER, config.PICK);
   return Tools.serve(mem, {
     push   : (agent, kind, text) => void Memory.agent_push(mem, agent.name, kind, text),
-    on     : () => {},
+    on     : (agent, ev: any) => void (ev.$ === "Entry" && ev.kind !== "user" && Memory.agent_push(mem, agent.name, ev.kind, ev.text)),
     report : (_agent, text) => void reports.push(text),
     change : () => {},
     pick   : () => pick,
@@ -223,5 +240,45 @@ test("zoom from an agent: its own tree by id, its starter's chat by ^id; another
   expect(other.fail).toBe(true);
   expect(other.text).not.toContain("a task");
   Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("a call past ROLL tokens rolls over: asked again from its tree, its tool's result kept, its task word for word", () => faked(async () => {
+  const mem = Memory.load(DIR + "/roll", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  rolling = true;
+  try {
+    await Tools.spawn(tools, ["the rolling task"], null);
+    await until(() => reports.length === 1);
+  } finally {
+    rolling = false;
+  }
+  expect(calls.length).toBe(2);
+  // the first call went on past its tool's result: a second step would
+  // carry its first one's items; a roll asks anew, one message
+  expect(calls[1].messages.length).toBe(1);
+  const text = said(calls[1]);
+  expect(text).toContain("the rolling task");
+  expect(text).toMatch(/\|echo: /);
+  expect(reports[0]).toContain("the report");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("an agent's task stays word for word when its log since is too long to go raw", () => faked(async () => {
+  const mem = Memory.load(DIR + "/longlog", () => SHARE);
+  const name = Memory.agent_new(mem);
+  Memory.agent_push(mem, name, "user", "the task to keep");
+  for (let k = 0; k < 8; k++) {
+    Memory.agent_push(mem, name, "echo", k + " " + "y".repeat(20000));
+  }
+  const seen = await Memory.agent_blocks(mem, name, new AbortController().signal);
+  if (typeof seen === "string") {
+    throw new Error(seen);
+  }
+  expect(seen.log.text).toContain("0|user: the task to keep");
+  expect(seen.log.text).not.toContain("1|echo: ");
   Memory.stop(mem);
 }));
