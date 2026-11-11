@@ -147,6 +147,8 @@ body.account footer > :not(#toast) { display: none; }
 #tabs.crew button { text-align: left; overflow: hidden; text-overflow: ellipsis; }
 #tabs.crew .d1 { padding-left: 16px; } #tabs.crew .d2 { padding-left: 32px; } #tabs.crew .d3 { padding-left: 48px; }
 #tabs.crew .failed { color: var(--del); }
+#tabs.crew .asking { color: var(--accent); font-weight: 600; }
+#tabs.crew .x.yes:hover { color: var(--add); }
 #tabs.crew :is(.done, .stopped) { color: var(--soft); }
 #tabs.crew .x { margin-left: 8px; padding: 0 4px; color: var(--soft); }
 #tabs.crew .x:hover { color: var(--ink); }

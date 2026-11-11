@@ -119,8 +119,9 @@ export function crew_html(v: View.View, now: number): string[] {
   const top = `<button class="crew top${v.page === null ? " here" : ""}"${act_html({ $: "Goto", name: null })}>${esc("◆ " + View.MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"))}</button>`;
   const rows = View.view_crew(v, now).map((r) => {
     const here = v.page?.name === r.name ? " here" : "";
-    const done = r.status !== "working" && r.status !== "waiting";
-    const x = done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "";
+    const done = r.status !== "working" && r.status !== "waiting" && r.status !== "asking";
+    const ask = r.status !== "asking" ? "" : `<span class="x yes" title="approve"${act_html({ $: "Approve", name: r.name, yes: true })}>✓</span><span class="x" title="deny"${act_html({ $: "Approve", name: r.name, yes: false })}>×</span>`;
+    const x = ask + (done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "");
     return `<button class="crew d${Math.min(r.depth, 3)} ${r.status}${here}"${act_html({ $: "Goto", name: r.name })}>${esc(r.text.trimStart())}${x}</button>`;
   });
   return [top, ...rows];

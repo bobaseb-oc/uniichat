@@ -74,8 +74,9 @@ export type State = {
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer"; model: string; status: Status; since: number };
-export type Status = "working" | "waiting" | "failed" | "stopped" | "done";
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number };
+// asking: a Claude Code worker waiting for the person's approval
+export type Status = "asking" | "working" | "waiting" | "failed" | "stopped" | "done";
 
 // a desktop alert (view_alerts): its key (debounced by), what it says,
 // the agent to show on a click (null: UniiChat)
@@ -158,6 +159,7 @@ export type Client =
   | { $: "spawn"; task: string } // an agent the person starts (/agent)
   | { $: "tell"; name: string; text: string } // a message to the agent whose page is shown
   | { $: "dismiss"; name: string } // a done agent out of the crew
+  | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
   | { $: "guess"; body: Body }; // an import's cost
 
 // an act not answered: with its id, the socket it went by, what its
@@ -183,6 +185,7 @@ export type Act =
   | { $: "Fold"; on: boolean }                  // fold all, unfold all
   | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
   | { $: "Dismiss"; name: string }              // a done agent out of the crew
+  | { $: "Approve"; name: string; yes: boolean } // a Claude Code worker asking to start: let it, or not
 
 // what a page draws, top to bottom
 export type Row =
@@ -291,8 +294,8 @@ export function Cap(text: string): Row {
 // ====
 
 // a crew row's mark by status, and the order siblings are listed in
-const CREW: Record<Status, string> = { failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
-const STATUSES: Status[] = ["failed", "working", "waiting", "stopped", "done"];
+const CREW: Record<Status, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+const STATUSES: Status[] = ["asking", "failed", "working", "waiting", "stopped", "done"];
 // the least time between two alerts of a key (a turn's ends: one in a run)
 const ALERT_GAP = 20000;
 
@@ -481,6 +484,9 @@ export function view_act(v: View, act: Act): Client[] {
     case "Dismiss": {
       return [{ $: "dismiss", name: act.name }];
     }
+    case "Approve": {
+      return [{ $: "approve", name: act.name, yes: act.yes }];
+    }
     case "Goto": {
       if (act.name === null) {
         v.page = null;
@@ -621,7 +627,9 @@ export function view_alerts(v: View, now: number): Alert[] {
   if (was === null) {
     return [];
   }
-  const failed = v.crew.filter((c) => c.status === "failed" && was.status.get(c.name) !== "failed").map((c): Alert => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }));
+  const fresh = (status: Status) => v.crew.filter((c) => c.status === status && was.status.get(c.name) !== status);
+  const asks = fresh("asking").map((c): Alert => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
+  const failed = [...asks, ...fresh("failed").map((c): Alert => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
   const ended: Alert[] = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
   return [...failed, ...ended].filter((a) => {
     const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
@@ -630,6 +638,11 @@ export function view_alerts(v: View, now: number): Alert[] {
     }
     return due;
   });
+}
+
+// the Claude Code workers waiting for the person's approval, by name
+export function view_asking(v: View): string[] {
+  return v.crew.filter((c) => c.status === "asking").map((c) => c.name);
 }
 
 // the agents that need the person: failed ones

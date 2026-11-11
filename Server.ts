@@ -1317,6 +1317,18 @@ export namespace Chat {
         const told = await Tools.tell(chat.tools, "main", String(msg.name), text);
         return told.fail ? { error: told.text } : {};
       }
+      case "approve": {
+        // the person's yes (refused as a post is, short of credit: its
+        // report takes a turn) or no to a Claude Code worker asking
+        const yes = msg.yes === true;
+        const refused = yes ? await Chat.afford(chat) : null;
+        if (refused !== null) {
+          return refused;
+        }
+        const said = Tools.approve(chat.tools, String(msg.name), yes);
+        Chat.note(chat, said);
+        return said.startsWith("No ") ? { error: said } : {};
+      }
       case "dismiss": {
         const agent = chat.tools.agents.get(String(msg.name));
         if (agent === undefined || Tools.working(chat.tools).includes(agent)) {

@@ -130,9 +130,11 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
 - [ ] 7. Hardening
   - [x] Memory `hold[0]` "never set": not a bug here (Billing.open is the free billing; the paid wallet holds its payee's mem, by the Payee contract). But agent trees (1a) had a `hold` of their own no wallet sets: a refused agent summary was asked in a hot loop (reproduced: the test hung). Agent trees now share the chat's `hold`, and the chat's pump pumps them (credit back: they go on). Proof: agents.test.ts 10/10, both mutants caught (one hangs); suite 153 pass, 2 known fails
   - [x] Failed children report "failed: …" (Tools.run's catch; crash.test) and show ✗ in the crew
-  - [ ] Subtree cost caps: billing logic (red zone): draft only, for the user to decide
-  - [ ] Open agent trees are never closed (fds grow with agents in a chat): close idle ones, reopen on use
-- [ ] 6. PTY workers (`claude` in a PTY): waiting on the user (approval UX, permission mode)
+  - [x] Subtree cost caps: not built (user: LiteLLM manages budgets)
+  - [ ] Open agent trees are never closed (fds grow with agents in a chat): close idle ones, reopen on use (careful: a reopened tree's pending summaries vs a handover's take)
+- [x] 6. Claude Code workers (decided with the user): headless `claude -p --permission-mode auto --output-format stream-json --verbose` (not a PTY: its events go into the worker's tree), in its own process group, in its work dir or the `dir` given; `spawn as: "claude"` (Unii or a manager) with `device`, `dir`. Each waits for the person: crew status `asking` (first, `?`), an alert, `/approve [name]` / `/deny [name]` or the site's ✓/×; denied or stopped before it starts, it reports so. Transcript (unii/tool/echo lines, end kept under 1 MB) logged as an echo in its tree, its result its report. Tell is refused (Claude Code takes no messages). Opus at the top: already, `local/unii-local.sh` sets UNII_PICK opus-5.5:high and the chat saved no pick. VERSION 1.0.143; web/app.js rebuilt. Proof: agents/View/Machine/Html/Tools tests, 5 mutations caught (one survived first: test tightened); suite 163 pass, 2 known
+  - Note: `-p` skips Claude Code's workspace-trust dialog: the person's approval is the gate. A chat moving to another process while one runs: its job runs on, but its report is lost (it has no call to move)
+  - [ ] By hand: `spawn as claude` on a real repo, /approve, the report
 - [ ] By hand: `UNII_HOME_REPO=~/repos/home unii`; the status line's branch and spend
 
 ## Later

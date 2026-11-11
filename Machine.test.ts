@@ -69,3 +69,47 @@ test("Unii's jobs run in the home repo; an agent's in its own work dir", async (
   expect(await pwd("FireAnt", home)).toBe(fs.realpathSync(work) + "/FireAnt");
   expect(await pwd("main")).toBe(fs.realpathSync(work) + "/main");
 });
+
+// a Claude Code worker: `claude -p` in auto mode, its stream-json events
+// read into transcript lines, its result last; a stop kills it. A fake
+// claude on PATH tells its arguments and its directory
+test("claude runs headless in auto mode; its events come back as a transcript, its result last", async () => {
+  const bin = fs.mkdtempSync(os.tmpdir() + "/unii-bin-");
+  const seen = bin + "/args";
+  const events = [
+    { type: "system", subtype: "init" },
+    { type: "assistant", message: { content: [{ type: "text", text: "Looking." }, { type: "tool_use", name: "Bash", input: { command: "ls" } }] } },
+    { type: "user", message: { content: [{ type: "tool_result", content: "a.txt" }] } },
+    { type: "result", subtype: "success", is_error: false, result: "Found a.txt.", total_cost_usd: 0.0123 },
+  ];
+  fs.writeFileSync(bin + "/claude", "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + seen + "\npwd -P >> " + seen + "\n" + events.map((e) => "echo '" + JSON.stringify(e) + "'").join("\n") + "\n");
+  fs.chmodSync(bin + "/claude", 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = bin + ":" + path;
+  try {
+    const work = DIR + "/work";
+    const out = await Machine.run({ name: "claude", input: { task: "find files" }, cwd: "Bot" }, work, new AbortController().signal);
+    expect(out.fail).toBe(false);
+    expect(out.text).toBe("unii: Looking.\ntool: Bash({\"command\":\"ls\"})\necho: a.txt\n\nResult ($0.0123): Found a.txt.");
+    const args = fs.readFileSync(seen, "utf8").split("\n");
+    expect(args.slice(0, 7)).toEqual(["-p", "find files", "--permission-mode", "auto", "--output-format", "stream-json", "--verbose"]);
+    expect(args[7]).toBe(fs.realpathSync(work) + "/Bot");
+    const there = fs.mkdtempSync(os.tmpdir() + "/unii-repo-");
+    await Machine.run({ name: "claude", input: { task: "x", dir: there }, cwd: "Bot" }, work, new AbortController().signal);
+    expect(fs.readFileSync(seen, "utf8").split("\n")[7]).toBe(fs.realpathSync(there));
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+test("a claude transcript past its cap keeps its end and says it was cut; no result is a failure", () => {
+  const lines = Array.from({ length: 50 }, (_, k) => "echo: " + k + " " + "z".repeat(100));
+  const out = Machine.claude_out(lines, null, 1000);
+  expect(out.fail).toBe(true);
+  expect(out.text.startsWith("(earlier steps cut)\n")).toBe(true);
+  expect(out.text).toContain("echo: 49 ");
+  expect(out.text).not.toContain("echo: 0 ");
+  expect(out.text.length).toBeLessThan(1200);
+  expect(Machine.claude_line({ type: "result" })).toBeNull();
+  expect(Machine.claude_line({ type: "user", message: { content: [{ type: "tool_result", content: [{ type: "text", text: "x" }] }] } })).toBe("echo: x");
+});

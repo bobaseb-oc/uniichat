@@ -74,13 +74,18 @@ export type Agent = {
   runs?   : boolean; // its run goes on (Tools.run), a call or not: a report to it waits in its log
   since?  : number;  // when its last run began (ms since 1970)
   hidden? : boolean; // dismissed from the crew (View.ts) by the person
+  asks?   : boolean; // a Claude Code worker waiting for the person's approval
+  task?   : string;  // a Claude Code worker's task, as it was given
+  abort?  : AbortController; // a Claude Code worker's job's stop
 };
 
 // a manager splits its task among workers it spawns; a worker does its
 // own; hands use a screen. model: below its tier's (Tools.child), null: its
 // tier's; effort null: its model's
 export type Tier = "manager" | "worker";
-export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string | null } | { $: "hands"; device: string };
+// cli: Claude Code itself on a device (Machine.claude), in auto mode, once
+// the person approves; in `dir` there (null: its work dir)
+export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string | null } | { $: "hands"; device: string } | { $: "cli"; device: string; dir: string | null };
 
 // a chat's tools as they move to another process (Tools.give): the
 // calls of its agents at work by the id `far` takes (Server.ts)
@@ -155,7 +160,9 @@ const MGR_HEAD = `You are a manager under Unii, an AI agent that works for one u
 single chat that never ends. Unii gave you a task: see it done, mostly by
 workers. Plan it and split it into parts that can run on their own; spawn
 starts one worker per part, in parallel (use a cheaper model for simple
-parts), tell sends one more to a worker, stop cuts one. A worker knows
+parts; as: "claude" runs Claude Code itself on a device, in a repo there,
+once the user approves it: for coding work), tell sends one more to a
+worker, stop cuts one. A worker knows
 only its task and the latest lines of your chat, so say all it needs: the
 goal, the files, the constraints, how to check its work. Do small parts
 yourself, with your tools, following the user's instructions at the end
@@ -250,6 +257,7 @@ const DEVICES_NONE = "(None is open now.)";
 const SUB = SUB_HEAD + "\n\n" + SUB_VIEW_DOC + "\n\n" + DEVICES;
 const MGR = MGR_HEAD + "\n\n" + SUB_VIEW_DOC + "\n\n" + DEVICES;
 const NOTED = /^(manager|worker) of ([A-Za-z-]+)(?: on (\S+))?(?: at effort (\S+))?$/;
+const NOTED_CLI = /^Claude Code of ([A-Za-z-]+) on (\S+)(?: in (.+))?$/;
 
 // how deep agents go: Unii, its managers, their workers
 const DEPTH = 3;
@@ -305,14 +313,16 @@ const OWN: Spec[] = [
   ...SEARCH,
 ];
 const SPAWN = "Start one agent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. An agent sees its task, the user's instructions and the latest lines of your chat, and can zoom into the rest, but knows what you want only from its task: say all it needs.";
-const AS = "manager (the default): splits its task among workers of its own and checks their work, for a task of several parts; worker: does its task itself, for a part.";
+const AS = "manager (the default): splits its task among workers of its own and checks their work, for a task of several parts; worker: does its task itself, for a part; claude: Claude Code itself does it on a device (give device, and dir: the repo there), in auto mode, once the user approves it: for coding work in a repo.";
+const AS_WORKER = "worker (the default): does its task itself; claude: Claude Code itself does it on a device (give device, and dir: the repo there), in auto mode, once the user approves it: for coding work in a repo.";
 const MODEL = { type: "string", enum: LABELS, description: "The model it runs on: its tier's (the default) or a cheaper one below it, as for a simple task." };
 function boss(main: boolean): Spec[] {
   const tasks = { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as their model does." }, model: MODEL };
-  const as = main ? { as: { type: "string", enum: ["manager", "worker"], description: AS } } : {};
+  const as = { as: { type: "string", enum: main ? ["manager", "worker", "claude"] : ["worker", "claude"], description: main ? AS : AS_WORKER } };
+  const where = { device: { type: "string", description: "For claude: the device to run on, one listed under Devices." }, dir: { type: "string", description: "For claude: the directory there to work in (a repo); by default its own work dir." } };
   const whom = main ? "an agent (a manager, a worker or a computer task)" : "a worker of yours";
   return [
-    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...as }, ["tasks"]),
+    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...as, ...where }, ["tasks"]),
     spec("tell", "Send a message to " + whom + ", by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
     spec("stop", "Stop " + (main ? "agents" : "workers of yours") + " at work, by name, at once, and the workers under them: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped one can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
   ];
@@ -465,6 +475,9 @@ export namespace Tools {
     if (role?.$ === "hands") {
       return [COMPUTER];
     }
+    if (role?.$ === "cli") {
+      return [];
+    }
     return [...OWN, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
@@ -505,6 +518,9 @@ export namespace Tools {
         const effort = args.effort === undefined ? null : String(args.effort);
         if (effort !== null && !EFFORTS.includes(effort)) {
           return { text: "No effort " + effort + "; one of " + EFFORTS.join(", ") + ".", fail: true };
+        }
+        if (args.as === "claude") {
+          return Tools.claude(tools, who, String(args.device ?? ""), (args.tasks ?? []).map(String), args.dir ? String(args.dir) : null);
         }
         const tier: Tier = who === "main" && args.as !== "worker" ? "manager" : "worker";
         const model = args.model === undefined ? null : String(args.model);
@@ -698,18 +714,20 @@ export namespace Tools {
   export function crew(tools: Tools): Crew[] {
     return [...tools.agents.values()].filter((a) => !a.hidden).map((a): Crew => {
       const role = a.role;
-      const pick = role.$ === "hands" ? tools.hooks.pick() : Tools.child(role.tier, role.model);
-      const model = typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
+      const pick = role.$ === "hands" ? tools.hooks.pick() : role.$ === "cli" ? null : Tools.child(role.tier, role.model);
+      const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
       const at = a.call !== null || a.runs === true;
-      const status = a.stop ? "stopped" : at ? "working" : Tools.below(tools, a.name).length > 0 ? "waiting" : a.replies.at(-1)?.startsWith("failed: ") ? "failed" : "done";
-      return { name: a.name, parent: a.parent, tier: role.$ === "hands" ? "computer" : role.tier, model, status, since: a.since ?? 0 };
+      const status = a.asks ? "asking" : a.stop ? "stopped" : at ? "working" : Tools.below(tools, a.name).length > 0 ? "waiting" : a.replies.at(-1)?.startsWith("failed: ") ? "failed" : "done";
+      const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
+      return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0 };
     });
   }
 
   // what an agent is, as Unii's list of those at work says
   export function what(agent: Agent): string {
     const role = agent.role;
-    return role.$ === "hands" ? "computer task on " + role.device : role.tier + (agent.parent === "main" ? "" : " of " + agent.parent);
+    const of = agent.parent === "main" ? "" : " of " + agent.parent;
+    return role.$ === "hands" ? "computer task on " + role.device : role.$ === "cli" ? "Claude Code on " + role.device + (agent.asks ? ", awaiting the user's approval" : "") + of : role.tier + of;
   }
 
   // what a child of its tier runs on: its tier's model (config.MANAGER,
@@ -734,6 +752,9 @@ export namespace Tools {
     if (role.$ === "hands") {
       return HANDS_NOTE + role.device;
     }
+    if (role.$ === "cli") {
+      return "Claude Code of " + (parent === "main" ? "Unii" : parent) + " on " + role.device + (role.dir === null ? "" : " in " + role.dir);
+    }
     const model = role.model === null ? "" : " on " + role.model;
     const effort = role.effort === null ? "" : SUB_AT + role.effort;
     return role.tier + " of " + (parent === "main" ? "Unii" : parent) + model + effort;
@@ -741,6 +762,10 @@ export namespace Tools {
 
   // a note read back (Tools.note; an older one's too); null: none
   export function noted(note: string): { role: Role; parent: string } | null {
+    const cli = NOTED_CLI.exec(note);
+    if (cli !== null) {
+      return { role: { $: "cli", device: cli[2], dir: cli[3] ?? null }, parent: cli[1] === "Unii" ? "main" : cli[1] };
+    }
     const m = NOTED.exec(note);
     if (m !== null) {
       const role: Role = { $: "sub", tier: m[1] as Tier, effort: m[4] ?? null, model: m[3] ?? null };
@@ -795,6 +820,9 @@ export namespace Tools {
     if (agent === null) {
       return { text: "No agent " + name + " of yours to tell.", fail: true };
     }
+    if (agent.role.$ === "cli") {
+      return { text: name + " is Claude Code, which takes no messages: start another with what it needs.", fail: true };
+    }
     if (agent.call !== null || agent.runs) {
       tools.hooks.push(agent, "user", message);
       agent.call?.send({ text: message, imgs: [] });
@@ -824,8 +852,66 @@ export namespace Tools {
     tools.agents.set(name, agent);
     tools.hooks.push(agent, "note", Tools.note(role, parent));
     tools.hooks.push(agent, "user", task);
-    Tools.run(tools, agent);
+    if (role.$ === "cli") {
+      Object.assign(agent, { asks: true, task, since: Date.now() });
+      tools.hooks.change();
+    } else {
+      Tools.run(tools, agent);
+    }
     return name;
+  }
+
+  // Claude Code workers `who` starts on a device, one per task (its
+  // starter's latest lines after it, as context): each waits for the
+  // person's approval (Tools.approve)
+  export async function claude(tools: Tools, who: string, device: string, tasks: string[], dir: string | null): Promise<Out> {
+    const d = Tools.open(tools, device, false);
+    if (typeof d === "string") {
+      return { text: d, fail: true };
+    }
+    const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools, who);
+    if (typeof view === "string") {
+      return { text: view, fail: true };
+    }
+    const names = tasks.map((task) => Tools.start(tools, who, { $: "cli", device, dir }, task + Tools.brief(view, who)));
+    return { text: "Asked the user to approve " + names.join(", ") + " (Claude Code on " + device + "). Each one's report, or the user's no, will reach you as a message.", fail: false };
+  }
+
+  // the person's yes (it runs) or no (it reports so) to a Claude Code
+  // worker waiting for it; what was done
+  export function approve(tools: Tools, name: string, yes: boolean): string {
+    const agent = tools.agents.get(name);
+    if (agent === undefined || !agent.asks || agent.role.$ !== "cli") {
+      return "No Claude Code worker " + name + " waiting for approval.";
+    }
+    agent.asks = false;
+    if (!yes) {
+      agent.replies = ["failed: denied by the user; it never started"];
+      Tools.finish(tools, agent);
+      return "Denied " + name + ".";
+    }
+    void Tools.claude_run(tools, agent);
+    return "Approved " + name + ": Claude Code runs on " + agent.role.device + ".";
+  }
+
+  // a Claude Code worker's job on its device: its transcript logged, its
+  // result its reply; then its report
+  export async function claude_run(tools: Tools, agent: Agent): Promise<void> {
+    const role = agent.role as Extract<Role, { $: "cli" }>;
+    const abort = (agent.abort = new AbortController());
+    Object.assign(agent, { runs: true, since: Date.now() });
+    tools.hooks.change();
+    try {
+      const out = await Tools.job(tools, role.device, { name: "claude", input: { task: agent.task ?? "", dir: role.dir ?? undefined }, cwd: agent.name }, abort.signal, crypto.randomUUID());
+      tools.hooks.push(agent, "echo", out.text);
+      const at = out.text.lastIndexOf("\n\nResult");
+      const result = at < 0 ? out.text.slice(-2000) : out.text.slice(at + 2);
+      agent.replies.push(out.fail ? "failed: " + result : result);
+    } catch (err: any) {
+      agent.replies.push("failed: " + String(err?.message ?? err));
+    }
+    agent.runs = false;
+    Tools.finish(tools, agent);
   }
 
   // one not of this process is taken back from its log, idle
@@ -867,6 +953,12 @@ export namespace Tools {
       agent.replies.push("failed: " + String(err?.message ?? err));
     }
     agent.runs = false;
+    Tools.finish(tools, agent);
+  }
+
+  // a run's end: its report, to whoever started it (none yet from a
+  // manager with workers at work: their reports wake it); the views told
+  export function finish(tools: Tools, agent: Agent): void {
     if (agent.stop || Tools.below(tools, agent.name).length === 0) {
       const text = report_text(agent.name, agent.replies.join("\n\n"));
       if (agent.parent === "main") {
@@ -922,6 +1014,9 @@ export namespace Tools {
         const blocks = [...seen.view, Tools.devices(tools), seen.log];
         const effort = role.effort ?? run.effort;
         return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
+      }
+      case "cli": {
+        throw new Error("Claude Code runs on its device, asked nothing here");
       }
       case "hands": {
         const run = Pick.ask(tools.hooks.pick());
@@ -988,7 +1083,7 @@ export namespace Tools {
 
   // at work: a call running, or between calls of its run
   export function working(tools: Tools): Agent[] {
-    return [...tools.agents.values()].filter((a) => a.call !== null || a.runs === true);
+    return [...tools.agents.values()].filter((a) => a.call !== null || a.runs === true || a.asks === true);
   }
 
   // the stop tool: the named at work stopped (Tools.stop), the rest told
@@ -1009,6 +1104,12 @@ export namespace Tools {
     for (const agent of all) {
       agent.stop = true;
       agent.call?.stop();
+      agent.abort?.abort();
+      if (agent.asks) {
+        agent.asks = false;
+        agent.replies = ["stopped before the user approved it"];
+        Tools.finish(tools, agent);
+      }
     }
   }
 

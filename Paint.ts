@@ -443,7 +443,7 @@ export function crew_lines(v: View.View, w: number, now: number, most: number): 
   const shown = rows.length > most ? rows.slice(0, Math.max(1, most - 1)) : rows;
   const lines = shown.map((r) => {
     const here = r.name === at;
-    const ink = r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
+    const ink = r.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
     return [Run(here ? "▸ " : "  ", here ? { ...INK, b: true } : INK), Run(text_cut(r.text, w - 2), here ? { ...ink, b: true } : ink)];
   });
   return rows.length > shown.length ? [...lines, [Run(text_cut("  … +" + (rows.length - shown.length) + " more: /tab <name>", w), DIM)]] : lines;

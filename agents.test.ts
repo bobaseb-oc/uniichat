@@ -353,3 +353,42 @@ test("a payer's refusal holds the agents' trees with the chat's: asked once, bui
   await until(() => Memory.node(sub, { l: 0, i: 0 }) !== null);
   Memory.stop(mem);
 }));
+
+// a Claude Code worker (spawn as "claude") asks the person first: no job
+// on its device till approved; approved, its job runs there and its
+// transcript and result reach its tree and its starter; denied, it says so
+test("a Claude Code worker asks first; approved it runs on its device and reports, denied it says so", () => faked(async () => {
+  const mem = Memory.load(DIR + "/claude", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  const sent: any[] = [];
+  Tools.attach(tools, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
+  const go = new AbortController().signal;
+  const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the bug"], as: "claude", device: "mac", dir: "~/repos/x" }, go, "1");
+  expect(out.fail).toBe(false);
+  const name = [...tools.agents.keys()][0];
+  expect(Tools.crew(tools)[0]).toMatchObject({ name, tier: "claude", status: "asking" });
+  expect(sent.filter((m) => m.$ === "job")).toEqual([]);
+
+  expect(Tools.approve(tools, name, true)).toContain("Approved");
+  await until(() => sent.some((m) => m.$ === "job"));
+  const job = sent.find((m) => m.$ === "job");
+  expect(job.job).toMatchObject({ name: "claude", cwd: name, input: { dir: "~/repos/x" } });
+  expect(job.job.input.task).toContain("fix the bug");
+  expect(Tools.crew(tools)[0].status).toBe("working");
+  Tools.done(tools, "mac", job.id, { text: "unii: on it\n\nResult ($0.0100): fixed it", fail: false });
+  await until(() => reports.length === 1);
+  expect(reports[0]).toContain("fixed it");
+  expect(Memory.agent(mem, name)!.some((r) => r.kind === "echo" && r.text.includes("unii: on it"))).toBe(true);
+  expect(Tools.approve(tools, name, true)).toContain("No Claude Code worker");
+
+  await Tools.call(tools, "main", "spawn", { tasks: ["another"], as: "claude", device: "mac" }, go, "2");
+  const other = [...tools.agents.keys()][1];
+  Tools.approve(tools, other, false);
+  await until(() => reports.length === 2);
+  expect(reports[1]).toContain("denied");
+  expect(sent.filter((m) => m.$ === "job")).toHaveLength(1);
+  expect((await Tools.call(tools, "main", "spawn", { tasks: ["x"], as: "claude", device: "nowhere" }, go, "3")).fail).toBe(true);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));

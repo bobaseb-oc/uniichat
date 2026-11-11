@@ -75,7 +75,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.142";
+const VERSION = "1.0.143";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -202,6 +202,8 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/stop [name]",      "",                        "stop all work, agents too; or that agent and those under it", term_stop],
       ["/crew",             "",                        "show or hide the crew: UniiChat and every agent under its starter", term_crew],
       ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
+      ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
+      ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
     ]],
     ["Account", [
       ...topup,
@@ -550,9 +552,20 @@ function term_crew(t: Term): void {
   term_note(t, t.crew ? "The crew shows below the input." : "The crew is hidden: /crew shows it.");
 }
 
+// the person's yes or no to a Claude Code worker asking to start: the
+// one named, else the one on the page shown, else the only one asking
+function term_approve(t: Term, arg: string, yes: boolean): void {
+  const asking = View.view_asking(t.v);
+  const named = arg !== "" ? term_agent(t, arg) : t.v.page !== null && asking.includes(t.v.page.name) ? t.v.page.name : asking.length === 1 ? asking[0] : null;
+  if (named === null || !asking.includes(named)) {
+    return term_note(t, asking.length === 0 ? "No Claude Code worker asks to start." : "Which? Asking: " + asking.join(", ") + ".");
+  }
+  term_act(t, { $: "Approve", name: named, yes });
+}
+
 // a done agent out of the crew, or every one not at work
 function term_dismiss(t: Term, arg: string): void {
-  const done = t.v.crew.filter((c) => c.status !== "working" && c.status !== "waiting").map((c) => c.name);
+  const done = t.v.crew.filter((c) => !["working", "waiting", "asking"].includes(c.status)).map((c) => c.name);
   const names = arg === "" ? done : [term_agent(t, arg)].filter((n) => done.includes(n));
   if (names.length === 0) {
     term_note(t, arg === "" ? "No agent done to dismiss." : "No agent " + arg + " done.");

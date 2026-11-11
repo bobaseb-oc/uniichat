@@ -96,3 +96,17 @@ test("alerts: an agent that fails, a turn that ends; not on connect, not twice",
   hear(false, []);
   expect(View.view_alerts(v, 40000)).toHaveLength(1);
 });
+
+// a Claude Code worker asking to start: listed first, an alert, and the
+// person's yes or no goes to the server
+test("a Claude Code worker asking to start: first in the crew, alerted, approved or denied", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Wkr", "main", "worker", "working")] });
+  View.view_alerts(v, 0);
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Wkr", "main", "worker", "working"), crew("Bad", "main", "worker", "failed"), { ...crew("Cc", "main", "worker", "asking"), tier: "claude", model: "claude-code" }] });
+  expect(View.view_crew(v, 0).map((r) => r.name)).toEqual(["Cc", "Bad", "Wkr"]);
+  expect(View.view_crew(v, 0)[0].text).toContain("? Cc");
+  expect(View.view_alerts(v, 1000).slice(0, 1)).toEqual([{ key: "Cc asks", title: "Cc asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: "Cc" }]);
+  expect(View.view_act(v, { $: "Approve", name: "Cc", yes: true })).toEqual([{ $: "approve", name: "Cc", yes: true }]);
+  expect(View.view_asking(v)).toEqual(["Cc"]);
+});

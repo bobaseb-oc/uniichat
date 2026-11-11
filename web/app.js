@@ -904,8 +904,8 @@ var SERVED = {
 function Cap(text) {
   return { $: "Cap", text };
 }
-var CREW = { failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
-var STATUSES = ["failed", "working", "waiting", "stopped", "done"];
+var CREW = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+var STATUSES = ["asking", "failed", "working", "waiting", "stopped", "done"];
 var ALERT_GAP = 20000;
 function view_new() {
   return {
@@ -1083,6 +1083,9 @@ function view_act(v, act) {
     case "Dismiss": {
       return [{ $: "dismiss", name: act.name }];
     }
+    case "Approve": {
+      return [{ $: "approve", name: act.name, yes: act.yes }];
+    }
     case "Goto": {
       if (act.name === null) {
         v.page = null;
@@ -1178,7 +1181,9 @@ function view_alerts(v, now) {
   if (was === null) {
     return [];
   }
-  const failed = v.crew.filter((c) => c.status === "failed" && was.status.get(c.name) !== "failed").map((c) => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }));
+  const fresh = (status) => v.crew.filter((c) => c.status === status && was.status.get(c.name) !== status);
+  const asks = fresh("asking").map((c) => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
+  const failed = [...asks, ...fresh("failed").map((c) => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
   const ended = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
   return [...failed, ...ended].filter((a) => {
     const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
@@ -1503,8 +1508,9 @@ function crew_html(v, now) {
   const top = `<button class="crew top${v.page === null ? " here" : ""}"${act_html({ $: "Goto", name: null })}>${esc("◆ " + MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"))}</button>`;
   const rows = view_crew(v, now).map((r) => {
     const here = v.page?.name === r.name ? " here" : "";
-    const done = r.status !== "working" && r.status !== "waiting";
-    const x = done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "";
+    const done = r.status !== "working" && r.status !== "waiting" && r.status !== "asking";
+    const ask = r.status !== "asking" ? "" : `<span class="x yes" title="approve"${act_html({ $: "Approve", name: r.name, yes: true })}>✓</span><span class="x" title="deny"${act_html({ $: "Approve", name: r.name, yes: false })}>×</span>`;
+    const x = ask + (done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "");
     return `<button class="crew d${Math.min(r.depth, 3)} ${r.status}${here}"${act_html({ $: "Goto", name: r.name })}>${esc(r.text.trimStart())}${x}</button>`;
   });
   return [top, ...rows];

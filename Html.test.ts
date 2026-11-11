@@ -34,3 +34,12 @@ test("a name from the server is escaped", () => {
   expect(html).not.toContain("<b>x</b>");
   expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
 });
+
+test("a Claude Code worker asking to start has approve and deny buttons, no dismiss", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("Cc", "main", "asking"), tier: "claude" }] });
+  const row = Html.crew_html(v, 0)[1];
+  expect(row).toContain("&quot;Approve&quot;,&quot;name&quot;:&quot;Cc&quot;,&quot;yes&quot;:true");
+  expect(row).toContain("&quot;yes&quot;:false");
+  expect(row).not.toContain("Dismiss");
+});

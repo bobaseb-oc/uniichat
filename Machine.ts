@@ -51,6 +51,14 @@ const PS  = process.platform === "darwin" ? ["ps", "-wwE", "-U", UID, "-o", "pid
 // end() kills a backgrounded job whose shell already exited
 const SHELLS = new Set<Bun.Subprocess>();
 
+// a Claude Code worker's flags (Machine.claude): headless, auto mode, its
+// events streamed; how much of its transcript comes back (under
+// View.FRAME), of a tool call's input and of a result per line
+const CLAUDE = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"];
+const TRACE = 2 ** 20;
+const CLAUDE_CALL = 300;
+const CLAUDE_ECHO = 1000;
+
 // the lines kept around each change in a diff
 const CONTEXT = 3;
 
@@ -146,6 +154,13 @@ export namespace Machine {
         case "computer": {
           return await Computer.act(input, signal);
         }
+        case "claude": {
+          const dir = input.dir ? tilde(String(input.dir)) : cwd;
+          if (!fs.existsSync(dir)) {
+            return { text: "No directory " + input.dir + " here.", fail: true };
+          }
+          return await Machine.claude(dir, String(input.task), signal);
+        }
         default: {
           return { text: "No tool " + job.name + ".", fail: true };
         }
@@ -153,6 +168,84 @@ export namespace Machine {
     } catch (err: any) {
       return { text: String(err?.message ?? err), fail: true };
     }
+  }
+
+  // a Claude Code worker: `claude -p` on the task, in auto mode (its
+  // classifier allows or refuses each action: no one answers a prompt
+  // headless), in its own process group (a stop kills it and its
+  // children); its stream-json events read into transcript lines, its
+  // result last (Machine.claude_out)
+  export async function claude(cwd: string, task: string, signal: AbortSignal): Promise<Out> {
+    const proc = Bun.spawn(["claude", "-p", task, ...CLAUDE], { cwd, env: { ...process.env, UNII_RUN: RUN }, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    SHELLS.add(proc);
+    const kill = () => Machine.kill(-proc.pid);
+    signal.addEventListener("abort", kill, { once: true });
+    const lines: string[] = [];
+    let result: { text: string; error: boolean; cost: number | null } | null = null;
+    let rest = "";
+    try {
+      for await (const piece of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        const all = (rest + piece).split("\n");
+        rest = all.pop() ?? "";
+        for (const line of all) {
+          const ev = Machine.claude_json(line);
+          const said = ev === null ? null : Machine.claude_line(ev);
+          if (said !== null) {
+            lines.push(said);
+          }
+          if (ev?.type === "result") {
+            result = { text: String(ev.result ?? ev.subtype ?? ""), error: ev.is_error === true, cost: typeof ev.total_cost_usd === "number" ? ev.total_cost_usd : null };
+          }
+        }
+      }
+    } catch {}
+    signal.removeEventListener("abort", kill);
+    const code = await proc.exited;
+    if (result === null) {
+      const err = (await new Response(proc.stderr).text()).trim();
+      lines.push("echo: " + (signal.aborted ? "stopped" : "claude ended (exit " + code + ")" + (err ? ": " + err.slice(-2000) : "")));
+    }
+    return Machine.claude_out(lines, result, TRACE);
+  }
+
+  export function claude_json(line: string): any {
+    try {
+      return line.trim() === "" ? null : JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }
+
+  // an event as a transcript line: Claude's words (unii), its tool calls
+  // (tool), their results (echo); none for the rest
+  export function claude_line(ev: any): string | null {
+    const content: any[] = Array.isArray(ev?.message?.content) ? ev.message.content : [];
+    const text = (c: any): string => (typeof c === "string" ? c : Array.isArray(c) ? c.map(text).join("") : typeof c?.text === "string" ? c.text : "");
+    const lines = content.flatMap((c): string[] => {
+      if (ev.type === "assistant" && c.type === "text" && c.text.trim() !== "") {
+        return ["unii: " + c.text.trim()];
+      }
+      if (ev.type === "assistant" && c.type === "tool_use") {
+        return ["tool: " + c.name + "(" + JSON.stringify(c.input ?? {}).slice(0, CLAUDE_CALL) + ")"];
+      }
+      if (ev.type === "user" && c.type === "tool_result") {
+        return ["echo: " + text(c.content).slice(0, CLAUDE_ECHO)];
+      }
+      return [];
+    });
+    return lines.length === 0 ? null : lines.join("\n");
+  }
+
+  // the transcript, its end kept within `cap` bytes, then the result; none
+  // (claude ended without one) a failure
+  export function claude_out(lines: string[], result: { text: string; error: boolean; cost: number | null } | null, cap: number): Out {
+    const tail = result === null ? "" : "\n\nResult" + (result.cost === null ? "" : " ($" + result.cost.toFixed(4) + ")") + ": " + result.text;
+    let k = lines.length;
+    for (let size = Buffer.byteLength(tail); k > 0 && size + Buffer.byteLength(lines[k - 1]) + 1 <= cap; k--) {
+      size += Buffer.byteLength(lines[k - 1]) + 1;
+    }
+    const kept = (k > 0 ? "(earlier steps cut)\n" : "") + lines.slice(k).join("\n");
+    return { text: kept + tail, fail: result === null || result.error };
   }
 
   // runs a command, in its own process group (detached), every process
