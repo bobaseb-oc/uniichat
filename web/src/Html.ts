@@ -112,6 +112,20 @@ export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[]):
   return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => (i === 0 ? [part] : [`<span class="dot">·</span>`, part]))];
 }
 
+// the crew (View.view_crew): UniiChat, then each agent under who started
+// it, a button showing its page, the one shown marked; one not at work
+// with its dismiss
+export function crew_html(v: View.View, now: number): string[] {
+  const top = `<button class="crew top${v.page === null ? " here" : ""}"${act_html({ $: "Goto", name: null })}>${esc("◆ " + View.MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"))}</button>`;
+  const rows = View.view_crew(v, now).map((r) => {
+    const here = v.page?.name === r.name ? " here" : "";
+    const done = r.status !== "working" && r.status !== "waiting";
+    const x = done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "";
+    return `<button class="crew d${Math.min(r.depth, 3)} ${r.status}${here}"${act_html({ $: "Goto", name: r.name })}>${esc(r.text.trimStart())}${x}</button>`;
+  });
+  return [top, ...rows];
+}
+
 export function tabs_html(tabs: View.Tab[]): string[] {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";

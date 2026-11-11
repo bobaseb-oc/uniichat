@@ -142,6 +142,14 @@ body.account footer > :not(#toast) { display: none; }
 #tabs button { flex: none; }
 #tabs button:hover, #tabs .here { color: var(--ink); }
 #tabs .here { font-weight: 600; }
+/* the crew (Html.crew_html): a row per agent, under its starter */
+#tabs.crew { flex-direction: column; gap: 2px; overflow-x: visible; }
+#tabs.crew button { text-align: left; overflow: hidden; text-overflow: ellipsis; }
+#tabs.crew .d1 { padding-left: 16px; } #tabs.crew .d2 { padding-left: 32px; } #tabs.crew .d3 { padding-left: 48px; }
+#tabs.crew .failed { color: var(--del); }
+#tabs.crew :is(.done, .stopped) { color: var(--soft); }
+#tabs.crew .x { margin-left: 8px; padding: 0 4px; color: var(--soft); }
+#tabs.crew .x:hover { color: var(--ink); }
 
 /* Popovers (the browser's): the menu, the wallet, Import History */
 [popover] { inset: 60px 20px auto auto; margin: 0; width: 280px; padding: 10px 14px; border: 1px solid var(--hair); border-radius: 14px; color: var(--ink); background: var(--lift); box-shadow: var(--shadow); }

@@ -172,6 +172,7 @@ export type Act =
   | { $: "Shut"; id: number; n: number }        // a click on an open block's bar
   | { $: "Fold"; on: boolean }                  // fold all, unfold all
   | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
+  | { $: "Dismiss"; name: string }              // a done agent out of the crew
 
 // what a page draws, top to bottom
 export type Row =
@@ -462,6 +463,9 @@ export function view_act(v: View, act: Act): Client[] {
       v.open.clear();
       v.fold = act.on ? [] : null;
       return act.on ? [{ $: "root" }] : [];
+    }
+    case "Dismiss": {
+      return [{ $: "dismiss", name: act.name }];
     }
     case "Goto": {
       if (act.name === null) {

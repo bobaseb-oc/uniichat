@@ -917,8 +917,10 @@ function bars(): void {
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_pick(v)));
-  $("#tabs").hidden = tabs.length < 2;
-  markup($("#tabs"), Html.tabs_html(tabs));
+  const crew = v.crew.length > 0;
+  $("#tabs").hidden = !crew && tabs.length < 2;
+  $("#tabs").classList.toggle("crew", crew);
+  markup($("#tabs"), crew ? Html.crew_html(v, Date.now()) : Html.tabs_html(tabs));
   import_bar();
 }
 
