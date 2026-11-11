@@ -628,7 +628,12 @@ export namespace Tools {
   export async function run(tools: Tools, agent: Agent, call: Call | null = null): Promise<void> {
     try {
       for (let more = true; more; call = null) {
-        agent.call = call ?? AskAI.ask(Tools.ask(tools, agent), (ev) => tools.hooks.on(agent, ev));
+        const log = call === null ? await Memory.agent_blocks(tools.mem, agent.name, tools.hooks.halt()) : [];
+        if (typeof log === "string") {
+          agent.replies.push("failed: " + log);
+          break;
+        }
+        agent.call = call ?? AskAI.ask(Tools.ask(tools, agent, log), (ev) => tools.hooks.on(agent, ev));
         tools.hooks.change();
         const end = await agent.call.done;
         agent.call = null;
@@ -647,10 +652,10 @@ export namespace Tools {
     return tools.pay?.(agent.role.$ === "sub" ? "agent" : "computer", agent.name);
   }
 
-  // a call of an agent, on config.AGENTS or else the chat's pick (a
-  // computer task's sees no view, and only its computer tool)
-  export function ask(tools: Tools, agent: Agent): Ask {
-    const log = { text: Memory.agent_show(tools.mem, agent.name), mark: true };
+  // a call of an agent, on config.AGENTS or else the chat's pick: the
+  // chat's view as it began, then its own (`log`: Memory.agent_blocks).
+  // A computer task's sees no chat, and only its computer tool
+  export function ask(tools: Tools, agent: Agent, log: Block[]): Ask {
     const server = Tools.at(tools, agent.name);
     const run = Pick.ask(config.AGENTS ?? tools.hooks.pick());
     const bill = Tools.bill(tools, agent);
@@ -658,13 +663,13 @@ export namespace Tools {
     switch (role.$) {
       case "sub": {
         const system = Tools.system(SUB);
-        const blocks = [...agent.view, Tools.devices(tools), log];
+        const blocks = [...agent.view, Tools.devices(tools), ...log];
         const effort = role.effort ?? run.effort;
         return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
       }
       case "hands": {
         const system = Tools.system(HANDS.replace("{device}", role.device));
-        return { ...run, system, blocks: [...agent.view, log], searches: 0, server, bill };
+        return { ...run, system, blocks: [...agent.view, ...log], searches: 0, server, bill };
       }
     }
   }

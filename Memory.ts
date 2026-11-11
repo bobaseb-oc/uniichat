@@ -47,7 +47,12 @@
 // the chat.
 // Memory holds only the view's nodes and those built above them; any
 // other line is read by its index. Images are in docs/images/ by their
-// hash; an agent's log in docs/agent/<Name>.jsonl.
+// hash. An agent's log is a chat of its own, in docs/agent/<Name>/: its
+// tree compresses as the chat's does, on the chat's payer, and its call
+// sees its view (agent_blocks), as a turn sees the chat's. An older
+// agent's log, docs/agent/<Name>.jsonl, is read as it is, and moves onto
+// a tree (kept beside it) only as the agent logs again: reading one asks
+// no summary.
 
 import * as fs from "node:fs";
 import { AskAI, type Ask, type Bill, type Block, type Call, type Img, type Kind, type Pay, type Say, type Served } from "./AskAI.ts";
@@ -79,8 +84,9 @@ type View = { parts: Part[]; size: number; batch: boolean; high: number };
 // a summary running: its node, what it serves
 type Sum = Part & { kind: Served };
 
-// a summary running as its chat moved (Memory.give): its node, its call's id
-export type Given = [number, number, string];
+// a summary running as its chat moved (Memory.give): its node, its call's id,
+// its agent's name (none: the chat's)
+export type Given = [number, number, string, string?];
 
 // what a compaction shares with the chat's turns: all but the blocks
 export type Share = Omit<Ask, "blocks">;
@@ -101,7 +107,8 @@ type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; go
 // whole; open: those after, not whole yet; pick: the chat's, as last set;
 // goal: the user's (/goal; null: none), till met or halted (Server.ts);
 // work: what ran, as last saved; nodes: the texts of the views' nodes
-// built and of those above them, by slot; agents: their logs' lengths;
+// built and of those above them, by slot; agents: their trees, each a
+// Memory of its own (docs/agent/<Name>/), as opened;
 // view: the chat's view; seen: the compactions'; ready: the nodes not
 // built whose halves are, by side and level, in order; ends: how far
 // each log is indexed; busy: nodes building, by slot, with their side;
@@ -119,7 +126,7 @@ export type Memory = {
   goal   : string | null;
   work   : string[];
   nodes  : Map<number, string>;
-  agents : Map<string, number>;
+  agents : Map<string, Memory>;
   view   : View;
   seen   : View;
   ready  : number[][][];
@@ -695,6 +702,7 @@ export namespace Memory {
   // no node starts again (the chat moves: Memory.give)
   export function halt(mem: Memory): void {
     mem.done = true;
+    mem.agents.forEach(Memory.halt);
   }
 
   // nor runs: those running are cut
@@ -703,6 +711,7 @@ export namespace Memory {
     mem.calls.forEach((_, call) => call.stop());
     mem.fds.forEach((fd) => fs.closeSync(fd));
     mem.fds.clear();
+    mem.agents.forEach(Memory.stop);
   }
 
   // the summaries running, as the chat moves to another process (Server.ts
@@ -711,15 +720,21 @@ export namespace Memory {
   export function give(mem: Memory, far: (call: Call) => string): Given[] {
     const given = [...mem.calls].map(([call, { l, i }]): Given => [l, i, far(call)]);
     mem.calls.clear();
+    for (const [name, sub] of mem.agents) {
+      given.push(...Memory.give(sub, far).map(([l, i, id]): Given => [l, i, id, name]));
+    }
     return given;
   }
 
   // the summaries a chat moved here was running (Memory.give) build here
   // as their calls end there: `far` makes the call of an id, paid here
   export function take(mem: Memory, given: Given[], far: (id: string, bill?: Bill) => Call): void {
-    for (const [l, i, id] of given) {
-      const text = Memory.source(mem, l, i)!;
-      Memory.job(mem, l, i, text, far(id, Memory.bill(mem, l, i, text)));
+    for (const [l, i, id, name] of given) {
+      const at = name === undefined ? mem : Memory.agent_mem(mem, name);
+      const text = at === null ? null : Memory.source(at, l, i);
+      if (at !== null && text !== null) {
+        Memory.job(at, l, i, text, far(id, Memory.bill(at, l, i, text)));
+      }
     }
   }
 
@@ -1087,7 +1102,7 @@ ${Memory.cut(line)}| ← LIMIT`;
     }
     yield '],\n"agents": {';
     sep = "\n";
-    for (const name of ls(AGENTS).map((file) => file.replace(/\.jsonl$/, ""))) {
+    for (const name of new Set<string>(ls(AGENTS).map((file: string) => file.replace(/\.jsonl$/, "")))) {
       const log = Memory.agent(mem, name);
       if (log === null) {
         continue;
@@ -1153,34 +1168,81 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
   // Agents
   // ------
 
-  // read whole; a name is letters and hyphens, never a path
-  export function agent(mem: Memory, name: string): Root[] | null {
-    const file = mem.dir + AGENTS + name + ".jsonl";
-    return /^[A-Za-z-]+$/.test(name) && fs.existsSync(file) ? Memory.file(file) : null;
+  // a name is letters and hyphens, never a path
+  export function agent_name(name: string): boolean {
+    return /^[A-Za-z-]+$/.test(name);
   }
 
+  // its tree, opened once (its summaries paid as the chat's); an older
+  // log moved onto it first. null: no such agent
+  export function agent_mem(mem: Memory, name: string): Memory | null {
+    const open = mem.agents.get(name);
+    if (open !== undefined || !Memory.agent_name(name)) {
+      return open ?? null;
+    }
+    const dir = mem.dir + AGENTS + name;
+    const old = dir + ".jsonl";
+    if (!fs.existsSync(dir + "/main.index") && !fs.existsSync(old)) {
+      return null;
+    }
+    const sub = Memory.agent_load(mem, dir);
+    if (sub.count === 0 && fs.existsSync(old)) {
+      Memory.push(sub, Memory.file(old).map(({ kind, text, date }: Root) => ({ kind, text, date })));
+    }
+    return sub;
+  }
+
+  // an agent's tree, opened: paid as the chat is, whatever pays it now
+  // (never free for having opened before its payer was set), halted
+  // with it
+  export function agent_load(mem: Memory, dir: string): Memory {
+    const sub = Memory.load(dir, mem.share);
+    Object.defineProperty(sub, "pay", { get: () => mem.pay });
+    sub.done = mem.done;
+    mem.agents.set(dir.slice(dir.lastIndexOf("/") + 1), sub);
+    return sub;
+  }
+
+  // its log, read whole (an older one's from its file: no tree opened)
+  export function agent(mem: Memory, name: string): Root[] | null {
+    const dir = mem.dir + AGENTS + name;
+    if (!Memory.agent_name(name)) {
+      return null;
+    }
+    if (!mem.agents.has(name) && !fs.existsSync(dir + "/main.index")) {
+      return fs.existsSync(dir + ".jsonl") ? Memory.file(dir + ".jsonl") : null;
+    }
+    const sub = Memory.agent_mem(mem, name)!;
+    return Array.from({ length: sub.count }, (_, i) => Memory.message(sub, i)!);
+  }
+
+  // a name not taken, its tree made
   export function agent_new(mem: Memory): string {
     const name = names.name_random();
     fs.mkdirSync(mem.dir + AGENTS, { recursive: true });
     try {
-      fs.writeFileSync(mem.dir + AGENTS + name + ".jsonl", "", { flag: "wx" });
+      fs.mkdirSync(mem.dir + AGENTS + name);
     } catch (err: any) {
       if (err.code === "EEXIST") {
         return Memory.agent_new(mem);
       }
       throw err;
     }
-    mem.agents.set(name, 0);
+    if (fs.existsSync(mem.dir + AGENTS + name + ".jsonl")) {
+      fs.rmdirSync(mem.dir + AGENTS + name);
+      return Memory.agent_new(mem);
+    }
+    Memory.agent_load(mem, mem.dir + AGENTS + name);
     return name;
   }
 
-  // its length read once, then counted (mem.agents)
-  export function agent_push(mem: Memory, name: string, kind: Kind, text: string): number {
-    const n = mem.agents.get(name) ?? Memory.agent(mem, name)?.length ?? 0;
-    const root = Memory.root(n, { kind, text });
-    Memory.append(mem.dir + AGENTS + name + ".jsonl", [JSON.stringify(root)]);
-    mem.agents.set(name, n + 1);
-    return root.i;
+  // logged on its tree (in pages, as the chat's); its pages
+  export function agent_push(mem: Memory, name: string, kind: Kind, text: string): Root[] {
+    const sub = Memory.agent_mem(mem, name);
+    if (sub === null) {
+      throw new Error("no agent " + name);
+    }
+    return Memory.push(sub, [{ kind, text }]);
   }
 
   export function agent_show(mem: Memory, name: string): string {
@@ -1189,6 +1251,28 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
 
   export function agent_line(root: Root): string {
     return root.i + "|" + Memory.show(root);
+  }
+
+  // what an agent's call sees, as a turn sees the chat (Server.ts
+  // Chat.call): its view's lines up to its latest task or message, its
+  // summaries waited for, then its log from there raw. A string: why
+  // not (Memory.settle)
+  export async function agent_blocks(mem: Memory, name: string, signal: AbortSignal): Promise<Block[] | string> {
+    const sub = Memory.agent_mem(mem, name);
+    if (sub === null) {
+      return "No agent " + name + ".";
+    }
+    let last = sub.count - 1;
+    while (last > 0 && Memory.message(sub, last)?.kind !== "user") {
+      last -= 1;
+    }
+    const from = Memory.whole(sub, Math.max(0, last));
+    const why = await Memory.settle(sub, from, signal);
+    if (why !== null) {
+      return why;
+    }
+    const log = Array.from({ length: sub.count - from }, (_, k) => Memory.agent_line(Memory.message(sub, from + k)!));
+    return [...Memory.view(sub, from), { text: log.join("\n\n"), mark: true }];
   }
 
 }

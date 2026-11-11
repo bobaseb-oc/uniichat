@@ -631,9 +631,11 @@ export namespace Chat {
   // to the chat (in pages), or an agent's log; each told to every view
   export function push(chat: Chat, agent: Agent | null, kind: Kind, text: string, images: string[] = [], more = false, act?: string): Msg {
     if (agent !== null) {
-      const id = Memory.agent_push(chat.mem, agent.name, kind, text);
-      Chat.all(chat, { $: "entry", agent: agent.name, id, kind, text });
-      return { id, end: id + 1 };
+      const roots = Memory.agent_push(chat.mem, agent.name, kind, text);
+      for (const { i, kind, text } of roots) {
+        Chat.all(chat, { $: "entry", agent: agent.name, id: i, kind, text });
+      }
+      return { id: roots[0].i, end: roots[roots.length - 1].i + 1 };
     }
     const roots = Memory.push(chat.mem, [{ kind, text, images, more, act }]);
     for (const { i, kind, text, date, images } of roots) {
