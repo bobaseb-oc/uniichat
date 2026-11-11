@@ -1,0 +1,32 @@
+tasks/todo.md
+  s_8af7231ad1662b::t_3562709b39d37d 121
+  s_8af7231ad1662b::t_7de991f158e423 129
+Server.test.ts
+  s_8af7231ad1662b::t_d59a0bf216a672 102,154,187-242
+Server.ts
+  s_8af7231ad1662b::t_90d116f5d54c6d 65-66,647,667,673,720,1073-1078,1085,1090,1189-1191,1297,1306-1328,1333-1342,1658
+Tools.test.ts
+  s_8af7231ad1662b::t_dbf1ade34ec030 129-143
+Tools.ts
+  s_8af7231ad1662b::t_952759886975fb 40,74-75,690-702,842
+View.test.ts
+  s_8af7231ad1662b::t_2dbb15caf63c9a 30-65
+View.ts
+  s_8af7231ad1662b::t_86868172923a7c 65,74-82,149-150,282-285,291,357,408-410,561-595
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4703039eb881f64e91123626f4d9fd882e121798",
+  "prompts": {},
+  "sessions": {
+    "s_8af7231ad1662b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "72fcd55a-a6a0-4ecd-85e6-248279a1cd71",
+        "model": "unknown"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
