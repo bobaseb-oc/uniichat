@@ -1,0 +1,61 @@
+tasks/todo.md
+  s_07780bf24c987e::t_57f3721349c173 99-101
+  s_87c812a00e8b52::t_cb346fea748607 25,31
+  s_87c812a00e8b52::t_a18c265839072d 26-30
+  s_07780bf24c987e::t_c82bdb890bcd39 102-110
+  s_93404900539614::t_f97140250ca259 111
+Tools.ts
+  s_87c812a00e8b52::t_6952bcff8fa667 726-734
+  s_87c812a00e8b52::t_07722e29eb2f3f 247
+  s_87c812a00e8b52::t_56dee27483fc01 428-433
+  s_07780bf24c987e::t_8eb6657b154e94 72,594-601,603,620,735
+Server.ts
+  s_07780bf24c987e::t_9e5864639949c4 1269-1281
+  s_07780bf24c987e::t_340adfcbb399b6 720,1268,1282-1286
+Machine.test.ts
+  s_07780bf24c987e::t_a85de37d37c682 27-60
+Machine.ts
+  s_07780bf24c987e::t_b2fb9609bcf610 124,133,160-164,182-183,185-207,209-213
+Server.test.ts
+  s_07780bf24c987e::t_4c56378abdd240 89-142
+Term.ts
+  s_07780bf24c987e::t_9cb9d797c6feee 45,59-61,167,187,329-331,333-335,337-355,818-819,974,976,986-987,989,997-1011
+Tools.test.ts
+  s_07780bf24c987e::t_d6249e3c7abb7d 32-66
+View.test.ts
+  s_07780bf24c987e::t_3666f9d5fa6267 21-29
+View.ts
+  s_07780bf24c987e::t_4fe4365bf33a47 138,383-385,397-401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d10c3de12a056c8ea5589247aa2376c04621af2f",
+  "prompts": {},
+  "sessions": {
+    "s_07780bf24c987e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4f03691e-fcfc-45e4-880b-11c6b2562f3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_87c812a00e8b52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9d16ec7-cd26-4560-9843-6d7142343983",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_93404900539614": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fb5d06f9-9fa9-48b2-9399-d43f72e0c7fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
