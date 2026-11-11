@@ -44,6 +44,19 @@ test("kitty's keys never leak into the text, whatever their reads", () => {
   });
 });
 
+test("a character a terminal sends as a sequence, Shift or none held, is typed, whatever its reads", () => {
+  // kitty's (code, its shifted alternate; repeat), modifyOtherKeys'; a
+  // release, Ctrl and Shift+Enter stay keys
+  splits("a\x1b[115;2uE\x1b[99:67;2:2u\x1b[32;2u\x1b[27;2;69~\x1b[100;1u!\x1b[47:63;2u\x1b[115;1:3u\x1b[115;5u\x1b[13;2u", (text, keys) => {
+    expect(text).toBe("aSEC Ed!?\n");
+    expect(keys).toEqual(["S", "Ctrl+S"]);
+  });
+});
+
+test("kitty's alternate keys are asked, so Shift+/ comes as ? (the shifted key's own code; upper case is only right for letters)", () => {
+  expect(Screen.MODES_ON).toContain("\x1b[>5u");
+});
+
 test("a pipe's last line, without a newline, waits in the input for the end", () => {
   const sent: string[] = [];
   const ed  = { text: "", pos: 0, hist: [], at: 0, draft: "", moved: false, w: 80, tall: 1 };

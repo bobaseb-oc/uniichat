@@ -5,9 +5,10 @@
 // draws again in one synchronized write; a pipe gets the lines as text.
 // Input is read raw (macOS cuts a cooked line at 1024 bytes) as one
 // stream; a paste comes bracketed and is typed whole. Kitty's keys at
-// flag 1 only, so dead keys still compose. The input (Ed) draws as rows
-// starting `> ` and takes its editing keys (ed_key, EDITING) here; Up and
-// Down past its ends walk the messages sent.
+// flags 1 and 4 only (4: alternates), so dead keys still compose. The
+// input (Ed) draws as rows starting `> ` and takes its editing keys
+// (ed_key, EDITING) here; Up and Down past its ends walk the messages
+// sent.
 
 import * as Paint from "./Paint.ts";
 import * as Theme from "./Theme.ts";
@@ -65,9 +66,10 @@ const SYNC_ON  = "\x1b[?2026h";
 const SYNC_OFF = "\x1b[?2026l";
 const WIPE     = "\x1b[2J\x1b[3J\x1b[H";
 
-// bracketed paste, kitty's keys at flag 1 (popped before pushed), the
-// flags asked (a kitty terminal answers CSI ? flags u); off
-const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>1u\x1b[?u";
+// bracketed paste, kitty's keys at flags 1 and 4 (popped before pushed:
+// 4, a shifted key's alternate, so Shift+/ comes with ?), the flags
+// asked (a kitty terminal answers CSI ? flags u); off
+export const MODES_ON  = "\x1b[?2004h\x1b[<u\x1b[>5u\x1b[?u";
 const MODES_OFF = "\x1b[?2004l\x1b[<u";
 
 // a sequence: CSI params [intermediates] final, or SS3 final (kitty's:
@@ -197,7 +199,12 @@ function screen_key(scr: Screen, data: string): number {
     return seq[0].length;
   }
   if (seq !== null) {
-    screen_press(scr, seq_name(seq[1] ?? "", seq[2]));
+    const ch = seq_text(seq[1] ?? "", seq[2]);
+    if (ch !== null) {
+      ed_type(scr.ed, ch);
+    } else {
+      screen_press(scr, seq_name(seq[1] ?? "", seq[2]));
+    }
     return seq[0].length;
   }
   if (code === 27 && data.length > 1 && data[1] !== "\x1b") {
@@ -266,6 +273,20 @@ function seq_name(params: string, end: string): string {
   const key  = code === null ? KEYS[name] ?? name : KEYS[code] ?? String.fromCodePoint(code).toUpperCase();
   const mods = MODS.filter(([bit]) => (b - 1) & bit).map(([, m]) => m);
   return mods.join("") + key;
+}
+
+// a sequence's character, pressed or repeated with Shift or none held
+// (Caps and Num Lock aside), as some terminals send even at kitty's flag
+// 1 (kitty's shifted alternate, else upper case); null: a key
+function seq_text(params: string, end: string): string | null {
+  const [[a = 1, alt] = [], [b = 1, event = 1] = [], [c = 1] = []] = params.split(";").map((p) => p.split(":").map((n) => Number(n) || 0));
+  const code = end === "u" ? a : end === "~" && a === 27 ? c : null;
+  const fn   = code === null || code < 32 || code === 127 || (code >= 57344 && code <= 63743) || (code !== 32 && KEYS[code] !== undefined);
+  if (fn || ((b - 1) & ~(1 | 64 | 128)) !== 0 || event === 3) {
+    return null;
+  }
+  const ch = String.fromCodePoint(code);
+  return ((b - 1) & 1) === 0 ? ch : alt ? String.fromCodePoint(alt) : ch.toUpperCase();
 }
 
 // the input's rows in w columns, at most max of them (the cursor's and
