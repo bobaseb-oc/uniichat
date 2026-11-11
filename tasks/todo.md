@@ -109,6 +109,18 @@ Plan: ~/.claude/plans/shall-we-consider-adding-quizzical-pine.md
 
 Review: the test harness found that an idle chat with no view closes itself (`Chat.free`), so the Server test keeps a stand-in view open. Backgrounded jobs aren't stopped by `/stop`; quitting unii ends them. The output kept before Ctrl+B is the head and tail if it was already cut.
 
+## Agent hierarchy (orchestrator → managers → workers), in place
+Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/hierarchy`
+- [x] 0. Pending work committed on local/litellm in 4 topic commits; baseline outside the sandbox 124 pass, 2 known logs fails
+- [ ] 1. A Memory tree per agent: brief seed, own view in `Tools.ask`, `zoom("Name:id+n")`, handover carries it → verify: new tests red then green
+- [ ] 2. Tiers (`TIERS`), model override downward only, depth 3, scoped spawn/tell/stop, subtree stop, report wakes the parent
+- [ ] 3. View tree model: status, per-path subscribe, typing tells the focused agent, finished agents stay
+- [ ] 4. Terminal UI: sidebar tree, focused pane, badges, footer totals
+- [ ] 5. Web UI on the same model; rebuild web/app.js
+- [ ] 5b. Desktop notifications on `attention` (waiting/failed/orchestrator done unfocused): OSC 9/777, osascript fallback, browser Notification
+- [ ] 6. PTY workers (`claude` in a PTY), user approval to start
+- [ ] 7. Hardening: subtree cost caps, failed-child reports, Memory `hold[0]` / refusal tight-loop check
+
 ## Later
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.
