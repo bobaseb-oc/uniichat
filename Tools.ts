@@ -37,7 +37,7 @@ import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
-import type { Live } from "./View.ts";
+import type { Crew, Live } from "./View.ts";
 
 export type { Live };
 
@@ -71,6 +71,8 @@ export type Agent = {
   replies : string[];
   user    : boolean; // the person started it (/agent): its report takes no turn
   runs?   : boolean; // its run goes on (Tools.run), a call or not: a report to it waits in its log
+  since?  : number;  // when its last run began (ms since 1970)
+  hidden? : boolean; // dismissed from the crew (View.ts) by the person
 };
 
 // a manager splits its task among workers it spawns; a worker does its
@@ -685,6 +687,19 @@ export namespace Tools {
     return Tools.working(tools).filter((a) => Tools.under(tools, name, a.name));
   }
 
+  // the chat's agents as the views show them (View.ts Crew): all this
+  // process knows but those dismissed
+  export function crew(tools: Tools): Crew[] {
+    return [...tools.agents.values()].filter((a) => !a.hidden).map((a): Crew => {
+      const role = a.role;
+      const pick = role.$ === "hands" ? tools.hooks.pick() : Tools.child(role.tier, role.model);
+      const model = typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
+      const at = a.call !== null || a.runs === true;
+      const status = a.stop ? "stopped" : at ? "working" : Tools.below(tools, a.name).length > 0 ? "waiting" : a.replies.at(-1)?.startsWith("failed: ") ? "failed" : "done";
+      return { name: a.name, parent: a.parent, tier: role.$ === "hands" ? "computer" : role.tier, model, status, since: a.since ?? 0 };
+    });
+  }
+
   // what an agent is, as Unii's list of those at work says
   export function what(agent: Agent): string {
     const role = agent.role;
@@ -824,6 +839,7 @@ export namespace Tools {
   // Detached: a throw ends it as a failed reply, still reported
   export async function run(tools: Tools, agent: Agent, call: Call | null = null): Promise<void> {
     agent.runs = true;
+    agent.since = Date.now();
     try {
       for (let more = true; more; call = null) {
         const seen = call === null ? await Memory.agent_blocks(tools.mem, agent.name, tools.hooks.halt()) : null;

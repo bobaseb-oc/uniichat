@@ -62,8 +62,8 @@ import style_css from "./web/style.css" with { type: "file" };
 // =====
 
 // a socket: its user, sign-in (hashed), its query's fields, its device,
-// the parts it was shown (Chat.teach)
-type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; device: string | null; seen: Set<string> }>;
+// the parts it was shown (Chat.teach), the agents whose pages it asked for
+type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; device: string | null; seen: Set<string>; watch: Set<string> }>;
 
 // a body: its file, its size so far
 type Body = { fh: fs.promises.FileHandle; size: number };
@@ -644,7 +644,7 @@ export namespace Chat {
     if (agent !== null) {
       const roots = Memory.agent_push(chat.mem, agent.name, kind, text);
       for (const { i, kind, text } of roots) {
-        Chat.all(chat, { $: "entry", agent: agent.name, id: i, kind, text });
+        Chat.to(chat, agent.name, { $: "entry", agent: agent.name, id: i, kind, text });
       }
       return { id: roots[0].i, end: roots[roots.length - 1].i + 1 };
     }
@@ -664,13 +664,13 @@ export namespace Chat {
     }
     if (ev.$ === "Delta") {
       live_push(at.live, ev.kind, ev.text, ev.fresh);
-      Chat.all(chat, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
+      Chat.to(chat, name, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
       return;
     }
     if (ev.kind === "tool" && ev.of !== undefined) {
       at.calls[ev.of] = ev.text;
     } else if (ev.kind === "mind") {
-      Chat.all(chat, { $: "entry", agent: name, kind: ev.kind, text: ev.text });
+      Chat.to(chat, name, { $: "entry", agent: name, kind: ev.kind, text: ev.text });
     } else if (ev.kind !== "user") {
       const call = ev.of === undefined ? undefined : at.calls[ev.of];
       delete at.calls[ev.of ?? ""];
@@ -717,7 +717,7 @@ export namespace Chat {
   // what streams for the chat (agent: null) or an agent, set and told
   export function live(chat: Chat, agent: Agent | null, live: Live[]): void {
     (agent ?? chat).live = live;
-    Chat.all(chat, { $: "live", agent: agent?.name, live });
+    Chat.to(chat, agent?.name, { $: "live", agent: agent?.name, live });
   }
 
   // an agent's report, once it ends: a turn of its own, unless stopped or
@@ -1070,17 +1070,24 @@ export namespace Chat {
     chat.socks.forEach((sock) => Chat.send(sock, msg));
   }
 
+  // the chat's (agent: none) to every view, an agent's to those showing
+  // its page (they asked for it: Chat.ask)
+  export function to(chat: Chat, agent: string | undefined, msg: Out): void {
+    chat.socks.forEach((sock) => (agent === undefined || sock.data.watch.has(agent)) && Chat.send(sock, msg));
+  }
+
   export function send(sock: Sock, msg: object): void {
     sock.send(JSON.stringify(msg));
   }
 
   export function state(chat: Chat): Out {
     const agents = Tools.working(chat.tools).map((a) => a.name);
+    const crew = Tools.crew(chat.tools);
     const batch = chat.batch;
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1179,6 +1186,9 @@ export namespace Chat {
       case "agent": {
         const name = String(msg.name);
         const log = Memory.agent(chat.mem, name);
+        if (log !== null) {
+          sock.data.watch.add(name);
+        }
         Chat.send(sock, { $: "agent", name, found: log !== null });
         log?.forEach(({ kind, text, date }) => Chat.send(sock, { $: "entry", agent: name, kind, text, date }));
         Chat.send(sock, { $: "live", agent: name, live: chat.tools.agents.get(name)?.live ?? [] });
@@ -1281,14 +1291,10 @@ export namespace Chat {
       case "spawn": {
         // refused as a post is, short of credit
         const task = String(msg.task ?? "").trim();
-        const billing = Chat.cloud.billing;
         if (task === "") {
           return { error: "No task." };
         }
-        if (billing.refuse(chat.acct.user, 0) !== null) {
-          await billing.balance(chat.acct.user);
-        }
-        const refused = billing.refuse(chat.acct.user, 0);
+        const refused = await Chat.afford(chat);
         if (refused !== null) {
           return refused;
         }
@@ -1297,8 +1303,41 @@ export namespace Chat {
         Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
         return {};
       }
+      case "tell": {
+        // the person's message to an agent, as Unii's tell; refused as a
+        // post is, short of credit
+        const text = String(msg.text ?? "").trim();
+        if (text === "") {
+          return { error: "No message." };
+        }
+        const refused = await Chat.afford(chat);
+        if (refused !== null) {
+          return refused;
+        }
+        const told = await Tools.tell(chat.tools, "main", String(msg.name), text);
+        return told.fail ? { error: told.text } : {};
+      }
+      case "dismiss": {
+        const agent = chat.tools.agents.get(String(msg.name));
+        if (agent === undefined || Tools.working(chat.tools).includes(agent)) {
+          return { error: "No agent " + msg.name + " done to dismiss." };
+        }
+        agent.hidden = true;
+        Chat.change(chat);
+        return {};
+      }
     }
     return { error: "No act " + msg.$ + "." };
+  }
+
+  // why the user can't start work now (no credit, a balance read first:
+  // a top-up lands there); null: they can
+  export async function afford(chat: Chat): Promise<Answer | null> {
+    const billing = Chat.cloud.billing;
+    if (billing.refuse(chat.acct.user, 0) !== null) {
+      await billing.balance(chat.acct.user);
+    }
+    return billing.refuse(chat.acct.user, 0);
   }
 
   // a post (msg.req) refused before a byte of its body is read, so a chat
@@ -1616,7 +1655,7 @@ export namespace Main {
         const q    = new URL(req.url).searchParams;
         const who  = Cloud.hash(Cloud.token(req));
         const work = q.get("work") ?? "~/.unii/work";
-        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, device: null, seen: new Set<string>() };
+        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, device: null, seen: new Set<string>(), watch: new Set<string>() };
         return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
       }
       const chat = Chat.open(user);

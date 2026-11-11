@@ -99,7 +99,7 @@ const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")})
 Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
 const chat = Chat.open({ id: "u1", name: "a@b.c" });
 Chat.chats.set("u1", chat);
-chat.socks.add({ send: () => {}, data: { seen: new Set() } }); // a view open: an idle chat with none ends
+chat.socks.add({ send: () => {}, data: { seen: new Set(), watch: new Set() } }); // a view open: an idle chat with none ends
 const works = [];
 const push = Chat.push;
 Chat.push = (c, agent, kind, ...rest) => (agent === null && kind === "work" && works.push(rest[0]), push(c, agent, kind, ...rest));
@@ -151,7 +151,7 @@ const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")})
 Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
 const chat = Chat.open({ id: "u1", name: "a@b.c" });
 Chat.chats.set("u1", chat);
-chat.socks.add({ send: () => {}, data: { seen: new Set() } });
+chat.socks.add({ send: () => {}, data: { seen: new Set(), watch: new Set() } });
 const asks = [];
 AskAI.ask = (ask, on) => {
   const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
@@ -183,4 +183,60 @@ test("a turn past ROLL tokens rolls over: asked again from the tree, the user's 
   const proc = Bun.spawn([process.execPath, dir + "/roll.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   expect(out).toEqual({ again: true, busy: true, words: true, echo: true, rolled: true });
+});
+
+// an agent's events go only to the views that asked for its page (the
+// `agent` read); the chat's go to all. A tell and a dismiss from a view
+// reach the agent. Its own process, as TURN's
+const WATCH = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const got = { a: [], b: [] };
+const sock = (k) => ({ send: (m) => got[k].push(JSON.parse(m)), data: { seen: new Set(), watch: new Set() } });
+const [a, b] = [sock("a"), sock("b")];
+chat.socks.add(a);
+chat.socks.add(b);
+const asks = [];
+AskAI.ask = (ask, on) => {
+  const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  asks.push({ ask, sink, sent: [] });
+  call.send = (say) => asks.at(-1).sent.push(say.text);
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 200 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const name = Tools.start(chat.tools, "main", { $: "sub", tier: "worker", effort: null, model: null }, "a task");
+await until(() => asks.length === 1);
+Chat.ask(chat, a, { $: "agent", name });
+got.a.length = 0;
+got.b.length = 0;
+Chat.push(chat, chat.tools.agents.get(name), "unii", "agent words");
+Chat.push(chat, null, "note", "chat words");
+const seen = (k, text) => got[k].some((m) => m.$ === "entry" && m.text === text);
+const told = await Chat.act(chat, "t1", { $: "tell", name, text: "one more thing" }, "");
+const crewed = Chat.state(chat).crew.map((c) => c.name);
+asks[0].sink.end({ ok: true, text: "done", left: [] });
+await until(() => !chat.tools.agents.get(name).runs);
+const dismissed = await Chat.act(chat, "d1", { $: "dismiss", name }, "");
+console.log(JSON.stringify({
+  a: [seen("a", "agent words"), seen("a", "chat words")],
+  b: [seen("b", "agent words"), seen("b", "chat words")],
+  told, sent: asks[0].sent, crewed: crewed.includes(name), dismissed, after: Chat.state(chat).crew.map((c) => c.name).includes(name),
+}));
+process.exit(0);
+`;
+
+test("an agent's events go only to views on its page; a view's tell and dismiss reach it", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/watch.ts", WATCH);
+  const proc = Bun.spawn([process.execPath, dir + "/watch.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({ a: [true, true], b: [false, true], told: {}, sent: ["one more thing"], crewed: true, dismissed: {}, after: false });
 });

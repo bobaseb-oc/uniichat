@@ -126,3 +126,18 @@ test("an agent's note says its tier, starter, model and effort, and reads back a
   expect(Tools.noted("computer task on mac")).toEqual({ role: { $: "hands", device: "mac" }, parent: "main" });
   expect(Tools.noted("something else")).toBeNull();
 });
+
+test("the crew: each agent's tier, starter, model and status; one dismissed is gone", () => {
+  const tools = Tools.serve({} as any, { pick: () => ({ vendor: "claude-api", model: "opus-5.5", effort: "high", speed: "slow" }) } as any);
+  working(tools, "Mgr", "manager");
+  working(tools, "Wkr", "worker", "Mgr");
+  tools.agents.set("Old", { name: "Old", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: "haiku-5.5" }, call: null, live: [], calls: {}, stop: false, replies: ["failed: boom"], user: false });
+  tools.agents.get("Mgr")!.call = null;
+  const crew = Object.fromEntries(Tools.crew(tools).map((c) => [c.name, c]));
+  expect(crew.Mgr).toMatchObject({ parent: "main", tier: "manager", model: "sonnet-5.5", status: "waiting" });
+  expect(crew.Wkr).toMatchObject({ parent: "Mgr", tier: "worker", status: "working" });
+  expect(crew.Old).toMatchObject({ model: "haiku-5.5", status: "failed" });
+  tools.agents.get("Old")!.hidden = true;
+  expect(Tools.crew(tools).map((c) => c.name)).not.toContain("Old");
+  Tools.close(tools);
+});

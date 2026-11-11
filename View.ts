@@ -62,6 +62,7 @@ export type State = {
   busy      : boolean;
   wait      : Wait;
   agents    : string[];
+  crew      : Crew[];
   pick      : Pick | null;
   vendors   : Vendor[];
   models    : string[];
@@ -69,6 +70,15 @@ export type State = {
   credits   : number | null;
   importing : Progress | null;
 };
+
+// an agent of the chat, at work or done (till dismissed): who started it
+// ("main": Unii), what it is, its model, how it is, since when its run
+// began (ms since 1970)
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer"; model: string; status: Status; since: number };
+export type Status = "working" | "waiting" | "failed" | "stopped" | "done";
+
+// a crew row as drawn: its agent, how deep under Unii, its text
+export type CrewRow = Crew & { depth: number; text: string };
 
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
 // ("id+n") and messages known; open: the blocks opened (true) or shut by
@@ -136,6 +146,8 @@ export type Client =
   | { $: "root" }
   | { $: "agent"; name: string }
   | { $: "spawn"; task: string } // an agent the person starts (/agent)
+  | { $: "tell"; name: string; text: string } // a message to the agent whose page is shown
+  | { $: "dismiss"; name: string } // a done agent out of the crew
   | { $: "guess"; body: Body }; // an import's cost
 
 // an act not answered: with its id, the socket it went by, what its
@@ -267,11 +279,16 @@ export function Cap(text: string): Row {
 // View
 // ====
 
+// a crew row's mark by status, and the order siblings are listed in
+const CREW: Record<Status, string> = { failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+const STATUSES: Status[] = ["failed", "working", "waiting", "stopped", "done"];
+
 export function view_new(): View {
   return {
     busy      : false,
     wait      : "",
     agents    : [],
+    crew      : [],
     pick      : null,
     vendors   : [],
     models    : LABELS,
@@ -337,7 +354,7 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "state": {
       const { $, ...state } = msg;
-      Object.assign(v, state);
+      Object.assign(v, state, { crew: state.crew ?? [] });
       return [];
     }
     case "agent": {
@@ -387,6 +404,9 @@ export function view_act(v: View, act: Act): Client[] {
       const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
         return [];
+      }
+      if (v.page !== null) {
+        return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
       }
       if (text === "" && images.length === 0) {
         return v.busy ? [{ $: "stop", name: TURN }] : [];
@@ -538,8 +558,41 @@ export function view_fold(v: View): string | null {
   return v.fold === null ? "fold all" : "unfold all";
 }
 
-export function view_typing(v: View): boolean {
-  return v.page === null;
+// typing goes to UniiChat, or on an agent's page to that agent
+export function view_typing(_v: View): boolean {
+  return true;
+}
+
+// the crew in rows: each agent under who started it, siblings failed
+// first, then at work, waiting, stopped, done, the latest first
+export function view_crew(v: View, now: number): CrewRow[] {
+  const known = new Set(v.crew.map((c) => c.name));
+  const kids = (parent: string) => v.crew
+    .filter((c) => c.parent === parent || (parent === "main" && !known.has(c.parent)))
+    .filter((c) => c.name !== parent)
+    .sort((a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || b.since - a.since);
+  const rows: CrewRow[] = [];
+  const add = (parent: string, depth: number) => {
+    for (const c of kids(parent)) {
+      if (rows.length < v.crew.length && !rows.some((r) => r.name === c.name)) {
+        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + c.name + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
+        add(c.name, depth + 1);
+      }
+    }
+  };
+  add("main", 0);
+  return rows;
+}
+
+// the agents that need the person: failed ones
+export function view_attention(v: View): CrewRow[] {
+  return view_crew(v, Date.now()).filter((r) => r.status === "failed");
+}
+
+// a time span, short: 45s, 3m, 2h
+function ago(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
 }
 
 export function view_running(v: View): boolean {

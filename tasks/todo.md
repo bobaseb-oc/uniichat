@@ -118,7 +118,7 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
   - Edge: an entry held while an upload logs (Chat.hold) could land after a roll's next call is built; it's in the tree, just not in that call's raw tail
 - [x] 2. Tiers: `manager`/`worker` config keys (sonnet-5.5 default; `agents` sets both), model override downward only (`Tools.child`), depth 3, spawn/tell/stop scoped to one's own (`Tools.under`), subtree stop, a worker's report wakes its manager (`Tools.up`), a manager reports only with no workers at work; the note carries tier, starter, model, effort (`Tools.note`/`noted`, older notes read as workers of Unii); prompt.txt: Unii orchestrates. Proof: Tools.test.ts + agents.test.ts 16/16; 8 mutations each fail a test (baseline first); suite 138 pass, 2 known fails; tsc: no new errors. Found by crash.test: a throwing hook after the run could skip its report; the report now goes first and the last hook is guarded
   - Unii's own model is still the chat's pick (`pick`, default sonnet-5.5): for Opus at the top, `/model opus-5.5` or `UNII_PICK=claude-api:opus-5.5:high:slow`
-- [ ] 3. View tree model: status, per-path subscribe, typing tells the focused agent, finished agents stay
+- [x] 3. View model: `state.crew` (each agent's starter, tier, model, status working/waiting/failed/stopped/done, since; `Tools.crew`), `view_crew` rows (under their starter, failed first) and `view_attention`; an agent's events only to views on its page (`Chat.to`, `sock.data.watch`); typing on an agent's page sends `tell`; `dismiss` hides a done agent; `Chat.afford` shared by spawn and tell. Proof: View/Tools/Server tests 19/19; 6 mutations each fail a test (baseline first); suite 140 pass, 2 known fails + 2 flaky Mcp (also on HEAD, 1 in 6 runs); tsc: no new errors
 - [ ] 4. Terminal UI: sidebar tree, focused pane, badges, footer totals
 - [ ] 5. Web UI on the same model; rebuild web/app.js
 - [ ] 5b. Desktop notifications on `attention` (waiting/failed/orchestrator done unfocused): OSC 9/777, osascript fallback, browser Notification
@@ -126,6 +126,7 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
 - [ ] 7. Hardening: subtree cost caps, failed-child reports, Memory `hold[0]` / refusal tight-loop check
 
 ## Later
+- `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.
 - Upstream bug to report: Bun 1.3.8 DecompressionStream hangs on a Bun.file slice stream (Import.ts zip_file).
