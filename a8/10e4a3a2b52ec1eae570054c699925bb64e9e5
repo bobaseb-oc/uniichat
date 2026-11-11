@@ -1,0 +1,25 @@
+Screen.ts
+  s_b63b8af83c3adf::t_6f149fd804c5bd 8-11
+  s_b63b8af83c3adf::t_0e302badfd5dc8 202-207
+  s_b63b8af83c3adf::t_5c3b2fda4fca59 278-289
+  s_b63b8af83c3adf::t_fff73ed7cd8796 69-72,290-291
+Screen.test.ts
+  s_b63b8af83c3adf::t_477c4995345f0f 47-55
+  s_b63b8af83c3adf::t_2ec93918000e42 56-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a810e4a3a2b52ec1eae570054c699925bb64e9e5",
+  "prompts": {},
+  "sessions": {
+    "s_b63b8af83c3adf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee0cba36-7424-4946-8e13-1564ccefd438",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
