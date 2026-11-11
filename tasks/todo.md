@@ -126,7 +126,12 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
 - [x] 5b. Desktop notifications (desktop only, as decided): alerts worked out by each client from the state it hears (`View.view_alerts`: an agent turning failed, Unii's turn ending; none on connect; each key at most once in 20 s), not a server event. Terminal: focus reporting (CSI ?1004h → FocusIn/FocusOut keys) so only a terminal in the back notifies, OSC 777 (default; Terax/Ghostty), OSC 9 (iTerm), osascript (Terminal.app; text as argv, script fixed), `UNII_NOTIFY` overrides or `off`; coming back to the front shows the alert's agent. Site: Notification API while hidden (asked at the first message), a click shows the agent. Notify.ts strips control characters (no escape injection from server text). VERSION 1.0.140; web/app.js rebuilt. Proof: View/Notify/Screen 20/20, 7 mutations each fail a test; suite 150 pass, 2 known + 2 flaky Mcp; tsc: only env noise added
   - [ ] By hand: a failed worker or a turn ending while Terax is in the back shows a notification; a terminal that tells no focus never notifies
 - [ ] 6. PTY workers (`claude` in a PTY), user approval to start
-- [ ] 7. Hardening: subtree cost caps, failed-child reports, Memory `hold[0]` / refusal tight-loop check
+- [ ] 7. Hardening
+  - [x] Memory `hold[0]` "never set": not a bug here (Billing.open is the free billing; the paid wallet holds its payee's mem, by the Payee contract). But agent trees (1a) had a `hold` of their own no wallet sets: a refused agent summary was asked in a hot loop (reproduced: the test hung). Agent trees now share the chat's `hold`, and the chat's pump pumps them (credit back: they go on). Proof: agents.test.ts 10/10, both mutants caught (one hangs); suite 153 pass, 2 known fails
+  - [x] Failed children report "failed: …" (Tools.run's catch; crash.test) and show ✗ in the crew
+  - [ ] Subtree cost caps: billing logic (red zone): draft only, for the user to decide
+  - [ ] Open agent trees are never closed (fds grow with agents in a chat): close idle ones, reopen on use
+- [ ] 6. PTY workers (`claude` in a PTY): waiting on the user (approval UX, permission mode)
 
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

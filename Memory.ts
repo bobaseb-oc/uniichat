@@ -625,6 +625,8 @@ export namespace Memory {
 
   // the nodes to build; those whose source fits take no call: built at
   // once, together (as jobs, a chain of them held the event loop)
+  // (and its agents': a side let go, as credit comes back, goes on there
+  // too)
   export function pump(mem: Memory): void {
     let built = false;
     for (let free = Memory.starts(mem); free.length > 0 && !mem.done; free = Memory.starts(mem)) {
@@ -634,6 +636,7 @@ export namespace Memory {
     if (built) {
       Memory.fit(mem);
     }
+    mem.agents.forEach(Memory.pump);
   }
 
   // of each side not held, the nodes ready up to its JOBS-th line not
@@ -1197,11 +1200,13 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
   }
 
   // an agent's tree, opened: paid as the chat is, whatever pays it now
-  // (never free for having opened before its payer was set), halted
-  // with it
+  // (never free for having opened before its payer was set), held as
+  // its sides are (the one array: the payer holds the chat's, Billing.ts,
+  // so a refused summary is asked once, never in a loop), halted with it
   export function agent_load(mem: Memory, dir: string): Memory {
     const sub = Memory.load(dir, mem.share);
     Object.defineProperty(sub, "pay", { get: () => mem.pay });
+    sub.hold = mem.hold;
     sub.done = mem.done;
     mem.agents.set(dir.slice(dir.lastIndexOf("/") + 1), sub);
     return sub;

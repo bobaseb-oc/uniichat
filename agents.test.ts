@@ -323,3 +323,33 @@ test("a manager spawns workers; a worker's report wakes its manager, never Unii,
   Tools.close(tools);
   Memory.stop(mem);
 }));
+
+// the payer holds the chat's summaries as its user runs out of credit
+// (Billing.ts: the wallet holds its payee's mem): its agents' trees are
+// held with it, each refused summary asked once, not again and again;
+// with credit back, they build
+test("a payer's refusal holds the agents' trees with the chat's: asked once, built once credit is back", () => faked(async () => {
+  const mem = Memory.load(DIR + "/heldagents", () => SHARE);
+  const name = Memory.agent_new(mem);
+  let paid = 0;
+  let credit = false;
+  const grant = { max: 128000, cut: null, end: () => {} };
+  mem.pay = (() => async () => {
+    paid += 1;
+    mem.hold[0] = credit ? null : "not enough credit";
+    return credit ? grant : "not enough credit";
+  }) as any;
+  Memory.agent_push(mem, name, "unii", LONG(0));
+  await sleep(200);
+  expect(paid).toBe(1);
+  const sub = Memory.agent_mem(mem, name)!;
+  expect(Memory.node(sub, { l: 0, i: 0 })).toBeNull();
+  await sleep(200);
+  expect(paid).toBe(1);
+
+  credit = true;
+  mem.hold[0] = null;
+  Memory.pump(mem);
+  await until(() => Memory.node(sub, { l: 0, i: 0 }) !== null);
+  Memory.stop(mem);
+}));
