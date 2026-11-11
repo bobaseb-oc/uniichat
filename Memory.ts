@@ -84,6 +84,10 @@ type View = { parts: Part[]; size: number; batch: boolean; high: number };
 // a summary running: its node, what it serves
 type Sum = Part & { kind: Served };
 
+// what an agent's call sees (Memory.agent_blocks): its view's lines, then
+// its latest messages raw
+export type Seen = { view: Block[]; log: Block };
+
 // a summary running as its chat moved (Memory.give): its node, its call's id,
 // its agent's name (none: the chat's)
 export type Given = [number, number, string, string?];
@@ -1257,7 +1261,7 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
   // Chat.call): its view's lines up to its latest task or message, its
   // summaries waited for, then its log from there raw. A string: why
   // not (Memory.settle)
-  export async function agent_blocks(mem: Memory, name: string, signal: AbortSignal): Promise<Block[] | string> {
+  export async function agent_blocks(mem: Memory, name: string, signal: AbortSignal): Promise<Seen | string> {
     const sub = Memory.agent_mem(mem, name);
     if (sub === null) {
       return "No agent " + name + ".";
@@ -1272,7 +1276,7 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
       return why;
     }
     const log = Array.from({ length: sub.count - from }, (_, k) => Memory.agent_line(Memory.message(sub, from + k)!));
-    return [...Memory.view(sub, from), { text: log.join("\n\n"), mark: true }];
+    return { view: Memory.view(sub, from), log: { text: log.join("\n\n"), mark: true } };
   }
 
 }

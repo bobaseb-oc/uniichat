@@ -34,7 +34,7 @@ test("a call's MCP requests follow its chat past a process that ended", async ()
 function working(tools: any, name: string): { stops: number } {
   const seen = { stops: 0 };
   const call = { stop: () => (seen.stops += 1) };
-  tools.agents.set(name, { name, role: { $: "sub", effort: null }, call, live: [], calls: {}, stop: false, view: [], replies: [], user: false });
+  tools.agents.set(name, { name, role: { $: "sub", effort: null }, call, live: [], calls: {}, stop: false, replies: [], user: false });
   return seen;
 }
 

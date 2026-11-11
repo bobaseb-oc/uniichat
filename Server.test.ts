@@ -123,7 +123,7 @@ await end(started[0], "1 2 3");
 const reported = await until(() => works.length === 1);
 await Bun.sleep(100);
 const mine = { reported, busy: chat.busy, working: Chat.state(chat).agents.length };
-const ai = Tools.start(chat.tools, { $: "sub", effort: null }, "count to 2", []);
+const ai = Tools.start(chat.tools, { $: "sub", effort: null }, "count to 2");
 await end(ai, "1 2");
 const ais = { reported: await until(() => works.length === 2), busy: await until(() => chat.busy) };
 console.log(JSON.stringify({ acted, started, mine, ais }));

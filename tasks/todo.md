@@ -113,7 +113,7 @@ Review: the test harness found that an idle chat with no view closes itself (`Ch
 Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/hierarchy`
 - [x] 0. Pending work committed on local/litellm in 4 topic commits; baseline outside the sandbox 124 pass, 2 known logs fails
 - [x] 1a. A Memory tree per agent (own view in `Tools.ask`, parent snapshot kept); old .jsonl logs read on; handover carries agent summaries. Proof: agents.test.ts 4/4, 4 mutations each fail a test; suite 128 pass, 2 known fails; tsc: no new errors
-- [ ] 1b. Brief seed and `zoom("Name:id+n")` replace the parent snapshot → verify: new tests red then green
+- [x] 1b. Brief (the view's latest 8 KB of lines) and the agent's own tree replace the parent snapshot; `zoom`/`date`: id own, `^id` the starter's chat, `Name`/`Name:id` Unii's or its own. Proof: agents.test.ts 6/6, 3 mutations each fail one test (re-run after a parse error made the first run void); suite 130 pass, 2 known fails; tsc: no new errors
 - [ ] 1c. Roll-over: past ROLL (150K tokens) a call ends at a step boundary and asks again from its tree view (agents and main chat)
 - [ ] 2. Tiers (`TIERS`), model override downward only, depth 3, scoped spawn/tell/stop, subtree stop, report wakes the parent
 - [ ] 3. View tree model: status, per-path subscribe, typing tells the focused agent, finished agents stay

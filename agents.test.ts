@@ -43,14 +43,31 @@ function answer(text: string): Response {
   return new Response(events.map((ev) => "data: " + JSON.stringify(ev) + "\n\n").join(""));
 }
 
-async function vendor(_url: string, init: any): Promise<Response> {
-  asked += 1;
-  const content = JSON.parse(init.body).messages[0].content;
+// the requests that weren't summaries (an agent's calls): their bodies
+const calls: any[] = [];
+
+async function vendor(url: string, init: any): Promise<Response> {
+  if (String(url).startsWith("http://127.0.0.1:")) {
+    return real.fetch(url, init);
+  }
+  const body = JSON.parse(init.body);
+  const content = body.messages[0].content;
   const task: string = content[content.length - 1].text;
+  if (!task.startsWith("Compaction:")) {
+    calls.push(body);
+    return answer("the report");
+  }
+  asked += 1;
   if (hold) {
     await new Promise<void>((ok) => held.push(ok));
   }
   return answer("line for " + task.split("\n")[0]);
+}
+
+// a request's text, its system prompt and messages
+function said(body: any): string {
+  const parts = (x: any): string => (typeof x === "string" ? x : Array.isArray(x) ? x.map(parts).join("") : x?.text ?? (x?.content ? parts(x.content) : ""));
+  return parts(body.system) + parts(body.messages);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -88,7 +105,8 @@ test("an agent's log is a tree of its own: its ask has its summaries, only its l
 
   const blocks = await Memory.agent_blocks(mem, name, new AbortController().signal);
   expect(typeof blocks).not.toBe("string");
-  const text = (blocks as Array<{ text: string }>).map((b) => b.text).join("");
+  const seen = blocks as { view: Array<{ text: string }>; log: { text: string } };
+  const text = [...seen.view, seen.log].map((b) => b.text).join("");
   expect(text).toContain("line for Compaction: compress message 1 ");
   expect(text).not.toContain(LONG(0));
   expect(text).toContain("go on");
@@ -149,5 +167,61 @@ test("an agent's summaries are paid by the chat's payer, even one set after the 
   Memory.agent_push(mem, name, "unii", LONG(0));
   await until(() => paid.length > 0);
   expect(paid[0]).toBe("compactor 0+1");
+  Memory.stop(mem);
+}));
+
+const { Tools } = await import("./Tools.ts");
+const { Pick } = await import("./Pick.ts");
+
+// a chat's tools, its agents' entries logged on their trees, reports kept
+function served(mem: any, reports: string[]) {
+  const pick = Pick.load(null, config.OFFER, config.PICK);
+  return Tools.serve(mem, {
+    push   : (agent, kind, text) => void Memory.agent_push(mem, agent.name, kind, text),
+    on     : () => {},
+    report : (_agent, text) => void reports.push(text),
+    change : () => {},
+    pick   : () => pick,
+    halt   : () => new AbortController().signal,
+  });
+}
+
+test("a subagent sees its own tree and a brief of the chat's latest lines, never the chat's whole view", () => faked(async () => {
+  const mem = Memory.load(DIR + "/brief", () => SHARE);
+  Memory.push(mem, Array.from({ length: 40 }, (_, k) => ({ kind: "user" as const, text: "old chat " + k + " " + "x".repeat(380) })));
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  expect(await Tools.spawn(tools, ["do the thing"], null)).toContain("Started ");
+  await until(() => reports.length === 1);
+  expect(calls.length).toBe(1);
+  const text = said(calls[0]);
+  expect(text).toContain("do the thing");
+  expect(text).toContain("old chat 39 ");
+  expect(text).not.toContain("old chat 0 ");
+  expect(text).toContain('zoom("^');
+  expect(reports[0]).toContain("the report");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("zoom from an agent: its own tree by id, its starter's chat by ^id; another agent's only for Unii", () => faked(async () => {
+  const mem = Memory.load(DIR + "/zoom", () => SHARE);
+  Memory.push(mem, [{ kind: "user", text: "the chat's first message" }]);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  await Tools.spawn(tools, ["a task"], null);
+  await until(() => reports.length === 1);
+  const name = [...tools.agents.keys()][0];
+  const zoom = (who: string, args: object) => Tools.call(tools, who, "zoom", args, new AbortController().signal, "1");
+
+  expect((await zoom(name, { id: 1 })).text).toContain("a task");
+  expect((await zoom(name, { id: "^0" })).text).toContain("the chat's first message");
+  expect((await zoom("main", { id: name })).text).toContain("a task");
+  expect((await zoom("main", { id: name + ":1" })).text).toContain("a task");
+  const other = await zoom("Rogue", { id: name });
+  expect(other.fail).toBe(true);
+  expect(other.text).not.toContain("a task");
+  Tools.close(tools);
   Memory.stop(mem);
 }));

@@ -33,7 +33,7 @@ import * as config from "./Config.ts";
 import { COMPUTER, INT, STR, TOOLS, spec, type Job, type Spec } from "./Machine.ts";
 import { Lsp, OPS } from "./Lsp.ts";
 import { Mcp } from "./Mcp.ts";
-import { Memory } from "./Memory.ts";
+import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
@@ -59,7 +59,7 @@ type Running = { term: string; job: Job; out: Promise<Out>; end: (out: Out) => v
 // does computer use, its work dir
 export type Link = { send: (msg: object) => void; live: () => boolean; computer: boolean; work: string };
 
-// at work, the view its calls get and its replies so far
+// at work, and its replies so far (its chat: Memory.agent_mem)
 export type Agent = {
   name    : string;
   role    : { $: "sub"; effort: string | null } | { $: "hands"; device: string };
@@ -67,7 +67,6 @@ export type Agent = {
   live    : Live[];
   calls   : Record<string, string>; // its tool calls awaiting their results, by id (Chat.on)
   stop    : boolean; // its call was stopped: the report stays unanswered
-  view    : Block[];
   replies : string[];
   user    : boolean; // the person started it (/agent): its report takes no turn
 };
@@ -132,11 +131,11 @@ your tools, following the user's instructions at the end of this
 prompt: they say who the user is, how their files are organized and how
 they want work done.
 
-Your first message holds the view below, then your chat with Unii so far,
-its lines as "i|kind: text": what you are (note), your task (user), and
-later all you did and were told. The view shows you what Unii knows: what the user wants,
-decided and taught. Use it as context only, and do what your task says,
-not what the user's last message says, since Unii may have given you
+Your first message is your own chat with Unii so far: what you are
+(note), your task (user), ending with the latest lines of Unii's chat
+with the user, and later all you did and were told. Those lines show
+what Unii knows: what the user wants, decided and taught. Use them as
+context only, and do what your task says, since Unii may have given you
 just part of the work. Your final reply is your report to Unii. Unii may
 send you more messages, even while you work: answer the last.`;
 
@@ -173,7 +172,22 @@ the images its "[image <file>]" lines name. Zoom whenever a summary
 only mentions something you need, such as what your last reply said, a
 decision, a past attempt or where a file is, before you act, guess or
 ask. date(id) gives the date and time of message id. zoom("Name") gives
-an agent's whole chat.`;
+an agent's whole chat, and zoom("Name:id", n) opens a line of it as its
+view shows it.`;
+
+// a subagent's view: its own chat, a tree as the chat's is
+const SUB_VIEW_DOC = `Your view: your chat with Unii, oldest first. Its older part is inside
+<chat> tags, as one-line summaries "id+n|text" (the n messages from id
+on, summarized); its latest messages follow word for word, as
+"i|kind: text". Kinds: note, user (Unii's messages to you), unii (your
+replies), tool (your tool calls), echo (their results).
+
+Navigating: zoom(id, n) opens line id+n of your chat into the two lines
+of n/2 messages it was made from; zoom(id, 1) gives message id in full.
+zoom("^id", n) does the same on Unii's chat with the user, whose lines
+your task ends with: zoom them, and older ones, whenever you need what
+they only mention. date(id) and date("^id") give a message's date and
+time. Zoom before you guess.`;
 
 // an agent's log starts with a note of what it is: SUB_NOTE, and its
 // effort if not the configured one; or HANDS_NOTE and its device
@@ -192,8 +206,12 @@ it, and leaves the list when they close it: a task that needs one not
 listed can't be done now, so tell the user it isn't available.`;
 const DEVICES_NONE = "(None is open now.)";
 
-// a subagent's prompt: its part, then the view's and the devices' docs
-const SUB = SUB_HEAD + "\n\n" + VIEW_DOC + "\n\n" + DEVICES;
+// a subagent's prompt: its part, then its view's and the devices' docs
+const SUB = SUB_HEAD + "\n\n" + SUB_VIEW_DOC + "\n\n" + DEVICES;
+
+// how much of the chat's view a subagent's task ends with (Tools.brief)
+const BRIEF = 8000;
+const BRIEF_HEAD = "\n\nThe latest lines of Unii's chat with the user, for context (zoom(\"^id\", n) opens one, and older ones):\n";
 
 // how deep a rules file's @imports go (Claude Code's limit)
 const RULES_DEPTH = 5;
@@ -237,12 +255,12 @@ const CODE: Spec[] = Object.keys(LSP.langs).length === 0 ? [] : [
 ];
 
 const OWN: Spec[] = [
-  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
-  spec("date", "The date and time of message id.", { id: INT }, ["id"]),
+  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat; Name:id opens a line of that agent's chat; ^id, one of the chat of whoever started you. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
+  spec("date", "The date and time of message id.", { id: { type: ["integer", "string"] } }, ["id"]),
   ...SEARCH,
 ];
 const BOSS: Spec[] = [
-  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees the view and the user's instructions, but knows what you want only from its task.", { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." } }, ["tasks"]),
+  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees its task, the user's instructions and the latest lines of the view, and can zoom into the rest, but knows what you want only from its task: say all it needs.", { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." } }, ["tasks"]),
   spec("tell", "Send a message to an agent (a subagent or a computer task), by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
   spec("stop", "Stop agents at work (subagents or computer tasks), by name, at once: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped agent can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
 ];
@@ -397,17 +415,21 @@ export namespace Tools {
     const mem = tools.mem;
     switch (name) {
       case "zoom": {
-        const id = String(args.id);
         const n = Number(args.n ?? 1);
         const at = Number(args.at ?? 0);
-        if (/^[A-Za-z]/.test(id)) {
-          return { text: clip_page(Memory.agent_show(mem, id), at), fail: false };
+        const to = Tools.tree(tools, who, String(args.id));
+        if (typeof to === "string") {
+          return { text: to, fail: true };
         }
-        const imgs = n === 1 && at === 0 ? Memory.images(mem, Number(id)) : [];
-        return { text: Memory.zoom(mem, Number(id), n, at), fail: false, imgs };
+        if ("name" in to) {
+          return { text: clip_page(Memory.agent_show(mem, to.name), at), fail: false };
+        }
+        const imgs = n === 1 && at === 0 ? Memory.images(to.mem, to.id) : [];
+        return { text: Memory.zoom(to.mem, to.id, n, at), fail: false, imgs };
       }
       case "date": {
-        return { text: Memory.date(mem, Number(args.id)), fail: false };
+        const to = Tools.tree(tools, who, String(args.id));
+        return typeof to === "string" || "name" in to ? { text: typeof to === "string" ? to : "date takes a message's id.", fail: true } : { text: Memory.date(to.mem, to.id), fail: false };
       }
       case "search": {
         return Search.web(config.SEARXNG, String(args.query ?? ""), Number(args.n), signal);
@@ -552,12 +574,42 @@ export namespace Tools {
   // Agents
   // ------
 
+  // the chat (who: main) or agent a zoom or date means, as `who` sees it:
+  // an id its own chat's, "^id" the chat's (its starter's), "Name" an
+  // agent's whole log and "Name:id" its chat, Unii's to see or the
+  // agent's own. A string: why not
+  export function tree(tools: Tools, who: string, id: string): { mem: Memory; id: number } | { name: string } | string {
+    if (id.startsWith("^")) {
+      return who === "main" ? "Your chat is the top one: zoom its ids, with no ^." : { mem: tools.mem, id: Number(id.slice(1)) };
+    }
+    const [name, rest] = /^[A-Za-z]/.test(id) ? id.split(":") : [who, id];
+    if (name !== who && who !== "main") {
+      return "Only Unii zooms into another agent's chat.";
+    }
+    if (rest === undefined) {
+      return { name };
+    }
+    const mem = name === "main" ? tools.mem : Memory.agent_mem(tools.mem, name);
+    return mem === null ? "No agent " + name + "." : { mem, id: Number(rest) };
+  }
+
+  // the end of a subagent's task: the view's latest lines, BRIEF at most
+  export function brief(view: Block[]): string {
+    const lines = view.map((b) => b.text).join("").split("\n").filter((line) => /^\d+\+\d+\|/.test(line));
+    let [k, size] = [lines.length, 0];
+    while (k > 0 && size + lines[k - 1].length + 1 <= BRIEF) {
+      k -= 1;
+      size += lines[k].length + 1;
+    }
+    return k === lines.length ? "" : BRIEF_HEAD + lines.slice(k).join("\n");
+  }
+
   export async function spawn(tools: Tools, tasks: string[], effort: string | null): Promise<string> {
     const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools);
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task) => Tools.start(tools, { $: "sub", effort }, task, view));
+    const names = tasks.map((task) => Tools.start(tools, { $: "sub", effort }, task + Tools.brief(view)));
     return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
@@ -567,7 +619,7 @@ export namespace Tools {
     if (why !== null) {
       return { text: why, fail: true };
     }
-    const name = Tools.start(tools, { $: "hands", device }, task, []);
+    const name = Tools.start(tools, { $: "hands", device }, task);
     return { text: "Started " + name + " on " + device + ". Its report will reach you as a message.", fail: false };
   }
 
@@ -582,12 +634,11 @@ export namespace Tools {
       return "Sent. " + name + " reads it between its tool calls, and its report answers it.";
     }
     const busy = agent.role.$ === "hands" ? Tools.screen(tools, agent.role.device) : null;
-    const view = busy ?? (agent.role.$ === "sub" ? await Tools.view(tools) : []);
-    if (typeof view === "string") {
-      return view;
+    if (busy !== null) {
+      return busy;
     }
     tools.hooks.push(agent, "user", message);
-    Tools.run(tools, Object.assign(agent, { view, replies: [], stop: false }));
+    Tools.run(tools, Object.assign(agent, { replies: [], stop: false }));
     return "Sent. " + name + "'s reply will reach you as a message.";
   }
 
@@ -595,12 +646,12 @@ export namespace Tools {
   // its name, else why not
   export async function begin(tools: Tools, task: string): Promise<{ name: string } | { why: string }> {
     const view = await Tools.view(tools);
-    return typeof view === "string" ? { why: view } : { name: Tools.start(tools, { $: "sub", effort: null }, task, view, true) };
+    return typeof view === "string" ? { why: view } : { name: Tools.start(tools, { $: "sub", effort: null }, task + Tools.brief(view), true) };
   }
 
-  export function start(tools: Tools, role: Agent["role"], task: string, view: Block[], user = false): string {
+  export function start(tools: Tools, role: Agent["role"], task: string, user = false): string {
     const name = Memory.agent_new(tools.mem);
-    const agent = { name, role, call: null, live: [], calls: {}, stop: false, view, replies: [], user };
+    const agent = { name, role, call: null, live: [], calls: {}, stop: false, replies: [], user };
     fs.mkdirSync(config.WORK + "/" + name, { recursive: true });
     tools.agents.set(name, agent);
     tools.hooks.push(agent, "note", role.$ === "sub" ? SUB_NOTE + (role.effort === null ? "" : SUB_AT + role.effort) : HANDS_NOTE + role.device);
@@ -617,7 +668,7 @@ export namespace Tools {
     if (sub || note.startsWith(HANDS_NOTE)) {
       const effort = note === SUB_NOTE ? null : note.slice((SUB_NOTE + SUB_AT).length);
       const role: Agent["role"] = sub ? { $: "sub", effort } : { $: "hands", device: note.slice(HANDS_NOTE.length) };
-      tools.agents.set(name, { name, role, call: null, live: [], calls: {}, stop: false, view: [], replies: [], user: false });
+      tools.agents.set(name, { name, role, call: null, live: [], calls: {}, stop: false, replies: [], user: false });
     }
     return tools.agents.get(name) ?? null;
   }
@@ -628,12 +679,12 @@ export namespace Tools {
   export async function run(tools: Tools, agent: Agent, call: Call | null = null): Promise<void> {
     try {
       for (let more = true; more; call = null) {
-        const log = call === null ? await Memory.agent_blocks(tools.mem, agent.name, tools.hooks.halt()) : [];
-        if (typeof log === "string") {
-          agent.replies.push("failed: " + log);
+        const seen = call === null ? await Memory.agent_blocks(tools.mem, agent.name, tools.hooks.halt()) : null;
+        if (typeof seen === "string") {
+          agent.replies.push("failed: " + seen);
           break;
         }
-        agent.call = call ?? AskAI.ask(Tools.ask(tools, agent, log), (ev) => tools.hooks.on(agent, ev));
+        agent.call = call ?? AskAI.ask(Tools.ask(tools, agent, seen!), (ev) => tools.hooks.on(agent, ev));
         tools.hooks.change();
         const end = await agent.call.done;
         agent.call = null;
@@ -652,10 +703,10 @@ export namespace Tools {
     return tools.pay?.(agent.role.$ === "sub" ? "agent" : "computer", agent.name);
   }
 
-  // a call of an agent, on config.AGENTS or else the chat's pick: the
-  // chat's view as it began, then its own (`log`: Memory.agent_blocks).
-  // A computer task's sees no chat, and only its computer tool
-  export function ask(tools: Tools, agent: Agent, log: Block[]): Ask {
+  // a call of an agent, on config.AGENTS or else the chat's pick: its
+  // own chat (Memory.agent_blocks), its cached lines first. A computer
+  // task's has only its computer tool
+  export function ask(tools: Tools, agent: Agent, seen: Seen): Ask {
     const server = Tools.at(tools, agent.name);
     const run = Pick.ask(config.AGENTS ?? tools.hooks.pick());
     const bill = Tools.bill(tools, agent);
@@ -663,13 +714,13 @@ export namespace Tools {
     switch (role.$) {
       case "sub": {
         const system = Tools.system(SUB);
-        const blocks = [...agent.view, Tools.devices(tools), ...log];
+        const blocks = [...seen.view, Tools.devices(tools), seen.log];
         const effort = role.effort ?? run.effort;
         return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
       }
       case "hands": {
         const system = Tools.system(HANDS.replace("{device}", role.device));
-        return { ...run, system, blocks: [...agent.view, ...log], searches: 0, server, bill };
+        return { ...run, system, blocks: [...seen.view, seen.log], searches: 0, server, bill };
       }
     }
   }
