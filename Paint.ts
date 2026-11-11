@@ -409,6 +409,22 @@ export function rule_line(v: View.View, w: number): Line {
 }
 
 // a rule, a text at its right end ("": none)
+// what the status line under the input says (as Claude Code's): offline
+// first, the folder Unii works in and its branch, its model, the agents
+// at work, today's LiteLLM spend (Cost.ts; * stale)
+export type Status = { up: boolean; dir: string; branch: string | null; model: string; working: number; spend: { spend: number | null; stale: boolean } };
+
+export function status_text(s: Status): string {
+  const usd = (n: number) => (n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2));
+  return [
+    ...(s.up ? [] : ["offline"]),
+    s.dir + (s.branch === null ? "" : " ⎇ " + s.branch),
+    s.model,
+    ...(s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"]),
+    ...(s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"]),
+  ].join(" · ");
+}
+
 export function rule_text(text: string, w: number): Line {
   const tag = text === "" ? "" : " " + text + " ";
   return [Run("─".repeat(Math.max(0, w - text_width(tag) - 1)) + tag + "─", DIM)];

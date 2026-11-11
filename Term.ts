@@ -22,6 +22,7 @@ import * as child from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
+import * as Cost from "./Cost.ts";
 import * as Import from "./Import.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as Notify from "./Notify.ts";
@@ -58,6 +59,8 @@ type Term = {
   crew?   : boolean; // the crew panel hidden (/crew)
   away?   : boolean; // the terminal not in front (it told FocusOut): alerts notify
   goto?   : string | null; // the last alert's agent, shown as the terminal comes back
+  branch? : string | null; // the branch of the folder Unii works in (term_status)
+  spend?  : Cost.Spend;    // today's LiteLLM spend (term_status)
 };
 
 // a job running here: its stop, its send to the background (a shell's)
@@ -72,7 +75,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.141";
+const VERSION = "1.0.142";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -155,6 +158,8 @@ const TOPUP = "Add credit with /topup <dollars> ($5 to $500).";
 const OFF = "Commands only: /help";
 // the crew panel's most lines (Paint.crew_lines)
 const CREW_ROWS = 8;
+// how often the status line reads the branch and today's spend
+const STATUS = 30e3;
 
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
@@ -232,6 +237,8 @@ function term_new(url: string): Term {
     flow    : new Map(),
     logs    : new Map(),
   };
+  term_status(t, false);
+  setInterval(() => term_status(t), STATUS).unref();
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -311,6 +318,26 @@ function term_hear(t: Term, msg: View.Server): void {
   if (msg.$ === "state") {
     term_idle(t);
     View.view_alerts(t.v, Date.now()).forEach((alert) => t.away && term_notify(t, alert));
+  }
+}
+
+// the folder Unii's jobs run in: the home repo, else unii's own main dir
+function term_dir(): string {
+  const dir = HOME_REPO || WORK + "/main";
+  return dir.startsWith("~/") ? os.homedir() + dir.slice(1) : dir;
+}
+
+// the status line's branch and today's spend, read anew (Cost.ts: the
+// refresher run when due)
+function term_status(t: Term, draw = true): void {
+  const git = Bun.spawnSync(["git", "-C", term_dir(), "branch", "--show-current"], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
+  t.branch = git.exitCode === 0 ? git.stdout.toString().trim() || null : null;
+  t.spend = Cost.cost_read(Cost.COST_CACHE, Date.now());
+  if (t.spend.due) {
+    Cost.cost_refresh(Cost.COST_REFRESH);
+  }
+  if (draw) {
+    term_draw(t);
   }
 }
 
@@ -999,7 +1026,8 @@ function term_paint(t: Term): void {
   const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
   const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
   const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
-  const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
+  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true } };
+  const under = Paint.rule_text(t.v.pick === null && t.v.up ? "" : Paint.status_text(status), iw);
   const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];

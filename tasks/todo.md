@@ -125,13 +125,15 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
   - [ ] By hand on the site: the crew at a real width, click to zoom, × to dismiss
 - [x] 5b. Desktop notifications (desktop only, as decided): alerts worked out by each client from the state it hears (`View.view_alerts`: an agent turning failed, Unii's turn ending; none on connect; each key at most once in 20 s), not a server event. Terminal: focus reporting (CSI ?1004h → FocusIn/FocusOut keys) so only a terminal in the back notifies, OSC 777 (default; Terax/Ghostty), OSC 9 (iTerm), osascript (Terminal.app; text as argv, script fixed), `UNII_NOTIFY` overrides or `off`; coming back to the front shows the alert's agent. Site: Notification API while hidden (asked at the first message), a click shows the agent. Notify.ts strips control characters (no escape injection from server text). VERSION 1.0.140; web/app.js rebuilt. Proof: View/Notify/Screen 20/20, 7 mutations each fail a test; suite 150 pass, 2 known + 2 flaky Mcp; tsc: only env noise added
   - [ ] By hand: a failed worker or a turn ending while Terax is in the back shows a notification; a terminal that tells no focus never notifies
-- [ ] 6. PTY workers (`claude` in a PTY), user approval to start
+- [x] Home repo (user's ask): `UNII_HOME_REPO` on a terminal; Unii's own jobs run there (agents keep `<work>/<Name>`); the Devices line names it and the devices doc says to read its AGENTS.md/CLAUDE.md, which point to the other repos. (`UNII_HOME` already meant ~/.unii.) VERSION 1.0.141. Proof: Machine/Tools tests, 2 mutations caught; suite 155 pass, 2 known
+- [x] Status line (user's ask, as Claude Code's): under the input, offline · folder ⎇ branch · Unii's model · agents at work · today's LiteLLM spend (* stale). The spend is read from Claude Code's own cache (~/.cache/statusline/litellm-<day>.json), its refresher (~/.claude/hooks/litellm-cost.js) run detached when due: no key or fetch in unii (`UNII_COST_CACHE`, `UNII_COST_REFRESH`). VERSION 1.0.142. Proof: Cost.test 3/3, 4 mutations caught; real cache read ($498.11 today); suite 158 pass, 2 known
 - [ ] 7. Hardening
   - [x] Memory `hold[0]` "never set": not a bug here (Billing.open is the free billing; the paid wallet holds its payee's mem, by the Payee contract). But agent trees (1a) had a `hold` of their own no wallet sets: a refused agent summary was asked in a hot loop (reproduced: the test hung). Agent trees now share the chat's `hold`, and the chat's pump pumps them (credit back: they go on). Proof: agents.test.ts 10/10, both mutants caught (one hangs); suite 153 pass, 2 known fails
   - [x] Failed children report "failed: …" (Tools.run's catch; crash.test) and show ✗ in the crew
   - [ ] Subtree cost caps: billing logic (red zone): draft only, for the user to decide
   - [ ] Open agent trees are never closed (fds grow with agents in a chat): close idle ones, reopen on use
 - [ ] 6. PTY workers (`claude` in a PTY): waiting on the user (approval UX, permission mode)
+- [ ] By hand: `UNII_HOME_REPO=~/repos/home unii`; the status line's branch and spend
 
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
