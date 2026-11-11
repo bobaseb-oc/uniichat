@@ -152,6 +152,9 @@ export type Memory = {
 
 const NODE  = 512;
 export const JOBS = 64;
+// the agents' trees a chat holds open at most (Memory.agent_trim): each
+// holds its indexes and a few day files
+export const OPEN = 16;
 const TRIES = 5;
 // a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
 // average), the compactions' 16-32 KB (24 KB)
@@ -1184,8 +1187,13 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
   // log moved onto it first. null: no such agent
   export function agent_mem(mem: Memory, name: string): Memory | null {
     const open = mem.agents.get(name);
-    if (open !== undefined || !Memory.agent_name(name)) {
-      return open ?? null;
+    if (open !== undefined) {
+      mem.agents.delete(name);
+      mem.agents.set(name, open);
+      return open;
+    }
+    if (!Memory.agent_name(name)) {
+      return null;
     }
     const dir = mem.dir + AGENTS + name;
     const old = dir + ".jsonl";
@@ -1208,8 +1216,26 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
     Object.defineProperty(sub, "pay", { get: () => mem.pay });
     sub.hold = mem.hold;
     sub.done = mem.done;
-    mem.agents.set(dir.slice(dir.lastIndexOf("/") + 1), sub);
+    const name = dir.slice(dir.lastIndexOf("/") + 1);
+    mem.agents.set(name, sub);
+    Memory.agent_trim(mem, name);
     return sub;
+  }
+
+  // past OPEN trees open, the idle ones (no summary running) used longest
+  // ago close, their files with them, but `keep`; one used again opens
+  // anew (its summaries not built go on as the chat's pump, or a call
+  // waiting on them, starts them: Memory.agent_blocks)
+  export function agent_trim(mem: Memory, keep: string): void {
+    for (const [name, sub] of mem.agents) {
+      if (mem.agents.size <= OPEN) {
+        return;
+      }
+      if (name !== keep && sub.calls.size === 0 && sub.busy.size === 0) {
+        Memory.stop(sub);
+        mem.agents.delete(name);
+      }
+    }
   }
 
   // its log, read whole (an older one's from its file: no tree opened)
@@ -1278,6 +1304,7 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
     }
     last = Math.max(0, last);
     const from = Memory.whole(sub, last);
+    Memory.pump(sub);
     const why = await Memory.settle(sub, from, signal);
     if (why !== null) {
       return why;

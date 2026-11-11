@@ -901,8 +901,16 @@ export namespace Tools {
     const abort = (agent.abort = new AbortController());
     Object.assign(agent, { runs: true, since: Date.now() });
     tools.hooks.change();
+    const job = { name: "claude", input: { task: agent.task ?? "", dir: role.dir ?? undefined }, cwd: agent.name };
+    await Tools.claude_end(tools, agent, Tools.job(tools, role.device, job, abort.signal, crypto.randomUUID()));
+  }
+
+  // a Claude Code worker's job, its run's end: its output logged, its
+  // result its reply, then its report (here, or where its chat moved:
+  // Tools.take)
+  export async function claude_end(tools: Tools, agent: Agent, done: Promise<Out>): Promise<void> {
     try {
-      const out = await Tools.job(tools, role.device, { name: "claude", input: { task: agent.task ?? "", dir: role.dir ?? undefined }, cwd: agent.name }, abort.signal, crypto.randomUUID());
+      const out = await done;
       tools.hooks.push(agent, "echo", out.text);
       const at = out.text.lastIndexOf("\n\nResult");
       const result = at < 0 ? out.text.slice(-2000) : out.text.slice(at + 2);
@@ -1065,8 +1073,18 @@ export namespace Tools {
   export function take(tools: Tools, moved: Moved, far: (id: string, on: (ev: Event) => void, bill?: Bill) => Call): void {
     for (const [name, who, jobs] of moved.devices) {
       const d: Device = { who, terms: new Map(), jobs: new Map() };
-      jobs.forEach(([id, term, job]) => Tools.track(d, id, term, job));
       tools.devices.set(name, d);
+      for (const [id, term, job] of jobs) {
+        const run = Tools.track(d, id, term, job);
+        // a Claude Code worker's job: its worker waits on it here
+        const agent = job.name === "claude" ? Tools.agent(tools, job.cwd) : null;
+        if (agent !== null && agent.role.$ === "cli") {
+          const abort = (agent.abort = new AbortController());
+          abort.signal.addEventListener("abort", () => run.end({ text: "Stopped.", fail: true }), { once: true });
+          Object.assign(agent, { runs: true, since: Date.now() });
+          void Tools.claude_end(tools, agent, run.out);
+        }
+      }
     }
     for (const { call, ...was } of moved.agents) {
       const agent = Object.assign(Tools.agent(tools, was.name)!, was);

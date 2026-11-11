@@ -19,7 +19,7 @@ process.env.UNII_DIR = DIR;
 const config = await import("./Config.ts");
 config.KEYS.anthropic = "test";
 
-const { Memory } = await import("./Memory.ts");
+const { Memory, OPEN } = await import("./Memory.ts");
 const { MASTER } = await import("./Tools.ts");
 
 const SHARE = { vendor: "claude-api" as const, model: "claude-opus-5-5", effort: "medium", speed: "slow", system: MASTER, searches: 1, server: "" };
@@ -390,5 +390,63 @@ test("a Claude Code worker asks first; approved it runs on its device and report
   expect(sent.filter((m) => m.$ === "job")).toHaveLength(1);
   expect((await Tools.call(tools, "main", "spawn", { tasks: ["x"], as: "claude", device: "nowhere" }, go, "3")).fail).toBe(true);
   Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+// a chat moving to another process while a Claude Code worker runs: its
+// job moves with the device (Tools.give, take), and its report comes from
+// where the chat is now
+test("a Claude Code worker running as its chat moves still reports, from the new process", () => faked(async () => {
+  const mem = Memory.load(DIR + "/claudemove", () => SHARE);
+  const reports: string[] = [];
+  const here = served(mem, reports);
+  const sent: any[] = [];
+  Tools.attach(here, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
+  await Tools.call(here, "main", "spawn", { tasks: ["long work"], as: "claude", device: "mac" }, new AbortController().signal, "1");
+  const name = [...here.agents.keys()][0];
+  Tools.approve(here, name, true);
+  await until(() => sent.some((m) => m.$ === "job"));
+  const id = sent.find((m) => m.$ === "job").id;
+
+  const moved = Tools.give(here, "http://127.0.0.1:1/", () => "");
+  const there = served(mem, reports);
+  Tools.take(there, moved, (() => { throw new Error("no call moves"); }) as any);
+  expect(Tools.crew(there).find((c) => c.name === name)?.status).toBe("working");
+  Tools.done(there, "mac", id, { text: "Result ($0.0100): done there", fail: false });
+  await until(() => reports.length === 1);
+  expect(reports[0]).toContain("done there");
+  Tools.close(there);
+  Memory.stop(mem);
+}));
+
+// a chat holds OPEN agents' trees open at most: past that the one used
+// longest ago, if idle (no summary running), closes, its files with it;
+// used again, it opens anew whole; one with a summary running stays open
+test("agents' trees past OPEN close, the idle one used longest ago first; one used again opens whole; one summarizing stays", () => faked(async () => {
+  hold = true;
+  const mem = Memory.load(DIR + "/many", () => SHARE);
+  const busy = Memory.agent_new(mem);
+  Memory.agent_push(mem, busy, "unii", LONG(0));
+  await until(() => held.length === 1);
+  const names = Array.from({ length: OPEN + 3 }, (_, k) => {
+    const name = Memory.agent_new(mem);
+    Memory.agent_push(mem, name, "user", "task " + k);
+    return name;
+  });
+  expect(mem.agents.size).toBe(OPEN);
+  expect(mem.agents.has(busy)).toBe(true);
+  expect(mem.agents.has(names[0])).toBe(false);
+  expect(mem.agents.has(names.at(-1)!)).toBe(true);
+  expect(Memory.agent(mem, names[0])!.map((r) => r.text)).toEqual(["task 0"]);
+  expect(mem.agents.has(names[0])).toBe(true);
+  expect(mem.agents.size).toBe(OPEN);
+  // the oldest idle one, used again, outlasts the next oldest
+  const [oldest, next] = [...mem.agents.keys()].filter((n) => n !== busy);
+  Memory.agent_mem(mem, oldest);
+  Memory.agent_push(mem, Memory.agent_new(mem), "user", "one more");
+  expect(mem.agents.has(oldest)).toBe(true);
+  expect(mem.agents.has(next)).toBe(false);
+  hold = false;
+  held.splice(0).forEach((ok) => ok());
   Memory.stop(mem);
 }));
