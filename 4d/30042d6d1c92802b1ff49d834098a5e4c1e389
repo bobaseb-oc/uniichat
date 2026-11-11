@@ -1,0 +1,19 @@
+local/rules.md
+  s_87c812a00e8b52::t_a4d11c9b71a19c 11-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d30042d6d1c92802b1ff49d834098a5e4c1e389",
+  "prompts": {},
+  "sessions": {
+    "s_87c812a00e8b52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a9d16ec7-cd26-4560-9843-6d7142343983",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
