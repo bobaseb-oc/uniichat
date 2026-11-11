@@ -7,7 +7,8 @@
 // tools and nothing sent. A request goes again, TRIES times at most,
 // after its retry-after or a doubling wait, for a passing reason (`busy`:
 // no connection, a retry status, a stream error, cut short or silent for
-// the wire's `idle`), dropping what it streamed. A request that yields
+// the wire's `idle`, its keep-alive pings not counted: a stuck request
+// pinging held a turn forever), dropping what it streamed. A request that yields
 // (an import's summary, AskAI.ts) sends nothing while one that doesn't
 // (a turn's, a chat's summary, which a turn waits on) waits on its busy
 // model: the room a busy vendor has goes to the chats first, and many
@@ -425,7 +426,9 @@ export namespace Agent {
     };
     try {
       for await (const ev of Agent.events(body)) {
-        timer.refresh();
+        if (ev?.type !== "ping") {
+          timer.refresh();
+        }
         if (wire.begun(ev)) {
           begun();
         }
