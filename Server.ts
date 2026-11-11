@@ -986,7 +986,7 @@ export namespace Chat {
     }
     const text = "The server restarted, cutting " + work.join(", ") + "; nothing was lost: go on.";
     const msg = Chat.push(chat, null, "note", text);
-    await Promise.all(work.map((w) => (w === TURN ? Chat.take(chat, msg) : Tools.tell(chat.tools, w, text))));
+    await Promise.all(work.map((w) => (w === TURN ? Chat.take(chat, msg) : Tools.tell(chat.tools, "main", w, text))));
   }
 
   // Moving

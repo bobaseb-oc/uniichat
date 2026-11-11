@@ -50,11 +50,14 @@ const calls: any[] = [];
 // as 200K tokens in (past config.ROLL)
 let rolling = false;
 
-function tooled(): Response {
+// script: answers an agent's call by its body, instead of the above
+let script: ((body: any) => Response) | null = null;
+
+function tooled(name = "date", input: object = { id: 0 }, tokens = 200000): Response {
   const events = [
-    { type: "message_start", message: { usage: { input_tokens: 2000, cache_read_input_tokens: 198000 } } },
-    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t1", name: "date", input: {} } },
-    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"id": 0}' } },
+    { type: "message_start", message: { usage: { input_tokens: 2000, cache_read_input_tokens: tokens - 2000 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t" + calls.length, name, input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } },
     { type: "content_block_stop", index: 0 },
     { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
     { type: "message_stop" },
@@ -71,6 +74,9 @@ async function vendor(url: string, init: any): Promise<Response> {
   const task: string = content[content.length - 1].text;
   if (!task.startsWith("Compaction:")) {
     calls.push(body);
+    if (script !== null) {
+      return script(body);
+    }
     return rolling && calls.length === 1 ? tooled() : answer("the report");
   }
   asked += 1;
@@ -209,7 +215,7 @@ test("a subagent sees its own tree and a brief of the chat's latest lines, never
   const reports: string[] = [];
   const tools = served(mem, reports);
   calls.length = 0;
-  expect(await Tools.spawn(tools, ["do the thing"], null)).toContain("Started ");
+  expect(await Tools.spawn(tools, "main", ["do the thing"], null, null, "worker")).toContain("Started ");
   await until(() => reports.length === 1);
   expect(calls.length).toBe(1);
   const text = said(calls[0]);
@@ -227,7 +233,7 @@ test("zoom from an agent: its own tree by id, its starter's chat by ^id; another
   Memory.push(mem, [{ kind: "user", text: "the chat's first message" }]);
   const reports: string[] = [];
   const tools = served(mem, reports);
-  await Tools.spawn(tools, ["a task"], null);
+  await Tools.spawn(tools, "main", ["a task"], null, null, "worker");
   await until(() => reports.length === 1);
   const name = [...tools.agents.keys()][0];
   const zoom = (who: string, args: object) => Tools.call(tools, who, "zoom", args, new AbortController().signal, "1");
@@ -250,7 +256,7 @@ test("a call past ROLL tokens rolls over: asked again from its tree, its tool's 
   calls.length = 0;
   rolling = true;
   try {
-    await Tools.spawn(tools, ["the rolling task"], null);
+    await Tools.spawn(tools, "main", ["the rolling task"], null, null, "worker");
     await until(() => reports.length === 1);
   } finally {
     rolling = false;
@@ -280,5 +286,40 @@ test("an agent's task stays word for word when its log since is too long to go r
   }
   expect(seen.log.text).toContain("0|user: the task to keep");
   expect(seen.log.text).not.toContain("1|echo: ");
+  Memory.stop(mem);
+}));
+
+test("a manager spawns workers; a worker's report wakes its manager, never Unii, and the manager's reaches Unii", () => faked(async () => {
+  const mem = Memory.load(DIR + "/tiers", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  const manager = (body: any) => said({ system: body.system }).includes("You are a manager");
+  let managed = 0;
+  script = (body) => {
+    if (!manager(body)) {
+      return answer("worker done");
+    }
+    managed += 1;
+    return managed === 1 ? tooled("spawn", { tasks: ["the worker's part"] }, 1000) : managed === 2 ? answer("waiting on my worker") : answer("all managed");
+  };
+  try {
+    expect(await Tools.spawn(tools, "main", ["manage it"], null, null, "manager")).toContain("Started ");
+    await until(() => reports.length === 1);
+  } finally {
+    script = null;
+  }
+  const [mgr, wkr] = [...tools.agents.values()];
+  expect(mgr.role).toMatchObject({ $: "sub", tier: "manager" });
+  expect(wkr.role).toMatchObject({ $: "sub", tier: "worker" });
+  expect(wkr.parent).toBe(mgr.name);
+  expect(reports).toHaveLength(1);
+  expect(reports[0]).toContain("all managed");
+  const log = Memory.agent(mem, mgr.name)!.map((r) => r.kind + ": " + r.text);
+  expect(log.some((line) => line.startsWith("work: [" + wkr.name + "]") && line.includes("worker done"))).toBe(true);
+  // a worker's request runs on the worker tier's model; the manager's on its own
+  const model = (who: string) => calls.find((c) => said({ system: c.system }).includes(who))?.model;
+  expect(model("You are a manager")).toBe("claude-sonnet-5-5");
+  Tools.close(tools);
   Memory.stop(mem);
 }));

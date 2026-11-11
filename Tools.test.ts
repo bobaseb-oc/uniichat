@@ -30,13 +30,16 @@ test("a call's MCP requests follow its chat past a process that ended", async ()
   c.stop(true);
 });
 
-// an agent at work, its call a stub that counts its stops
-function working(tools: any, name: string): { stops: number } {
+// an agent at work (a worker of Unii, unless said), its call a stub that
+// counts its stops
+function working(tools: any, name: string, tier = "worker", parent = "main"): { stops: number } {
   const seen = { stops: 0 };
   const call = { stop: () => (seen.stops += 1) };
-  tools.agents.set(name, { name, role: { $: "sub", effort: null }, call, live: [], calls: {}, stop: false, replies: [], user: false });
+  tools.agents.set(name, { name, parent, role: { $: "sub", tier, effort: null, model: null }, call, live: [], calls: {}, stop: false, replies: [], user: false });
   return seen;
 }
+
+const go = () => new AbortController().signal;
 
 test("the main agent stops agents at work by name, which tell can't", async () => {
   const tools = Tools.serve({} as any, {} as any);
@@ -63,4 +66,63 @@ test("a subagent can't stop another, nor sees the stop tool", async () => {
   expect(Tools.list(tools, "main").map((t) => t.name)).toContain("stop");
   expect(Tools.list(tools, "Rogue").map((t) => t.name)).not.toContain("stop");
   Tools.close(tools);
+});
+
+test("a worker has no spawn, tell or stop, and calling them is refused", async () => {
+  const tools = Tools.serve({} as any, {} as any);
+  working(tools, "Mgr", "manager");
+  working(tools, "Wkr", "worker", "Mgr");
+  const names = Tools.list(tools, "Wkr").map((t) => t.name);
+  expect(names).not.toContain("spawn");
+  expect(names).not.toContain("tell");
+  expect(names).not.toContain("stop");
+  expect(Tools.list(tools, "Mgr").map((t) => t.name)).toEqual(expect.arrayContaining(["spawn", "tell", "stop"]));
+  expect(Tools.list(tools, "Mgr").map((t) => t.name)).not.toContain("computer");
+  for (const tool of ["spawn", "tell", "stop"]) {
+    expect((await Tools.call(tools, "Wkr", tool, { tasks: ["x"], name: "Mgr", message: "hi", names: ["Mgr"] }, go(), "1")).fail).toBe(true);
+  }
+  Tools.close(tools);
+});
+
+test("a manager tells and stops only its own workers; stopping a manager stops its workers", async () => {
+  const tools = Tools.serve({} as any, {} as any);
+  working(tools, "MgrA", "manager");
+  const a = working(tools, "WkrA", "worker", "MgrA");
+  working(tools, "MgrB", "manager");
+  const b = working(tools, "WkrB", "worker", "MgrB");
+  const other = await Tools.call(tools, "MgrA", "stop", { names: ["WkrB"] }, go(), "1");
+  expect(b.stops).toBe(0);
+  expect(other.text).not.toContain("Stopped WkrB");
+  expect((await Tools.call(tools, "MgrA", "tell", { name: "WkrB", message: "hi" }, go(), "1")).fail).toBe(true);
+  expect((await Tools.call(tools, "MgrA", "stop", { names: ["WkrA"] }, go(), "1")).text).toContain("Stopped WkrA.");
+  expect(a.stops).toBe(1);
+  Tools.stop(tools, "MgrB");
+  expect(b.stops).toBe(1);
+  expect(tools.agents.get("WkrB")!.stop).toBe(true);
+  Tools.close(tools);
+});
+
+test("a child runs on its tier's model or one below it, never above nor another vendor's", async () => {
+  expect(Tools.child("manager", null)).toMatchObject({ model: "sonnet-5.5" });
+  expect(Tools.child("worker", "haiku-5.5")).toMatchObject({ model: "haiku-5.5" });
+  expect(typeof Tools.child("worker", "opus-5.5")).toBe("string");
+  expect(typeof Tools.child("manager", "gpt-6-luna")).toBe("string");
+  expect(typeof Tools.child("worker", "no-such-model")).toBe("string");
+  const tools = Tools.serve({} as any, {} as any);
+  const out = await Tools.call(tools, "main", "spawn", { tasks: ["x"], model: "opus-5.5" }, go(), "1");
+  expect(out.fail).toBe(true);
+  expect(tools.agents.size).toBe(0);
+  Tools.close(tools);
+});
+
+test("an agent's note says its tier, starter, model and effort, and reads back as them", () => {
+  const role = { $: "sub" as const, tier: "worker" as const, effort: "high", model: "haiku-5.5" };
+  const note = Tools.note(role, "FireAnt");
+  expect(note).toBe("worker of FireAnt on haiku-5.5 at effort high");
+  expect(Tools.noted(note)).toEqual({ role, parent: "FireAnt" });
+  expect(Tools.noted(Tools.note({ $: "sub", tier: "manager", effort: null, model: null }, "main"))).toEqual({ role: { $: "sub", tier: "manager", effort: null, model: null }, parent: "main" });
+  // an older agent's: a worker of Unii
+  expect(Tools.noted("subagent at effort low")).toEqual({ role: { $: "sub", tier: "worker", effort: "low", model: null }, parent: "main" });
+  expect(Tools.noted("computer task on mac")).toEqual({ role: { $: "hands", device: "mac" }, parent: "main" });
+  expect(Tools.noted("something else")).toBeNull();
 });

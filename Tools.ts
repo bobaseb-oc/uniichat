@@ -35,7 +35,7 @@ import { Lsp, OPS } from "./Lsp.ts";
 import { Mcp } from "./Mcp.ts";
 import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
-import { EFFORTS, Pick } from "./Pick.ts";
+import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
 import type { Live } from "./View.ts";
 
@@ -62,14 +62,22 @@ export type Link = { send: (msg: object) => void; live: () => boolean; computer:
 // at work, and its replies so far (its chat: Memory.agent_mem)
 export type Agent = {
   name    : string;
-  role    : { $: "sub"; effort: string | null } | { $: "hands"; device: string };
+  parent  : string; // who started it: "main" (Unii) or a manager's name
+  role    : Role;
   call    : Call | null;
   live    : Live[];
   calls   : Record<string, string>; // its tool calls awaiting their results, by id (Chat.on)
   stop    : boolean; // its call was stopped: the report stays unanswered
   replies : string[];
   user    : boolean; // the person started it (/agent): its report takes no turn
+  runs?   : boolean; // its run goes on (Tools.run), a call or not: a report to it waits in its log
 };
+
+// a manager splits its task among workers it spawns; a worker does its
+// own; hands use a screen. model: below its tier's (Tools.child), null: its
+// tier's; effort null: its model's
+export type Tier = "manager" | "worker";
+export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string | null } | { $: "hands"; device: string };
 
 // a chat's tools as they move to another process (Tools.give): the
 // calls of its agents at work by the id `far` takes (Server.ts)
@@ -125,19 +133,43 @@ const JOB = "x-unii-job";
 // the master's prompt (a turn's and a compaction's): prompt.txt
 export const MASTER = PROMPT.trim();
 
-const SUB_HEAD = `You are a subagent of Unii, an AI agent that works for one user in a
-single chat that never ends. Unii gave you a task. Do it yourself, with
+const SUB_HEAD = `You are a worker under Unii, an AI agent that works for one user in a
+single chat that never ends. You were given a task, by Unii or by a
+manager of its (your note says which). Do it yourself, with
 your tools, following the user's instructions at the end of this
 prompt: they say who the user is, how their files are organized and how
 they want work done.
 
-Your first message is your own chat with Unii so far: what you are
-(note), your task (user), ending with the latest lines of Unii's chat
-with the user, and later all you did and were told. Those lines show
-what Unii knows: what the user wants, decided and taught. Use them as
-context only, and do what your task says, since Unii may have given you
-just part of the work. Your final reply is your report to Unii. Unii may
-send you more messages, even while you work: answer the last.`;
+Your first message is your own chat so far: what you are (note), your
+task (user), ending with the latest lines of the chat of whoever started
+you, and later all you did and were told. Those lines show what they
+know: what the user wants, decided and taught. Use them as context only,
+and do what your task says, since you may have been given just part of
+the work. Your final reply is your report to whoever started you. They
+may send you more messages, even while you work: answer the last.`;
+
+const MGR_HEAD = `You are a manager under Unii, an AI agent that works for one user in a
+single chat that never ends. Unii gave you a task: see it done, mostly by
+workers. Plan it and split it into parts that can run on their own; spawn
+starts one worker per part, in parallel (use a cheaper model for simple
+parts), tell sends one more to a worker, stop cuts one. A worker knows
+only its task and the latest lines of your chat, so say all it needs: the
+goal, the files, the constraints, how to check its work. Do small parts
+yourself, with your tools, following the user's instructions at the end
+of this prompt.
+
+Each worker's report reaches you as a message "[Name] ...", even after you
+end a reply: while any worker of yours is at work, your reply is only
+yours, and its report wakes you. Check each one (zoom("Name") gives its
+whole chat), verify the work where you can, and send workers again or anew
+till the task is done. Your final reply, once no worker of yours is at
+work, is your report to Unii: what was done, what you checked, what
+failed. Unii may send you more messages, even while you work: answer the
+last.
+
+Your first message is your own chat so far: what you are (note), your
+task (user), ending with the latest lines of Unii's chat with the user,
+and later all you did, were told and were reported.`;
 
 const HANDS = `You are the hands of Unii, an AI agent that works for one user: you use
 the user's computer, {device}, through your computer tool (screenshots,
@@ -184,13 +216,15 @@ replies), tool (your tool calls), echo (their results).
 
 Navigating: zoom(id, n) opens line id+n of your chat into the two lines
 of n/2 messages it was made from; zoom(id, 1) gives message id in full.
-zoom("^id", n) does the same on Unii's chat with the user, whose lines
-your task ends with: zoom them, and older ones, whenever you need what
-they only mention. date(id) and date("^id") give a message's date and
+zoom("^id", n) does the same on the chat of whoever started you, whose
+lines your task ends with: zoom them, and older ones, whenever you need
+what they only mention. date(id) and date("^id") give a message's date and
 time. Zoom before you guess.`;
 
-// an agent's log starts with a note of what it is: SUB_NOTE, and its
-// effort if not the configured one; or HANDS_NOTE and its device
+// an agent's log starts with a note of what it is (Tools.note): its tier,
+// who started it ("Unii", or a manager's name), its model and effort if
+// not its tier's; or HANDS_NOTE and its device. An older one's: SUB_NOTE
+// and its effort (a worker of Unii's)
 const SUB_NOTE   = "subagent";
 const SUB_AT     = " at effort ";
 const HANDS_NOTE = "computer task on ";
@@ -208,10 +242,15 @@ const DEVICES_NONE = "(None is open now.)";
 
 // a subagent's prompt: its part, then its view's and the devices' docs
 const SUB = SUB_HEAD + "\n\n" + SUB_VIEW_DOC + "\n\n" + DEVICES;
+const MGR = MGR_HEAD + "\n\n" + SUB_VIEW_DOC + "\n\n" + DEVICES;
+const NOTED = /^(manager|worker) of ([A-Za-z-]+)(?: on (\S+))?(?: at effort (\S+))?$/;
+
+// how deep agents go: Unii, its managers, their workers
+const DEPTH = 3;
 
 // how much of the chat's view a subagent's task ends with (Tools.brief)
 const BRIEF = 8000;
-const BRIEF_HEAD = "\n\nThe latest lines of Unii's chat with the user, for context (zoom(\"^id\", n) opens one, and older ones):\n";
+const BRIEF_HEAD = "\n\nThe latest lines of {who}'s chat, for context (zoom(\"^id\", n) opens one, and older ones):\n";
 
 // how deep a rules file's @imports go (Claude Code's limit)
 const RULES_DEPTH = 5;
@@ -259,11 +298,21 @@ const OWN: Spec[] = [
   spec("date", "The date and time of message id.", { id: { type: ["integer", "string"] } }, ["id"]),
   ...SEARCH,
 ];
-const BOSS: Spec[] = [
-  spec("spawn", "Start one subagent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. A subagent sees its task, the user's instructions and the latest lines of the view, and can zoom into the rest, but knows what you want only from its task: say all it needs.", { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as hard as you." } }, ["tasks"]),
-  spec("tell", "Send a message to an agent (a subagent or a computer task), by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
-  spec("stop", "Stop agents at work (subagents or computer tasks), by name, at once: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped agent can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
-];
+const SPAWN = "Start one agent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. An agent sees its task, the user's instructions and the latest lines of your chat, and can zoom into the rest, but knows what you want only from its task: say all it needs.";
+const AS = "manager (the default): splits its task among workers of its own and checks their work, for a task of several parts; worker: does its task itself, for a part.";
+const MODEL = { type: "string", enum: LABELS, description: "The model it runs on: its tier's (the default) or a cheaper one below it, as for a simple task." };
+function boss(main: boolean): Spec[] {
+  const tasks = { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as their model does." }, model: MODEL };
+  const as = main ? { as: { type: "string", enum: ["manager", "worker"], description: AS } } : {};
+  const whom = main ? "an agent (a manager, a worker or a computer task)" : "a worker of yours";
+  return [
+    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...as }, ["tasks"]),
+    spec("tell", "Send a message to " + whom + ", by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
+    spec("stop", "Stop " + (main ? "agents" : "workers of yours") + " at work, by name, at once, and the workers under them: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped one can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
+  ];
+}
+const BOSS = boss(true);
+const MANAGES = boss(false);
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
 function kit(who: string): Spec[] {
   return TOOLS.map((t) => {
@@ -324,7 +373,7 @@ export namespace Tools {
   // messages: read from their calls, so the list is never kept apart and
   // can't drift from the truth
   export function at_work(tools: Tools): Block {
-    const names = Tools.working(tools).map((a) => a.name);
+    const names = Tools.working(tools).map((a) => a.name + " (" + Tools.what(a) + ")");
     return { text: "Agents at work now: " + (names.length === 0 ? "none." : names.join(", ") + ".") + "\n\n", mark: false };
   }
 
@@ -404,7 +453,11 @@ export namespace Tools {
     if (who === "main") {
       return [...OWN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
-    return tools.agents.get(who)?.role.$ === "hands" ? [COMPUTER] : [...OWN, ...kit(who), ...CODE, ...Mcp.cached(MCP)];
+    const role = tools.agents.get(who)?.role;
+    if (role?.$ === "hands") {
+      return [COMPUTER];
+    }
+    return [...OWN, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
   // id: a job's, if it starts one
@@ -438,20 +491,32 @@ export namespace Tools {
         return Lsp.run(LSP, args, signal);
       }
       case "spawn": {
+        if (!Tools.boss(tools, who)) {
+          return { text: "Only Unii and its managers start agents.", fail: true };
+        }
         const effort = args.effort === undefined ? null : String(args.effort);
         if (effort !== null && !EFFORTS.includes(effort)) {
           return { text: "No effort " + effort + "; one of " + EFFORTS.join(", ") + ".", fail: true };
         }
-        return { text: await Tools.spawn(tools, (args.tasks ?? []).map(String), effort), fail: false };
+        const tier: Tier = who === "main" && args.as !== "worker" ? "manager" : "worker";
+        const model = args.model === undefined ? null : String(args.model);
+        const pick = Tools.child(tier, model);
+        if (typeof pick === "string") {
+          return { text: pick, fail: true };
+        }
+        return { text: await Tools.spawn(tools, who, (args.tasks ?? []).map(String), effort, model, tier), fail: false };
       }
       case "tell": {
-        return { text: await Tools.tell(tools, String(args.name), String(args.message)), fail: false };
+        if (!Tools.boss(tools, who)) {
+          return { text: "Only Unii and its managers tell agents.", fail: true };
+        }
+        return Tools.tell(tools, who, String(args.name), String(args.message));
       }
       case "stop": {
-        if (who !== "main") {
-          return { text: "Only Unii stops agents.", fail: true };
+        if (!Tools.boss(tools, who)) {
+          return { text: "Only Unii and its managers stop agents.", fail: true };
         }
-        return { text: Tools.halt(tools, (args.names ?? []).map(String)), fail: false };
+        return { text: Tools.halt(tools, who, (args.names ?? []).map(String)), fail: false };
       }
       case "computer": {
         const role = tools.agents.get(who)?.role;
@@ -575,16 +640,18 @@ export namespace Tools {
   // ------
 
   // the chat (who: main) or agent a zoom or date means, as `who` sees it:
-  // an id its own chat's, "^id" the chat's (its starter's), "Name" an
-  // agent's whole log and "Name:id" its chat, Unii's to see or the
-  // agent's own. A string: why not
+  // an id its own chat's, "^id" its starter's chat, "Name" an agent's
+  // whole log and "Name:id" its chat: its own, or one under it (Unii's:
+  // all). A string: why not
   export function tree(tools: Tools, who: string, id: string): { mem: Memory; id: number } | { name: string } | string {
     if (id.startsWith("^")) {
-      return who === "main" ? "Your chat is the top one: zoom its ids, with no ^." : { mem: tools.mem, id: Number(id.slice(1)) };
+      const up = who === "main" ? null : Tools.agent(tools, who)?.parent ?? "main";
+      const mem = up === null ? null : up === "main" ? tools.mem : Memory.agent_mem(tools.mem, up);
+      return up === null ? "Your chat is the top one: zoom its ids, with no ^." : mem === null ? "No agent " + up + "." : { mem, id: Number(id.slice(1)) };
     }
     const [name, rest] = /^[A-Za-z]/.test(id) ? id.split(":") : [who, id];
-    if (name !== who && who !== "main") {
-      return "Only Unii zooms into another agent's chat.";
+    if (name !== who && !Tools.under(tools, who, name)) {
+      return "You can zoom into your own chat and those of the agents you started, not " + name + "'s.";
     }
     if (rest === undefined) {
       return { name };
@@ -593,23 +660,101 @@ export namespace Tools {
     return mem === null ? "No agent " + name + "." : { mem, id: Number(rest) };
   }
 
-  // the end of a subagent's task: the view's latest lines, BRIEF at most
-  export function brief(view: Block[]): string {
+  // whether `name` is under `who`: Unii's every agent, a manager's its own
+  export function under(tools: Tools, who: string, name: string): boolean {
+    if (who === "main") {
+      return Tools.agent(tools, name) !== null;
+    }
+    for (let at = Tools.agent(tools, name), k = 0; at !== null && k < DEPTH; k++) {
+      if (at.parent === who) {
+        return true;
+      }
+      at = at.parent === "main" ? null : Tools.agent(tools, at.parent);
+    }
+    return false;
+  }
+
+  // whether `who` starts, tells and stops agents: Unii, and its managers
+  export function boss(tools: Tools, who: string): boolean {
+    const role = who === "main" ? null : tools.agents.get(who)?.role;
+    return who === "main" || (role?.$ === "sub" && role.tier === "manager");
+  }
+
+  // its agents at work, under it at any depth
+  export function below(tools: Tools, name: string): Agent[] {
+    return Tools.working(tools).filter((a) => Tools.under(tools, name, a.name));
+  }
+
+  // what an agent is, as Unii's list of those at work says
+  export function what(agent: Agent): string {
+    const role = agent.role;
+    return role.$ === "hands" ? "computer task on " + role.device : role.tier + (agent.parent === "main" ? "" : " of " + agent.parent);
+  }
+
+  // what a child of its tier runs on: its tier's model (config.MANAGER,
+  // WORKER) or one below it of the same vendor, as named. A string: why
+  // not
+  export function child(tier: Tier, label: string | null): Pick | string {
+    const top = tier === "manager" ? config.MANAGER : config.WORKER;
+    if (label === null || label === top.model) {
+      return top;
+    }
+    const models = Pick.models([top.vendor], config.OFFER.models).map(([, m]) => m);
+    const k = models.findIndex((m) => m.label === label);
+    const at = models.findIndex((m) => m.label === top.model);
+    if (k < 0) {
+      return "No model " + label + " for a " + tier + " here; one of " + models.slice(Math.max(0, at)).map((m) => m.label).join(", ") + ".";
+    }
+    return k < at ? "A " + tier + " runs on " + top.model + " or a model below it, not " + label + "." : Pick.on(top, top.vendor, models[k]);
+  }
+
+  // an agent's note: what it is, who started it, its model and effort
+  export function note(role: Role, parent: string): string {
+    if (role.$ === "hands") {
+      return HANDS_NOTE + role.device;
+    }
+    const model = role.model === null ? "" : " on " + role.model;
+    const effort = role.effort === null ? "" : SUB_AT + role.effort;
+    return role.tier + " of " + (parent === "main" ? "Unii" : parent) + model + effort;
+  }
+
+  // a note read back (Tools.note; an older one's too); null: none
+  export function noted(note: string): { role: Role; parent: string } | null {
+    const m = NOTED.exec(note);
+    if (m !== null) {
+      const role: Role = { $: "sub", tier: m[1] as Tier, effort: m[4] ?? null, model: m[3] ?? null };
+      return { role, parent: m[2] === "Unii" ? "main" : m[2] };
+    }
+    if (note === SUB_NOTE || note.startsWith(SUB_NOTE + SUB_AT)) {
+      const effort = note === SUB_NOTE ? null : note.slice((SUB_NOTE + SUB_AT).length);
+      return { role: { $: "sub", tier: "worker", effort, model: null }, parent: "main" };
+    }
+    return note.startsWith(HANDS_NOTE) ? { role: { $: "hands", device: note.slice(HANDS_NOTE.length) }, parent: "main" } : null;
+  }
+
+  // the end of an agent's task: its starter's latest lines, BRIEF at most
+  export function brief(view: Block[], who: string): string {
     const lines = view.map((b) => b.text).join("").split("\n").filter((line) => /^\d+\+\d+\|/.test(line));
     let [k, size] = [lines.length, 0];
     while (k > 0 && size + lines[k - 1].length + 1 <= BRIEF) {
       k -= 1;
       size += lines[k].length + 1;
     }
-    return k === lines.length ? "" : BRIEF_HEAD + lines.slice(k).join("\n");
+    return k === lines.length ? "" : BRIEF_HEAD.replace("{who}", who === "main" ? "Unii" : who) + lines.slice(k).join("\n");
   }
 
-  export async function spawn(tools: Tools, tasks: string[], effort: string | null): Promise<string> {
-    const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools);
+  // agents `who` starts (Unii or a manager), of a tier, on a model
+  // (Tools.child), each its task ending with `who`'s latest lines
+  export async function spawn(tools: Tools, who: string, tasks: string[], effort: string | null, model: string | null, tier: Tier): Promise<string> {
+    const pick = Tools.child(tier, model);
+    if (typeof pick === "string") {
+      return pick;
+    }
+    const view = tasks.length === 0 ? "No tasks." : await Tools.view(tools, who);
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task) => Tools.start(tools, { $: "sub", effort }, task + Tools.brief(view)));
+    const names = tasks.map((task) => Tools.start(tools, who, { $: "sub", tier, effort, model }, task + Tools.brief(view, who)));
     return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
@@ -619,42 +764,44 @@ export namespace Tools {
     if (why !== null) {
       return { text: why, fail: true };
     }
-    const name = Tools.start(tools, { $: "hands", device }, task);
+    const name = Tools.start(tools, "main", { $: "hands", device }, task);
     return { text: "Started " + name + " on " + device + ". Its report will reach you as a message.", fail: false };
   }
 
-  export async function tell(tools: Tools, name: string, message: string): Promise<string> {
-    const agent = Tools.agent(tools, name);
+  // a message from `who` (Unii, or the agent's manager) to an agent
+  export async function tell(tools: Tools, who: string, name: string, message: string): Promise<Out> {
+    const agent = Tools.under(tools, who, name) ? Tools.agent(tools, name) : null;
     if (agent === null) {
-      return "No agent " + name + " to tell.";
+      return { text: "No agent " + name + " of yours to tell.", fail: true };
     }
-    if (agent.call !== null) {
+    if (agent.call !== null || agent.runs) {
       tools.hooks.push(agent, "user", message);
-      agent.call.send({ text: message, imgs: [] });
-      return "Sent. " + name + " reads it between its tool calls, and its report answers it.";
+      agent.call?.send({ text: message, imgs: [] });
+      return { text: "Sent. " + name + " reads it between its tool calls, and its report answers it.", fail: false };
     }
     const busy = agent.role.$ === "hands" ? Tools.screen(tools, agent.role.device) : null;
     if (busy !== null) {
-      return busy;
+      return { text: busy, fail: true };
     }
     tools.hooks.push(agent, "user", message);
     Tools.run(tools, Object.assign(agent, { replies: [], stop: false }));
-    return "Sent. " + name + "'s reply will reach you as a message.";
+    return { text: "Sent. " + name + "'s reply will reach you as a message.", fail: false };
   }
 
-  // an agent the person starts (/agent), on the chat's view as spawn's;
+  // an agent the person starts (/agent): a manager of Unii's, as spawn's;
   // its name, else why not
   export async function begin(tools: Tools, task: string): Promise<{ name: string } | { why: string }> {
-    const view = await Tools.view(tools);
-    return typeof view === "string" ? { why: view } : { name: Tools.start(tools, { $: "sub", effort: null }, task + Tools.brief(view), true) };
+    const view = await Tools.view(tools, "main");
+    const role: Role = { $: "sub", tier: "manager", effort: null, model: null };
+    return typeof view === "string" ? { why: view } : { name: Tools.start(tools, "main", role, task + Tools.brief(view, "main"), true) };
   }
 
-  export function start(tools: Tools, role: Agent["role"], task: string, user = false): string {
+  export function start(tools: Tools, parent: string, role: Role, task: string, user = false): string {
     const name = Memory.agent_new(tools.mem);
-    const agent = { name, role, call: null, live: [], calls: {}, stop: false, replies: [], user };
+    const agent: Agent = { name, parent, role, call: null, live: [], calls: {}, stop: false, replies: [], user };
     fs.mkdirSync(config.WORK + "/" + name, { recursive: true });
     tools.agents.set(name, agent);
-    tools.hooks.push(agent, "note", role.$ === "sub" ? SUB_NOTE + (role.effort === null ? "" : SUB_AT + role.effort) : HANDS_NOTE + role.device);
+    tools.hooks.push(agent, "note", Tools.note(role, parent));
     tools.hooks.push(agent, "user", task);
     Tools.run(tools, agent);
     return name;
@@ -663,20 +810,20 @@ export namespace Tools {
   // one not of this process is taken back from its log, idle
   export function agent(tools: Tools, name: string): Agent | null {
     const log = tools.agents.has(name) ? null : Memory.agent(tools.mem, name);
-    const note = log !== null && log.length > 0 && log[0].kind === "note" ? log[0].text : "";
-    const sub = note === SUB_NOTE || note.startsWith(SUB_NOTE + SUB_AT);
-    if (sub || note.startsWith(HANDS_NOTE)) {
-      const effort = note === SUB_NOTE ? null : note.slice((SUB_NOTE + SUB_AT).length);
-      const role: Agent["role"] = sub ? { $: "sub", effort } : { $: "hands", device: note.slice(HANDS_NOTE.length) };
-      tools.agents.set(name, { name, role, call: null, live: [], calls: {}, stop: false, replies: [], user: false });
+    const noted = log !== null && log.length > 0 && log[0].kind === "note" ? Tools.noted(log[0].text) : null;
+    if (noted !== null) {
+      tools.agents.set(name, { name, ...noted, call: null, live: [], calls: {}, stop: false, replies: [], user: false });
     }
     return tools.agents.get(name) ?? null;
   }
 
   // calls while a message waits in its log (told too late for the call
   // before) or one rolled over (Agent.ts), the first `call` if it runs
-  // (its chat moved here); then its report. Detached: a throw ends it as a failed reply, still reported
+  // (its chat moved here); then its report, to whoever started it: none
+  // yet from a manager with workers at work (their reports wake it).
+  // Detached: a throw ends it as a failed reply, still reported
   export async function run(tools: Tools, agent: Agent, call: Call | null = null): Promise<void> {
+    agent.runs = true;
     try {
       for (let more = true; more; call = null) {
         const seen = call === null ? await Memory.agent_blocks(tools.mem, agent.name, tools.hooks.halt()) : null;
@@ -697,7 +844,39 @@ export namespace Tools {
       agent.call = null;
       agent.replies.push("failed: " + String(err?.message ?? err));
     }
-    tools.hooks.report(agent, report_text(agent.name, agent.replies.join("\n\n")), agent.stop);
+    agent.runs = false;
+    if (agent.stop || Tools.below(tools, agent.name).length === 0) {
+      const text = report_text(agent.name, agent.replies.join("\n\n"));
+      if (agent.parent === "main") {
+        tools.hooks.report(agent, text, agent.stop);
+      } else {
+        Tools.up(tools, agent, text);
+      }
+    }
+    try {
+      tools.hooks.change();
+    } catch (err: any) {
+      console.error("agent " + agent.name + ": its end's state: " + String(err?.message ?? err));
+    }
+  }
+
+  // an agent's report to the manager that started it: logged in the
+  // manager's chat, read by its call, or it runs on (not if either was
+  // stopped: it waits there for a tell)
+  export function up(tools: Tools, agent: Agent, text: string): void {
+    const boss = Tools.agent(tools, agent.parent);
+    if (boss === null) {
+      return;
+    }
+    tools.hooks.push(boss, "work", text);
+    if (agent.stop || boss.stop) {
+      return;
+    }
+    if (boss.call !== null) {
+      boss.call.send({ text, imgs: [] });
+    } else if (!boss.runs) {
+      Tools.run(tools, boss);
+    }
   }
 
   // what pays an agent's calls
@@ -705,30 +884,38 @@ export namespace Tools {
     return tools.pay?.(agent.role.$ === "sub" ? "agent" : "computer", agent.name);
   }
 
-  // a call of an agent, on config.AGENTS or else the chat's pick: its
-  // own chat (Memory.agent_blocks), its cached lines first. A computer
-  // task's has only its computer tool
+  // a call of an agent: a manager's or a worker's on its tier's model or
+  // the one it was given (Tools.child), a computer task's on the chat's
+  // pick; its own chat (Memory.agent_blocks), its cached lines first. A
+  // computer task's has only its computer tool
   export function ask(tools: Tools, agent: Agent, seen: Seen): Ask {
     const server = Tools.at(tools, agent.name);
-    const run = Pick.ask(config.AGENTS ?? tools.hooks.pick());
     const bill = Tools.bill(tools, agent);
     const role = agent.role;
     switch (role.$) {
       case "sub": {
-        const system = Tools.system(SUB);
+        const given = Tools.child(role.tier, role.model);
+        const run = Pick.ask(typeof given === "string" ? Tools.child(role.tier, null) as Pick : given);
+        const system = Tools.system(role.tier === "manager" ? MGR : SUB);
         const blocks = [...seen.view, Tools.devices(tools), seen.log];
         const effort = role.effort ?? run.effort;
         return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
       }
       case "hands": {
+        const run = Pick.ask(tools.hooks.pick());
         const system = Tools.system(HANDS.replace("{device}", role.device));
         return { ...run, system, blocks: [...seen.view, seen.log], searches: 0, server, bill };
       }
     }
   }
 
+  // the view of `who`'s chat (Unii's, or an agent's: its lines built);
   // a string: why there is none (Memory.settle)
-  export async function view(tools: Tools): Promise<Block[] | string> {
+  export async function view(tools: Tools, who = "main"): Promise<Block[] | string> {
+    if (who !== "main") {
+      const mem = Memory.agent_mem(tools.mem, who);
+      return mem === null ? "No agent " + who + "." : Memory.view(mem);
+    }
     const why = await Memory.settle(tools.mem, tools.mem.count, tools.hooks.halt());
     return why ?? Memory.view(tools.mem);
   }
@@ -741,7 +928,7 @@ export namespace Tools {
   export function give(tools: Tools, url: string, far: (call: Call) => string): Moved {
     const jobs = (d: Device) => [...d.jobs].map(([id, j]): [string, string, Job] => [id, j.term, j.job]);
     const devices = [...tools.devices].map(([name, d]): Moved["devices"][number] => [name, d.who, jobs(d)]);
-    const agents = Tools.working(tools).map(({ role, call, ...a }) => ({ ...a, call: far(call!) }));
+    const agents = Tools.working(tools).filter((a) => a.call !== null).map(({ role, call, ...a }) => ({ ...a, call: far(call!) }));
     CHATS.delete(tools.key);
     GONE.set(tools.key, url);
     tools.away.resolve(url);
@@ -777,13 +964,15 @@ export namespace Tools {
     return busy === undefined ? null : "Computer task " + busy.name + " is still working on " + device + "; one works there at a time.";
   }
 
+  // at work: a call running, or between calls of its run
   export function working(tools: Tools): Agent[] {
-    return [...tools.agents.values()].filter((a) => a.call !== null);
+    return [...tools.agents.values()].filter((a) => a.call !== null || a.runs === true);
   }
 
   // the stop tool: the named at work stopped (Tools.stop), the rest told
-  export function halt(tools: Tools, names: string[]): string {
-    const at = new Set(Tools.working(tools).map((a) => a.name));
+  // `who`'s stop: of agents under it, each with those under it
+  export function halt(tools: Tools, who: string, names: string[]): string {
+    const at = new Set(Tools.working(tools).filter((a) => Tools.under(tools, who, a.name)).map((a) => a.name));
     const stopped = names.filter((n) => at.has(n));
     const not = names.filter((n) => !at.has(n));
     stopped.forEach((n) => Tools.stop(tools, n));
@@ -791,9 +980,11 @@ export namespace Tools {
     return said + (not.length === 0 ? "" : " Not at work: " + not.join(", ") + ".");
   }
 
-  // every agent at work (name null), or the one named
+  // every agent at work (name null), or the one named and those under it
   export function stop(tools: Tools, name: string | null): void {
-    for (const agent of Tools.working(tools).filter((a) => name === null || a.name === name)) {
+    const named = name === null ? [] : [tools.agents.get(name)].filter((a) => a !== undefined);
+    const all = name === null ? Tools.working(tools) : [...named, ...Tools.below(tools, name)];
+    for (const agent of all) {
       agent.stop = true;
       agent.call?.stop();
     }

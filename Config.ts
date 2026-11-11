@@ -37,7 +37,10 @@ export const PICK       = config_run("pick", config_get("pick", "claude-api:sonn
 // what every compaction runs on, a chat's and an import's alike, whatever
 // the chat's pick
 export const COMPACTOR  = config_run("compactor", config_get("compactor", "claude-api:haiku-5.5:high:slow"));
-export const AGENTS     = config_get("agents", "") ? config_run("agents", config_get("agents", "")) : null;
+// what agents run on by tier, below the chat's pick (Tools.ts): a
+// manager splits its task among workers; `agents` sets both (older)
+export const MANAGER    = config_run("manager", config_get("manager", config_get("agents", "claude-api:sonnet-5.5:medium:slow")));
+export const WORKER     = config_run("worker", config_get("worker", config_get("agents", "claude-api:sonnet-5.5:medium:slow")));
 export const WORKERS    = Number(config_get("workers", "0"));
 
 // a call's input past which it rolls over (Agent.ts): its request's
