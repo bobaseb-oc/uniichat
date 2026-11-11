@@ -54,6 +54,7 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  crew?   : boolean; // the crew panel hidden (/crew)
 };
 
 // a job running here: its stop, its send to the background (a shell's)
@@ -68,7 +69,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.138";
+const VERSION = "1.0.139";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -146,6 +147,8 @@ const TOPUP = "Add credit with /topup <dollars> ($5 to $500).";
 
 // the input's hint on an agent's page
 const OFF = "Commands only: /help";
+// the crew panel's most lines (Paint.crew_lines)
+const CREW_ROWS = 8;
 
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
@@ -185,7 +188,9 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["",                  "Tab",                     "the next tab",                                   term_cycle],
       ["/tab [name]",       "",                        "the tabs; with a name, that one",               term_tab],
       ["/agent <task>",     "",                        "start an agent on a task; its report waits in the chat, starting no turn", (t, a) => term_act(t, { $: "Send", text: "/agent " + a })],
-      ["/stop [name]",      "",                        "stop all work, agents too; or that agent",       term_stop],
+      ["/stop [name]",      "",                        "stop all work, agents too; or that agent and those under it", term_stop],
+      ["/crew",             "",                        "show or hide the crew: UniiChat and every agent under its starter", term_crew],
+      ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
     ]],
     ["Account", [
       ...topup,
@@ -388,9 +393,7 @@ function term_enter(t: Term): void {
   if (term_command(t, text)) {
     return;
   }
-  if (!View.view_typing(t.v)) {
-    term_note(t, "Messages go to UniiChat: Tab or /tab goes back.");
-  } else if (term_act(t, { $: "Send", text, images: t.imgs }).length > 0) {
+  if (term_act(t, { $: "Send", text, images: t.imgs }).length > 0) {
     t.imgs = [];
     return;
   }
@@ -476,9 +479,25 @@ function term_stop(t: Term, arg: string): void {
   term_send(t, arg === "" ? { $: "stop" } : { $: "stop", name });
 }
 
-// an agent at work whose name starts with arg, else arg
+// an agent of the crew (or at work) whose name starts with arg, else arg
 function term_agent(t: Term, arg: string): string {
-  return t.v.agents.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
+  return View.view_named(t.v, arg);
+}
+
+// shows or hides the crew panel
+function term_crew(t: Term): void {
+  t.crew = !(t.crew ?? true);
+  term_note(t, t.crew ? "The crew shows below the input." : "The crew is hidden: /crew shows it.");
+}
+
+// a done agent out of the crew, or every one not at work
+function term_dismiss(t: Term, arg: string): void {
+  const done = t.v.crew.filter((c) => c.status !== "working" && c.status !== "waiting").map((c) => c.name);
+  const names = arg === "" ? done : [term_agent(t, arg)].filter((n) => done.includes(n));
+  if (names.length === 0) {
+    term_note(t, arg === "" ? "No agent done to dismiss." : "No agent " + arg + " done.");
+  }
+  names.forEach((name) => term_send(t, { $: "dismiss", name }));
 }
 
 // the person's choice for block #id or #id+n (its name, View.block_name),
@@ -944,9 +963,11 @@ function term_paint(t: Term): void {
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
   const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
+  const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
+  const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
+  const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
   const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));

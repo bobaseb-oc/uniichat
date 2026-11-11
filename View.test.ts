@@ -63,3 +63,14 @@ test("typing on an agent's page tells that agent", () => {
   View.view_act(v, { $: "Goto", name: null });
   expect(View.view_act(v, { $: "Send", text: "hi" })[0].$).toBe("say");
 });
+
+// with a crew, Tab cycles UniiChat then every agent as the crew lists
+// them, done ones too
+test("tabs follow the crew: UniiChat, then its agents in crew order", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, agents: ["Wkr"], crew: [crew("Done", "main", "worker", "done", 1), crew("Mgr", "main", "manager", "waiting", 2), crew("Wkr", "Mgr", "worker", "working", 3)] });
+  expect(View.view_tabs(v).map((t) => t.name)).toEqual([null, "Mgr", "Wkr", "Done"]);
+  expect(View.view_named(v, "wk")).toBe("Wkr");
+  expect(View.view_named(v, "do")).toBe("Done");
+  expect(View.view_named(v, "zz")).toBe("zz");
+});

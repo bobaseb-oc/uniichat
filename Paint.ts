@@ -416,6 +416,38 @@ export function rule_text(text: string, w: number): Line {
 
 // the last line, w wide: a tab for UniiChat and each agent at work, the
 // shown bold; with agents, the key that moves along them, if it fits
+// the crew panel: UniiChat (the orchestrator) on top, each agent under
+// who started it (View.view_crew), the page shown marked ▸ and bold, a
+// failed one red, done and stopped ones dim; `most` lines at most, the
+// rest counted; each line cut to w
+export function crew_lines(v: View.View, w: number, now: number, most: number): Line[] {
+  const at = v.page === null ? null : v.page.name;
+  const top = { name: null as string | null, text: "◆ " + View.MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"), status: "working" as View.Status };
+  const rows = [top, ...View.view_crew(v, now).map((r) => ({ name: r.name as string | null, text: "  " + r.text, status: r.status }))];
+  const shown = rows.length > most ? rows.slice(0, Math.max(1, most - 1)) : rows;
+  const lines = shown.map((r) => {
+    const here = r.name === at;
+    const ink = r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
+    return [Run(here ? "▸ " : "  ", here ? { ...INK, b: true } : INK), Run(text_cut(r.text, w - 2), here ? { ...ink, b: true } : ink)];
+  });
+  return rows.length > shown.length ? [...lines, [Run(text_cut("  … +" + (rows.length - shown.length) + " more: /tab <name>", w), DIM)]] : lines;
+}
+
+// a text cut to w columns, its last one an ellipsis if cut
+export function text_cut(s: string, w: number): string {
+  if (text_width(s) <= w) {
+    return s;
+  }
+  let out = "";
+  for (const g of text_graphemes(s)) {
+    if (text_width(out + g) > w - 1) {
+      break;
+    }
+    out += g;
+  }
+  return out + "…";
+}
+
 export function tabs_line(v: View.View, w: number): Line {
   const tabs = View.view_tabs(v).map((tab) => Run(tab.text, tab.here ? { ...INK, b: true } : DIM));
   const line = tabs.flatMap((r, k) => (k === 0 ? [r] : [Run("  "), r]));

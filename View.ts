@@ -541,9 +541,12 @@ export function progress_need(p: Progress, credits: number | null): number {
 
 // the chat, each agent at work, and the page shown while its agent is
 // done (so it can be left: the tabs were the way back, and hid)
+// UniiChat, then the agents: in crew order (View.view_crew) if the
+// server tells the crew, else those at work; the page shown too
 export function view_tabs(v: View): Tab[] {
   const at    = v.page === null ? null : v.page.name;
-  const names = at === null || v.agents.includes(at) ? v.agents : [...v.agents, at];
+  const known = v.crew.length > 0 ? view_crew(v, 0).map((r) => r.name) : v.agents;
+  const names = at === null || known.includes(at) ? known : [...known, at];
   return [null, ...names].map((name) => {
     const here = name === at;
     const text = (here ? GLYPH.here : GLYPH.tab) + " " + (name ?? MAIN);
@@ -556,6 +559,12 @@ export function view_fold(v: View): string | null {
     return null;
   }
   return v.fold === null ? "fold all" : "unfold all";
+}
+
+// the agent of the crew (or at work) whose name starts with arg, else arg
+export function view_named(v: View, arg: string): string {
+  const names = [...v.crew.map((c) => c.name), ...v.agents];
+  return names.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
 }
 
 // typing goes to UniiChat, or on an agent's page to that agent
