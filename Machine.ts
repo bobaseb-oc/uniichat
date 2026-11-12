@@ -16,6 +16,7 @@ import * as path from "node:path";
 import type { Out } from "./Agent.ts";
 import { CAP, clip, clip_end } from "./Clip.ts";
 import { Computer } from "./Computer.ts";
+import { Hooks, type Source } from "./Hooks.ts";
 
 // Types
 // =====
@@ -51,6 +52,14 @@ const PS  = process.platform === "darwin" ? ["ps", "-wwE", "-U", UID, "-o", "pid
 // end() kills a backgrounded job whose shell already exited
 const SHELLS = new Set<Bun.Subprocess>();
 
+// a Claude Code worker's flags (Machine.claude): headless, auto mode, its
+// events streamed; how much of its transcript comes back (under
+// View.FRAME), of a tool call's input and of a result per line
+const CLAUDE = ["--permission-mode", "auto", "--output-format", "stream-json", "--verbose"];
+const TRACE = 2 ** 20;
+const CLAUDE_CALL = 300;
+const CLAUDE_ECHO = 1000;
+
 // the lines kept around each change in a diff
 const CONTEXT = 3;
 
@@ -63,6 +72,8 @@ export const TOOLS: Spec[] = [
   spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, so give background jobs their own output file. Background jobs live only while unii is open on the device: closing it kills every process the calls started.", { command: STR }, ["command"]),
   spec("read", "Read a text file. offset: the first line to show (from 1); limit: how many lines; at: the character of the first line to start from. It ends saying the lines shown, as [lines 4-7 of 15]; output past " + CAP + " characters comes in pages, saying where to go on.", { path: STR, offset: INT, limit: INT, at: INT }, ["path"]),
   spec("write", "Write a whole file, making its directories. Answers a unified diff of what changed (a new file: all its lines added).", { path: STR, content: STR }, ["path", "content"]),
+  spec("glob", "Find files by a glob pattern (\"**/*.ts\", \"src/**/test_*.py\") under path (a dir; by default the agent's), newest first, as paths from path; hidden files and node_modules are left out.", { pattern: STR, path: STR }, ["pattern"]),
+  spec("grep", "Search files' contents for a regex (ripgrep's syntax) under path (a dir or a file; by default the agent's dir); hidden, binary, .gitignore'd files and node_modules left out. glob: only files whose name matches (\"*.ts\"); mode: files (the default) the files that match, content the matching lines as file:line:text, count the matches per file; context: lines shown around each match (content); ignore_case.", { pattern: STR, path: STR, glob: STR, mode: { type: "string", enum: ["files", "content", "count"] }, context: INT, ignore_case: { type: "boolean" } }, ["pattern"]),
   spec("edit", "Replace text in files: the edits in order, each on its file as the edits before it left it. old must match exactly, whitespace included, and only once, unless all is true, which replaces every match. If any edit fails, no file is changed. Answers a unified diff of each file.", { edits: { type: "array", items: EDIT, minItems: 1 } }, ["edits"]),
 ];
 
@@ -121,44 +132,163 @@ export function spec(name: string, info: string, fields: object, need: string[])
 
 export namespace Machine {
 
-  export async function run(job: Job, work: string, signal: AbortSignal): Promise<Out> {
-    const root = work.startsWith("~/") ? os.homedir() + work.slice(1) : work;
-    const cwd = path.join(root, path.basename(job.cwd));
+  // in <work>/<its caller>, Unii's (main) in the home repo if there is one
+  // (hooks: the settings files whose Claude Code hooks gate it, Hooks.ts;
+  // by default Claude Code's own for the dir's project)
+  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal, home?: string, hooks?: Source[]): Promise<Out> {
+    const tilde = (p: string) => (p.startsWith("~/") ? os.homedir() + p.slice(1) : p);
+    const root = tilde(work);
+    const cwd = job.cwd === "main" && home ? tilde(home) : path.join(root, path.basename(job.cwd));
     const input = job.input;
     const file = path.resolve(cwd, String(input.path));
     try {
       fs.mkdirSync(cwd, { recursive: true });
-      switch (job.name) {
-        case "shell": {
-          return await Machine.shell(cwd, String(input.command), signal);
-        }
-        case "read": {
-          return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
-        }
-        case "write": {
-          return Machine.write(file, String(input.path), String(input.content));
-        }
-        case "edit": {
-          return Machine.edit(cwd, input.edits);
-        }
-        case "computer": {
-          return await Computer.act(input, signal);
-        }
-        default: {
-          return { text: "No tool " + job.name + ".", fail: true };
-        }
+      const calls = Hooks.calls(job, cwd);
+      if (calls.length === 0) {
+        return await tool(job, cwd, file, signal, away);
       }
+      const src   = hooks ?? Hooks.sources(Hooks.project(cwd));
+      const gates = await Promise.all(calls.map((c) => Hooks.pre(src, c.tool, c.input, cwd, job.cwd, signal)));
+      const deny  = gates.find((g) => g.deny !== null)?.deny;
+      if (deny) {
+        return { text: "Refused by a hook: " + deny, fail: true };
+      }
+      const out   = await tool(job, cwd, file, signal, away);
+      const notes = (await Promise.all(calls.map((c) => Hooks.post(src, c.tool, c.input, out, cwd, job.cwd, signal)))).flat();
+      const warn  = gates.flatMap((g) => g.warn).map((w) => "[hook] " + w);
+      const text  = [...warn, out.text, ...notes.map((n) => "[hook] " + n)].join("\n");
+      return { ...out, text };
     } catch (err: any) {
       return { text: String(err?.message ?? err), fail: true };
     }
+  }
+
+  // runs a job's tool, ungated
+  async function tool(job: Job, cwd: string, file: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
+    const tilde = (p: string) => (p.startsWith("~/") ? os.homedir() + p.slice(1) : p);
+    const input = job.input;
+    switch (job.name) {
+      case "shell": {
+        return await Machine.shell(cwd, String(input.command), signal, away);
+      }
+      case "read": {
+        return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
+      }
+      case "write": {
+        return Machine.write(file, String(input.path), String(input.content));
+      }
+      case "edit": {
+        return Machine.edit(cwd, input.edits);
+      }
+      case "glob": {
+        return Machine.glob(cwd, String(input.pattern), input.path === undefined ? undefined : path.resolve(cwd, String(input.path)));
+      }
+      case "grep": {
+        return await Machine.grep(cwd, input, signal);
+      }
+      case "computer": {
+        return await Computer.act(input, signal);
+      }
+      case "claude": {
+        const dir = input.dir ? tilde(String(input.dir)) : cwd;
+        if (!fs.existsSync(dir)) {
+          return { text: "No directory " + input.dir + " here.", fail: true };
+        }
+        return await Machine.claude(dir, String(input.task), signal);
+      }
+      default: {
+        return { text: "No tool " + job.name + ".", fail: true };
+      }
+    }
+  }
+
+  // a Claude Code worker: `claude -p` on the task, in auto mode (its
+  // classifier allows or refuses each action: no one answers a prompt
+  // headless), in its own process group (a stop kills it and its
+  // children); its stream-json events read into transcript lines, its
+  // result last (Machine.claude_out)
+  export async function claude(cwd: string, task: string, signal: AbortSignal): Promise<Out> {
+    const proc = Bun.spawn(["claude", "-p", task, ...CLAUDE], { cwd, env: { ...process.env, UNII_RUN: RUN }, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    SHELLS.add(proc);
+    const kill = () => Machine.kill(-proc.pid);
+    signal.addEventListener("abort", kill, { once: true });
+    const lines: string[] = [];
+    let result: { text: string; error: boolean; cost: number | null } | null = null;
+    let rest = "";
+    try {
+      for await (const piece of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        const all = (rest + piece).split("\n");
+        rest = all.pop() ?? "";
+        for (const line of all) {
+          const ev = Machine.claude_json(line);
+          const said = ev === null ? null : Machine.claude_line(ev);
+          if (said !== null) {
+            lines.push(said);
+          }
+          if (ev?.type === "result") {
+            result = { text: String(ev.result ?? ev.subtype ?? ""), error: ev.is_error === true, cost: typeof ev.total_cost_usd === "number" ? ev.total_cost_usd : null };
+          }
+        }
+      }
+    } catch {}
+    signal.removeEventListener("abort", kill);
+    const code = await proc.exited;
+    if (result === null) {
+      const err = (await new Response(proc.stderr).text()).trim();
+      lines.push("echo: " + (signal.aborted ? "stopped" : "claude ended (exit " + code + ")" + (err ? ": " + err.slice(-2000) : "")));
+    }
+    return Machine.claude_out(lines, result, TRACE);
+  }
+
+  export function claude_json(line: string): any {
+    try {
+      return line.trim() === "" ? null : JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }
+
+  // an event as a transcript line: Claude's words (unii), its tool calls
+  // (tool), their results (echo); none for the rest
+  export function claude_line(ev: any): string | null {
+    const content: any[] = Array.isArray(ev?.message?.content) ? ev.message.content : [];
+    const text = (c: any): string => (typeof c === "string" ? c : Array.isArray(c) ? c.map(text).join("") : typeof c?.text === "string" ? c.text : "");
+    const lines = content.flatMap((c): string[] => {
+      if (ev.type === "assistant" && c.type === "text" && c.text.trim() !== "") {
+        return ["unii: " + c.text.trim()];
+      }
+      if (ev.type === "assistant" && c.type === "tool_use") {
+        return ["tool: " + c.name + "(" + JSON.stringify(c.input ?? {}).slice(0, CLAUDE_CALL) + ")"];
+      }
+      if (ev.type === "user" && c.type === "tool_result") {
+        return ["echo: " + text(c.content).slice(0, CLAUDE_ECHO)];
+      }
+      return [];
+    });
+    return lines.length === 0 ? null : lines.join("\n");
+  }
+
+  // the transcript, its end kept within `cap` bytes, then the result; none
+  // (claude ended without one) a failure
+  export function claude_out(lines: string[], result: { text: string; error: boolean; cost: number | null } | null, cap: number): Out {
+    const tail = result === null ? "" : "\n\nResult" + (result.cost === null ? "" : " ($" + result.cost.toFixed(4) + ")") + ": " + result.text;
+    let k = lines.length;
+    for (let size = Buffer.byteLength(tail); k > 0 && size + Buffer.byteLength(lines[k - 1]) + 1 <= cap; k--) {
+      size += Buffer.byteLength(lines[k - 1]) + 1;
+    }
+    const kept = (k > 0 ? "(earlier steps cut)\n" : "") + lines.slice(k).join("\n");
+    return { text: kept + tail, fail: result === null || result.error };
   }
 
   // runs a command, in its own process group (detached), every process
   // marked UNII_RUN, its output decoded as one stream (a char split over
   // reads stays whole; a broken one at its end shows) and cut as it
   // comes. A stop kills the group and ends the wait at once, whatever
-  // still holds its output
-  export async function shell(cwd: string, command: string, signal: AbortSignal): Promise<Out> {
+  // still holds its output. Sent `away` (the person's Ctrl+B), it answers
+  // at once and goes on: what it printed so far, then the rest and its
+  // exit, go to bg-<pid>.log in cwd (the head and tail kept so far, if
+  // it was cut)
+  export function shell(cwd: string, command: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
     SHELLS.forEach((p) => Machine.group(p) || SHELLS.delete(p));
     const start = performance.now();
     const proc = Bun.spawn([SHELL, "-c", "exec 2>&1\n" + command], {
@@ -176,18 +306,38 @@ export namespace Machine {
       Machine.kill(-proc.pid);
       reader.cancel().catch(() => {});
     };
+    const file = path.join(cwd, "bg-" + proc.pid + ".log");
+    let [gone, over] = [false, false];
     signal.addEventListener("abort", kill, { once: true });
-    try {
-      for (let got = await reader.read(); !got.done; got = await reader.read()) {
-        out.add(got.value);
+    const ran = (async (): Promise<Out> => {
+      try {
+        for (let got = await reader.read(); !got.done; got = await reader.read()) {
+          gone ? fs.appendFileSync(file, got.value) : out.add(got.value);
+        }
+      } catch {}
+      signal.removeEventListener("abort", kill);
+      const code = await proc.exited;
+      const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
+      const exit = signal.aborted ? "stopped" : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
+      over = true;
+      if (gone) {
+        fs.appendFileSync(file, "(" + exit + " in " + time + ")\n");
       }
-    } catch {}
-    signal.removeEventListener("abort", kill);
-    const code = await proc.exited;
-    const time = ((performance.now() - start) / 1000).toFixed(1) + " s";
-    const exit = signal.aborted ? "stopped" : proc.signalCode ? "killed by " + proc.signalCode : "exit " + code;
-    const text = out.text().replace(/\n$/, "");
-    return { text: (text === "" ? "" : text + "\n") + "(" + exit + " in " + time + ")", fail: exit !== "exit 0" };
+      const text = out.text().replace(/\n$/, "");
+      return { text: (text === "" ? "" : text + "\n") + "(" + exit + " in " + time + ")", fail: exit !== "exit 0" };
+    })();
+    if (away === undefined) {
+      return ran;
+    }
+    const sent = new Promise<Out>((resolve) => away.addEventListener("abort", () => {
+      if (over) {
+        return;
+      }
+      gone = true;
+      fs.writeFileSync(file, out.text());
+      resolve({ text: "Sent to the background by the user, still running (pid " + proc.pid + "). Its output so far, the rest as it comes, and at its end its exit, go to " + path.basename(file) + " in your working directory: read that file for it.", fail: false });
+    }, { once: true }));
+    return Promise.race([ran, sent]);
   }
 
   // whether a shell's process group may still hold a job: the shell runs,
@@ -293,6 +443,127 @@ export namespace Machine {
     }
     const diffs = [...files.values()].map((f) => text_diff(f.shown, f.was, f.text));
     return { text: diffs.join("\n"), fail: false };
+  }
+
+  // the files under base (by default cwd) matching a glob, newest first,
+  // as paths from base; hidden ones and node_modules left out
+  export function glob(cwd: string, pattern: string, base: string | undefined): Out {
+    const dir = base ?? cwd;
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      return { text: "No directory " + dir + ".", fail: true };
+    }
+    const found = [...new Bun.Glob(pattern).scanSync({ cwd: dir, onlyFiles: true, dot: false })].filter((f) => !f.split("/").includes("node_modules"));
+    if (found.length === 0) {
+      return { text: "No files match " + pattern + ".", fail: false };
+    }
+    const time = (f: string) => fs.statSync(path.join(dir, f)).mtimeMs;
+    const sorted = found.map((f) => ({ f, t: time(f) })).sort((a, b) => b.t - a.t || a.f.localeCompare(b.f)).map((x) => x.f);
+    return { text: capped(sorted.join("\n")), fail: false };
+  }
+
+  // a search of files' contents (Grep's input): with ripgrep if there is
+  // one (rg), else a walk of the files read whole here
+  export async function grep(cwd: string, input: any, signal: AbortSignal, rg: string | null = Bun.which("rg")): Promise<Out> {
+    const pattern = String(input.pattern);
+    const target = path.resolve(cwd, String(input.path ?? "."));
+    const mode = input.mode === "content" || input.mode === "count" ? input.mode : "files";
+    const context = Math.max(0, Math.min(Number(input.context ?? 0) || 0, 20));
+    if (!fs.existsSync(target)) {
+      return { text: "No file or directory " + target + ".", fail: true };
+    }
+    const lines = rg !== null ? await grep_rg(rg, target, pattern, mode, context, input, signal) : grep_walk(target, pattern, mode, context, input);
+    if (typeof lines === "string") {
+      return { text: lines, fail: true };
+    }
+    if (lines.length === 0) {
+      return { text: "No matches for " + pattern + ".", fail: false };
+    }
+    return { text: capped(lines.join("\n")), fail: false };
+  }
+
+  // a text kept to CAP characters, its head and tail (Clip.ts)
+  function capped(text: string): string {
+    const c = clip();
+    c.add(text);
+    return c.text();
+  }
+
+  // ripgrep's lines, paths from the target dir, sorted by path; a string
+  // is its error
+  async function grep_rg(rg: string, target: string, pattern: string, mode: string, context: number, input: any, signal: AbortSignal): Promise<string[] | string> {
+    const dir = fs.statSync(target).isDirectory();
+    const args = [rg, "--sort=path", "--no-heading", "--color=never", "-g", "!node_modules"];
+    args.push(...(mode === "files" ? ["-l"] : mode === "count" ? ["-c"] : ["-n", ...(context > 0 ? ["-C", String(context)] : [])]));
+    if (input.ignore_case === true) {
+      args.push("-i");
+    }
+    if (input.glob !== undefined) {
+      args.push("-g", String(input.glob));
+    }
+    // last, so it wins over glob, which would let hidden files back in
+    args.push("-g", "!.*");
+    if (!dir && mode !== "files") {
+      args.push("--with-filename");
+    }
+    args.push("-e", pattern, "--", dir ? "." : path.basename(target));
+    const proc = Bun.spawn(args, { cwd: dir ? target : path.dirname(target), stdout: "pipe", stderr: "pipe" });
+    const stop = () => proc.kill();
+    signal.addEventListener("abort", stop, { once: true });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    signal.removeEventListener("abort", stop);
+    if (code > 1) {
+      return err.trim() || "ripgrep failed (exit " + code + ").";
+    }
+    return out.split("\n").filter((l: string) => l !== "").map((l: string) => l.replace(/^\.\//, ""));
+  }
+
+  // the same search, walking the files: hidden ones, node_modules and
+  // binaries (a NUL) left out; .gitignore is not read
+  function grep_walk(target: string, pattern: string, mode: string, context: number, input: any): string[] | string {
+    let rx: RegExp;
+    try {
+      rx = new RegExp(pattern, input.ignore_case === true ? "i" : "");
+    } catch (err: any) {
+      return "Bad regex: " + String(err?.message ?? err);
+    }
+    const dir = fs.statSync(target).isDirectory();
+    const base = dir ? target : path.dirname(target);
+    const named = input.glob === undefined ? null : new Bun.Glob(String(input.glob));
+    const files = (dir ? [...new Bun.Glob("**/*").scanSync({ cwd: target, onlyFiles: true, dot: false })] : [path.basename(target)])
+      .filter((f) => !f.split("/").includes("node_modules") && (named === null || named.match(path.basename(f)) || named.match(f)))
+      .sort();
+    const out: string[] = [];
+    for (const f of files) {
+      const text: string = fs.readFileSync(path.join(base, f), "utf8");
+      if (text.includes("\0")) {
+        continue;
+      }
+      const rows = text.split("\n");
+      if (rows.at(-1) === "") {
+        rows.pop();
+      }
+      const hits = rows.flatMap((r: string, k: number) => (rx.test(r) ? [k] : []));
+      if (hits.length === 0) {
+        continue;
+      }
+      if (mode === "files") {
+        out.push(f);
+      } else if (mode === "count") {
+        out.push(f + ":" + hits.length);
+      } else {
+        const shown = new Set<number>(hits.flatMap((k) => Array.from({ length: 2 * context + 1 }, (_, d) => k - context + d)).filter((k) => k >= 0 && k < rows.length));
+        const hit = new Set(hits);
+        let last = -2;
+        for (const k of [...shown].sort((a, b) => a - b)) {
+          if (context > 0 && last >= 0 && k > last + 1) {
+            out.push("--");
+          }
+          out.push(f + (hit.has(k) ? ":" : "-") + (k + 1) + (hit.has(k) ? ":" : "-") + rows[k]);
+          last = k;
+        }
+      }
+    }
+    return out;
   }
 
   // ms, or till the signal aborts: none, if it already did (an abort

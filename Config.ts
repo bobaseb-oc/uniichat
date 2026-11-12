@@ -20,6 +20,10 @@ const PATH = DIR + "/config.json";
 const FILE: Record<string, string> = fs.existsSync(PATH) ? JSON.parse(fs.readFileSync(PATH, "utf8")) : {};
 
 export const SITE    = config_get("site", "http://127.0.0.1:8788").replace(/\/$/, "");
+
+// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM)
+export const ANTHROPIC_URL = config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, "");
+
 export const OFFER: Offer = {
   vendors : config_vendors(config_get("vendors", "claude-api")),
   models  : config_get("models", LABELS.join()).split(",").map((m) => m.trim()),
@@ -33,12 +37,32 @@ export const PICK       = config_run("pick", config_get("pick", "claude-api:sonn
 // what every compaction runs on, a chat's and an import's alike, whatever
 // the chat's pick
 export const COMPACTOR  = config_run("compactor", config_get("compactor", "claude-api:haiku-5.5:high:slow"));
-export const AGENTS     = config_get("agents", "") ? config_run("agents", config_get("agents", "")) : null;
+// what agents run on by tier, below the chat's pick (Tools.ts): a
+// manager splits its task among workers; `agents` sets both (older)
+export const MANAGER    = config_run("manager", config_get("manager", config_get("agents", "claude-api:sonnet-5.5:medium:slow")));
+export const WORKER     = config_run("worker", config_get("worker", config_get("agents", "claude-api:sonnet-5.5:medium:slow")));
 export const WORKERS    = Number(config_get("workers", "0"));
+
+// a call's input past which it rolls over (Agent.ts): its request's
+// tokens in, as the API tells them (input, cache writes and reads)
+export const ROLL       = Number(config_get("roll", "150000"));
+
+// the most web searches a request of a turn or a subagent runs (0: no web
+// tool, as on a proxy whose backend has none, e.g. LiteLLM on Bedrock)
+export const SEARCHES   = Number(config_get("searches", "10"));
+
+// a SearXNG on this computer, for the `search` tool (Search.ts; "": none)
+export const SEARXNG    = config_get("searxng_url", "");
+
+// the MCP servers the agents may use (Mcp.ts; "": none)
+export const MCP        = config_path(config_get("mcp", ""));
 
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
+// phones at all (UNII_PHONE=1): off, as phones aren't allowed at work;
+// then no pushes, push tokens or AASA, whatever APPLE and APNS say
+export const PHONE      = config_get("phone", "") === "1";
 export const APPLE      = config_get("apple", "");
 export const APNS       = config_get("apns", "");
 

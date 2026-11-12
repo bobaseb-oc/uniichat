@@ -115,6 +115,7 @@ export type End = {
   left  : Say[];
   note? : string;
   stop? : "fail" | "lost" | "down";
+  roll? : boolean; // ended past config.ROLL: its asker asks again from its tree
 };
 
 // one try at a vendor

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Term
 // ====
-// `unii`: a terminal view of the agent (Server.ts) and, while open, a
+// `legion` (`unii` too): a terminal view of the agent (Server.ts) and, while open, a
 // device its tools reach (DEVICE). It feeds a View the server's messages
 // and the person's acts, and prints what it says (Paint.ts, Screen.ts)
 // into the terminal's own scrollback. Every act of the site is a command
@@ -9,20 +9,24 @@
 // done or halted; all they left running dies as this unii quits. From a
 // pipe, each line is a message.
 //
-// One executable per platform (the releases uniichat.com/install.sh
-// installs); once a day it asks bend-lang.com's /check (update_check) and
-// notes a newer one. `unii serve` runs the server it carries. The server:
-// the url given, else $UNII_URL, else uniichat.com; each server's session
-// is a file of its own (TOKEN).
+// One executable per platform (upstream releases it; this build runs
+// from its source, asks no one for updates and sends no telemetry).
+// `legion serve` runs the server it carries. The server:
+// the url given, else $UNII_URL, else http://127.0.0.1:8788 (this build;
+// upstream's is uniichat.com); each server's session is a file of its own
+// (TOKEN).
 //
-// Usage: USAGE (`unii help` prints it).
+// Usage: USAGE (`legion help` prints it).
 
 import * as child from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
+import * as Cost from "./Cost.ts";
+import * as Device from "./Device.ts";
 import * as Import from "./Import.ts";
-import { Machine, type Job } from "./Machine.ts";
+import { Machine } from "./Machine.ts";
+import * as Notify from "./Notify.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
 import * as Screen from "./Screen.ts";
@@ -32,7 +36,7 @@ import * as View from "./View.ts";
 // =====
 
 // the terminal: jobs running here; ended: input's; pending: commands at
-// work; last: UniiChat's message printed last (-1: none); wait: parts up
+// work; last: Legion's message printed last (-1: none); wait: parts up
 // to it not printed (term_settle); out: lines to print; wipe: first;
 // due: a paint; settle: the page's print at a new size; imgs: for the
 // next message; flow: how much of each message streaming is printed
@@ -41,7 +45,7 @@ type Term = {
   v       : View.View;
   scr     : Screen.Screen;
   url     : string;
-  jobs    : Map<string, AbortController>;
+  jobs    : Map<string, Run>;
   ended   : boolean;
   pending : number;
   last    : number;
@@ -53,7 +57,18 @@ type Term = {
   imgs    : Blob[];
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
+  crew?   : boolean; // the crew panel hidden (/crew)
+  full?   : { sel: string | null }; // /crew full shown: the agent selected
+  away?   : boolean; // the terminal not in front (it told FocusOut): alerts notify
+  focused?: boolean; // the terminal ever told its focus; one that never does is taken as away
+  goto?   : string | null; // the last alert's agent, shown as the terminal comes back
+  branch? : string | null; // the branch of the folder Unii works in (term_status)
+  spend?  : Cost.Spend;    // today's LiteLLM spend (term_status)
+  reported?: string;       // the status last sent as this device's (term_status)
 };
+
+// a job running here: its stop, its send to the background (a shell's)
+type Run = Device.Run;
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
 // does; it runs on its argument, or by a key on "" (or the key's name)
@@ -64,7 +79,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.138";
+const VERSION = "1.0.143";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -72,38 +87,42 @@ const HELP   = ARGS.some((a) => ["help", "--help", "-h"].includes(a));
 const ASKVER = ARGS.includes("version");
 const UPDATE = ARGS.includes("update");
 const SERVE  = ARGS.includes("serve");
+const DEVICED = ARGS.includes("device");
+const WEBIN  = ARGS.includes("web");
 const PORT   = SERVE ? ARGS.find((a) => /^\d+$/.test(a)) : undefined;
-const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve"];
+const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "web", "device"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
-const OURS   = "https://uniichat.com";
+const OURS   = "http://127.0.0.1:8788";
 const SERVER = (ARGS.find((a) => WEB.test(a)) ?? process.env.UNII_URL ?? OURS).replace(/\/$/, "");
 const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
 
-const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else https://uniichat.com)
-       unii login [url]     sign in
-       unii update [url]    install the latest unii (curl | sh, shown first)
-       unii version         this unii's version
-       unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
+// this build talks to a server on this computer only (upstream's may be
+// any, by default the hosted one): a job it is sent runs here
+const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
+if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
+  console.error("legion: " + SERVER + " refused: this build opens servers on this computer only (" + LOOPBACK.join(", ") + ")");
+  process.exit(1);
+}
+
+const USAGE = `Usage: legion [url]         the chat (url: $UNII_URL, else http://127.0.0.1:8788)
+       legion login [url]   sign in
+       legion web [url]     open the site in your browser, signed in as this terminal
+       legion device [url]  this computer runs the agents' jobs, with no screen
+                            (as a terminal does; the newest one open runs them)
+       legion update [url]  disabled in this build (it ran curl | sh)
+       legion version       this legion's version
+       legion serve [port]  your own Legion server, at http://127.0.0.1:8788
                             (another port: set UNII_SITE to its address too),
                             on your ANTHROPIC_API_KEY and OPENAI_API_KEY;
-                            chat with it: unii http://127.0.0.1:8788
-       unii help            this
+                            chat with it: legion http://127.0.0.1:8788
+       legion help          this
 UNII_WORK: where the agent works on this computer (default
 ~/.unii/work). UNII_COMPUTER=1: it may use the screen. UNII_HOME: where
 it keeps its sign-in (default ~/.unii).
-Once a day, unii asks bend-lang.com for the latest version, sending only
-its version, OS and CPU type, and whether this computer ever ran its own
-server. UNII_NO_TELEMETRY=1 turns that off.
+This build sends no telemetry and opens no server but this computer's.
 In the chat, /help lists every command and key.`;
-
-// the daily version check: what it asks, its cache, and the self-host
-// flag: a file made once this computer serves or opens a server not OURS
-const CHECK   = "https://bend-lang.com/check?p=unii&v=" + VERSION + "&os=" + process.platform + "&arch=" + process.arch;
-const CHECKED = HOME + "/check.json";
-const SELF    = HOME + "/self";
-const DAY     = 86400000;
 
 // this device's name, as the agent sees it: on macOS its local host name
 // (Bonjour's, unique on its network), else the host's
@@ -113,9 +132,15 @@ const DEVICE = LOCAL || os.hostname();
 // where the agent's tools work on this device: in WORK/main (the agent)
 // and WORK/<name> (each subagent)
 const WORK = process.env.UNII_WORK || "~/.unii/work";
+// the home repo: where Unii's own jobs run, its AGENTS.md pointing to the
+// other repos (none: <work>/main)
+const HOME_REPO = process.env.UNII_HOME_REPO || "";
 
 // whether the agent may use this device's screen, mouse and keyboard
 const COMPUTER = process.env.UNII_COMPUTER === "1";
+
+// how this device runs the server's jobs (Device.ts), a terminal or not
+const RULES: Device.Rules = { work: WORK, home: HOME_REPO || undefined, computer: COMPUTER };
 
 // the margin left of each line
 const MARGIN = 2;
@@ -128,13 +153,8 @@ const FRAME = 16;
 // would print the whole page again (ms)
 const SETTLE = 100;
 
-// where Claude Code and Codex keep their sessions
-const CODEX   = process.env.CODEX_HOME ?? os.homedir() + "/.codex";
-const IMPORTS = [
-  (process.env.CLAUDE_CONFIG_DIR ?? os.homedir() + "/.claude") + "/projects",
-  CODEX + "/sessions",
-  CODEX + "/archived_sessions",
-];
+// where Claude Code and Codex keep their sessions (Import.import_dirs)
+const IMPORTS = Import.import_dirs(process.env, os.homedir());
 
 // what /import takes: its day; a site's export (its zip, or its
 // conversations.json)
@@ -148,6 +168,10 @@ const TOPUP = "Add credit with /topup <dollars> ($5 to $500).";
 
 // the input's hint on an agent's page
 const OFF = "Commands only: /help";
+// the crew panel's most lines (Paint.crew_lines)
+const CREW_ROWS = 8;
+// how often the status line reads the branch and today's spend
+const STATUS = 30e3;
 
 // the pick's moves by Shift and an arrow
 const ARROWS: Record<string, Move> = { "Shift+Left": "prev", "Shift+Right": "next", "Shift+Up": "up", "Shift+Down": "down" };
@@ -158,14 +182,15 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
   const topup: Cmd[] = v.bills ? [["/topup <usd>", "", "add Bend Credits, paid in the browser", term_topup]] : [];
   return [
     ["Chat", [
-      ["",                  "Enter",                   "send; on an empty input, interrupt UniiChat",    term_enter],
-      ["",                  "Esc",                     "interrupt UniiChat's turn; agents go on",        (t) => term_act(t, { $: "Send", text: "" })],
+      ["",                  "Enter",                   "send; on an empty input, interrupt Legion",    term_enter],
+      ["",                  "Esc",                     "interrupt Legion's turn; agents go on",        (t) => term_act(t, { $: "Send", text: "" })],
       ["",                  "Ctrl+C, Ctrl+D",          "clear; on an empty input, interrupt, quit",      term_clear],
-      ["/goal <message>",   "",                        "send a message as the goal: at each turn's end, UniiChat asks itself if it is met, and goes on till it is", (t, a) => term_act(t, { $: "Send", text: "/goal " + a })],
+      ["/goal <message>",   "",                        "send a message as the goal: at each turn's end, Legion asks itself if it is met, and goes on till it is", (t, a) => term_act(t, { $: "Send", text: "/goal " + a })],
       ["/halt",             "",                        "drop the goal; the turn running ends as it would", (t) => term_act(t, { $: "Send", text: "/halt" })],
       ["/image <path>",     "",                        "attach an image to the next message",            term_image],
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
       ["/close #id",        "",                        "close block #id and keep it closed",             (t, a) => term_block(t, a, false)],
+      ["/bg",               "Ctrl+B",                  "send the shell commands running here to the background: they go on, output to a file (Ctrl+B eaten? type /bg)", term_bg],
       ["/fold",             "Ctrl+F",                  "the chat in the fewest blocks; again: unfold (Ctrl+F eaten? type /fold)", term_fold],
       ["/import [...]",     "",                        "import your Claude and ChatGPT chats (alone: options, costs)", term_import],
       ["/export",           "",                        "save memory and account as ./unii-memory.json",  term_export],
@@ -177,7 +202,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Pick", [
       ["",                  "Shift+Left, Shift+Right", "the model before, the next",                     (t, k) => term_move(t, ARROWS[k])],
       ["",                  "Shift+Up, Shift+Down",    "more effort, less",                              (t, k) => term_move(t, ARROWS[k])],
-      ["",                  "Shift+Tab",               "fast on, off (the next speed), typing or not",   (t) => term_move(t, "speed")],
+      ["",                  "Shift+Tab",               "the next mode: plan, auto, full (as Claude Code's), typing or not", (t) => term_act(t, { $: "Mode" })],
       ["/model [name]",     "",                        "the models to pick from; with a name, that one", (t, a) => term_pick(t, "model", a)],
       ["/effort [level]",   "",                        "the efforts; with one, that one",                (t, a) => term_pick(t, "effort", a)],
       ["/speed [speed]",    "",                        "the speeds; with one, that one",                 (t, a) => term_pick(t, "speed", a)],
@@ -185,7 +210,23 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Agents", [
       ["",                  "Tab",                     "the next tab",                                   term_cycle],
       ["/tab [name]",       "",                        "the tabs; with a name, that one",               term_tab],
-      ["/stop [name]",      "",                        "stop all work, agents too; or that agent",       term_stop],
+      ["/agent <task>",     "",                        "start an agent on a task; its report waits in the chat, starting no turn", (t, a) => term_act(t, { $: "Send", text: "/agent " + a })],
+      ["/stop [name]",      "",                        "stop all work, agents too; or that agent and those under it", term_stop],
+      ["/crew [full]",      "",                        "show or hide the crew: Legion and every agent under its starter; full: the whole screen (Esc goes back)", term_crew],
+      ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
+      ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
+      ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
+    ]],
+    ["Modes", [
+      ["/mode [name]",      "",                        "plan (agents only read till you approve a plan), auto (a reviewer checks each change) or full (hooks only); alone: the next", (t, a) => term_answer(t, View.view_mode_cmd(a))],
+      ["/plan [yes|no]",    "",                        "the plan waiting for you; yes [auto|full] approves it, no <feedback> sends it back", (t, a) => term_answer(t, View.view_plan_cmd(t.v, a))],
+      ["/allow <n>",        "",                        "run call n, waiting as auto mode's reviewer couldn't check it", (t, a) => term_answer(t, View.view_consent_cmd(t.v, a, true))],
+      ["/refuse <n>",       "",                        "refuse waiting call n",                          (t, a) => term_answer(t, View.view_consent_cmd(t.v, a, false))],
+    ]],
+    ["Questions", [
+      ["/questions",        "",                        "the questions Legion filed for you, open",       (t) => term_note(t, View.view_questions_note(t.v))],
+      ["/answer <n> <text>", "",                       "answer question n (or with an offered answer's number); Legion takes it up", (t, a) => term_answer(t, View.view_answer(t.v, a))],
+      ["/drop <n>",         "",                        "dismiss question n",                             (t, a) => term_answer(t, View.view_drop(t.v, a))],
     ]],
     ["Account", [
       ...topup,
@@ -221,6 +262,8 @@ function term_new(url: string): Term {
     flow    : new Map(),
     logs    : new Map(),
   };
+  term_status(t, false);
+  setInterval(() => term_status(t), STATUS).unref();
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -237,8 +280,14 @@ function term_new(url: string): Term {
 }
 
 // connects, by View's link, naming this device
+// this device as the socket names it: its name, whether it does computer
+// use, its work dir, its home repo
+function term_device(): string {
+  return "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
+}
+
 function term_connect(t: Term): void {
-  const dev = "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK);
+  const dev = term_device();
   View.link_open(t.v, {
     open : (query) => new WebSocket(t.url.replace(/^http/, "ws") + "/ws" + query + dev, { headers: term_auth() } as any),
     post : (path, body) => fetch(t.url + path, { method: "POST", headers: term_auth(), body }),
@@ -252,7 +301,7 @@ function term_connect(t: Term): void {
 async function term_lost(t: Term, up: boolean): Promise<boolean> {
   term_draw(t);
   if (!up && !await term_signed(t.url)) {
-    term_note(t, "This terminal is signed out: run unii again to sign in.");
+    term_note(t, "This terminal is signed out: run legion again to sign in.");
     process.exitCode = 1;
     term_quit(t);
     return false;
@@ -276,7 +325,8 @@ function term_send(t: Term, msg: View.Client, sent?: View.Sent): void {
 }
 
 // a message of the server: to the view, then to the jobs and the page;
-// the update note comes under the first view, where it is seen
+// the import's ask (UNII_IMPORT_ASK) comes under the first view, where
+// it is seen
 function term_hear(t: Term, msg: View.Server): void {
   const first = msg.$ === "view" && t.v.parts.length === 0;
   const was   = t.v.page;
@@ -285,17 +335,70 @@ function term_hear(t: Term, msg: View.Server): void {
   }
   term_went(t, was);
   if (msg.$ === "jobs" || msg.$ === "job") {
-    term_jobs(t, msg);
+    Device.device_jobs(t.v, t.jobs, msg, RULES, (out) => term_send(t, out));
     return;
   }
   term_print(t, msg);
   if (first) {
     term_history(t);
-    update_check(t);
+    if (process.env.UNII_IMPORT_ASK === "1") {
+      void term_import(t, "claude", true);
+    }
   }
   term_draw(t);
   if (msg.$ === "state") {
     term_idle(t);
+    View.view_alerts(t.v, Date.now()).forEach((alert) => (t.away || !t.focused) && term_notify(t, alert));
+  }
+}
+
+// the folder Unii's jobs run in: the home repo, else unii's own main dir
+function term_dir(): string {
+  const dir = HOME_REPO || WORK + "/main";
+  return dir.startsWith("~/") ? os.homedir() + dir.slice(1) : dir;
+}
+
+// the status line's branch and today's spend, read anew (Device.ts), and
+// sent as this device's report when changed (the web's status line)
+function term_status(t: Term, draw = true): void {
+  const s = Device.device_status(RULES, Date.now()) as View.Client & { $: "status" };
+  t.branch = s.branch;
+  t.spend = { spend: s.spend, stale: s.stale, due: false };
+  const said = JSON.stringify(s);
+  if (said !== t.reported) {
+    t.reported = said;
+    term_send(t, s);
+  }
+  if (draw) {
+    term_draw(t);
+  }
+}
+
+// the terminal went to the back (alerts notify) or came to the front: to
+// the last alert's agent, if one came meanwhile
+function term_focus(t: Term, away: boolean): void {
+  t.away = away;
+  t.focused = true;
+  if (!away && t.goto !== undefined) {
+    term_act(t, { $: "Goto", name: t.goto });
+    t.goto = undefined;
+    term_draw(t);
+  }
+}
+
+// a desktop notification (Notify.ts): by the terminal's escape sequence,
+// or osascript on a Mac, its text as arguments
+function term_notify(t: Term, alert: View.Alert): void {
+  const way = Notify.notify_way(process.env);
+  t.goto = alert.name;
+  if (way === "osc777" || way === "osc9") {
+    process.stdout.write(Notify.notify_osc(way, alert.title, alert.body));
+  }
+  // on a Mac, its sound, and the box where the terminal draws none
+  if (process.platform === "darwin") {
+    for (const cmd of Notify.notify_cmds(way, process.env, alert.title, alert.body, (c) => Bun.which(c) !== null)) {
+      Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+    }
   }
 }
 
@@ -323,13 +426,33 @@ function term_back(t: Term, sent: View.Sent): void {
   t.imgs = sent.images ?? [];
 }
 
-// the page shown was `was`: another prints below, after its name (a
-// wipe and whole print took seconds on a long page)
+// the page shown was `was`: another prints below, after its name and the
+// end of what of it printed before, so it shows as it was left, not the
+// last page's end (a wipe and whole print took seconds on a long page)
 function term_went(t: Term, was: View.Page | null): void {
-  if (t.v.page !== was) {
-    term_rows(t, t.v.page === null ? [View.Cap(View.MAIN)] : [], false);
-    term_show(t);
+  const page = t.v.page;
+  if (page === was) {
+    return;
   }
+  const from = page === null ? 0 : t.logs.get(page.name) ?? 0;
+  if (page === null) {
+    const done = t.v.parts.filter(([id, n]) => id + n - 1 <= t.last && !t.wait.some(([w, m]) => w === id && m === n));
+    term_rows(t, [View.Cap(View.MAIN)], false);
+    term_recap(t, t.v.fold === null ? View.view_rows(t.v, done).flat() : []);
+  } else if (from > 0) {
+    const [head, ...seen] = View.page_rows(t.v, { ...page, log: page.log?.slice(0, from) ?? null });
+    term_rows(t, [head], false);
+    term_recap(t, seen);
+  }
+  term_show(t);
+}
+
+// rows printed again, their last screen's worth (the rest is up the
+// scrollback)
+function term_recap(t: Term, rows: View.Row[]): void {
+  const lines = Paint.rows_lines(rows, term_inner()).slice(1 - (process.stdout.rows || 24));
+  t.out = t.out.concat(term_inset(lines.length === 0 ? [] : [[], ...lines]));
+  term_draw(t);
 }
 
 // the input's history: the user's messages known
@@ -351,6 +474,12 @@ function term_idle(t: Term): void {
 
 // a key ("": text typed): its line of COMMANDS
 function term_press(t: Term, key: string): void {
+  if (key === "FocusIn" || key === "FocusOut") {
+    return term_focus(t, key === "FocusOut");
+  }
+  if (t.full !== undefined) {
+    return term_full_key(t, key);
+  }
   const cmd = term_commands(t.v).find((c) => c[1] !== "" && c[1].split(", ").includes(key));
   if (cmd !== undefined) {
     cmd[3](t, cmd[0] === "" ? key : "");
@@ -365,9 +494,7 @@ function term_enter(t: Term): void {
   if (term_command(t, text)) {
     return;
   }
-  if (!View.view_typing(t.v)) {
-    term_note(t, "Messages go to UniiChat: Tab or /tab goes back.");
-  } else if (term_act(t, { $: "Send", text, images: t.imgs }).length > 0) {
+  if (term_act(t, { $: "Send", text, images: t.imgs }).length > 0) {
     t.imgs = [];
     return;
   }
@@ -375,7 +502,7 @@ function term_enter(t: Term): void {
 }
 
 // Ctrl+C or Ctrl+D: clears the input; on an empty one, Ctrl+C interrupts
-// UniiChat's turn (never quits: that kills the jobs here), Ctrl+D quits
+// Legion's turn (never quits: that kills the jobs here), Ctrl+D quits
 function term_clear(t: Term, key: string): void {
   if (t.scr.ed.text !== "") {
     Screen.ed_take(t.scr.ed);
@@ -391,6 +518,51 @@ function term_cycle(t: Term): void {
   const tabs = View.view_tabs(t.v);
   const at   = tabs.findIndex((tab) => tab.here) + 1;
   term_act(t, { $: "Goto", name: tabs[at % tabs.length].name });
+}
+
+// Full-screen Crew
+// ----------------
+// /crew full: the alternate screen, the whole crew (Paint.crew_full),
+// every key the Crew's (Screen grab: View.view_full); Esc, q or Ctrl+C
+// leaves, the scrollback as it was; Enter leaves on that agent's page
+
+const ALT_ON  = "\x1b[?1049h\x1b[?25l";
+const ALT_OFF = "\x1b[?25h\x1b[?1049l";
+
+function term_full(t: Term, on: boolean): void {
+  if (on && !t.scr.tty) {
+    return term_note(t, "/crew full needs a terminal.");
+  }
+  if (on === (t.full !== undefined)) {
+    return;
+  }
+  t.full = on ? { sel: t.v.page?.name ?? null } : undefined;
+  t.scr.grab = on;
+  process.stdout.write(on ? ALT_ON : ALT_OFF);
+  if (on) {
+    process.once("exit", () => t.full !== undefined && process.stdout.write(ALT_OFF));
+  }
+  term_draw(t);
+}
+
+function term_full_key(t: Term, key: string): void {
+  const out = View.view_full(t.v, t.full?.sel ?? null, key === "Ctrl+C" ? "Esc" : key);
+  t.full = { sel: out.sel };
+  out.acts.forEach((msg) => View.link_send(t.v, msg));
+  if (out.done) {
+    term_full(t, false);
+    if (out.focus !== undefined) {
+      term_act(t, { $: "Goto", name: out.focus });
+    }
+  }
+  term_draw(t);
+}
+
+// the full-screen Crew drawn whole, from the top
+function term_full_paint(t: Term): void {
+  const lines = Paint.crew_full(t.v, Screen.screen_width(), process.stdout.rows || 24, t.full?.sel ?? null, Date.now());
+  process.stdout.write("\x1b[H\x1b[2J" + lines.map(Paint.line_ansi).join("\r\n"));
+  t.due = false;
 }
 
 // Commands
@@ -444,6 +616,15 @@ async function term_image(t: Term, arg: string): Promise<void> {
 }
 
 // stops all that runs, or the agent named
+// an answer or a dismissal (/answer, /drop) sent; else why not, a note
+function term_answer(t: Term, act: View.Act | string): void {
+  if (typeof act === "string") {
+    term_note(t, act);
+    return;
+  }
+  term_act(t, act);
+}
+
 function term_stop(t: Term, arg: string): void {
   const name = term_agent(t, arg);
   if (arg !== "" && !t.v.agents.includes(name)) {
@@ -453,9 +634,39 @@ function term_stop(t: Term, arg: string): void {
   term_send(t, arg === "" ? { $: "stop" } : { $: "stop", name });
 }
 
-// an agent at work whose name starts with arg, else arg
+// an agent of the crew (or at work) whose name starts with arg, else arg
 function term_agent(t: Term, arg: string): string {
-  return t.v.agents.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
+  return View.view_named(t.v, arg);
+}
+
+// shows or hides the crew panel; full: the full-screen Crew
+function term_crew(t: Term, arg = ""): void {
+  if (arg === "full") {
+    return term_full(t, true);
+  }
+  t.crew = !(t.crew ?? true);
+  term_note(t, t.crew ? "The crew shows below the input." : "The crew is hidden: /crew shows it.");
+}
+
+// the person's yes or no to a Claude Code worker asking to start: the
+// one named, else the one on the page shown, else the only one asking
+function term_approve(t: Term, arg: string, yes: boolean): void {
+  const asking = View.view_asking(t.v);
+  const named = arg !== "" ? term_agent(t, arg) : t.v.page !== null && asking.includes(t.v.page.name) ? t.v.page.name : asking.length === 1 ? asking[0] : null;
+  if (named === null || !asking.includes(named)) {
+    return term_note(t, asking.length === 0 ? "No Claude Code worker asks to start." : "Which? Asking: " + asking.join(", ") + ".");
+  }
+  term_act(t, { $: "Approve", name: named, yes });
+}
+
+// a done agent out of the crew, or every one not at work
+function term_dismiss(t: Term, arg: string): void {
+  const done = t.v.crew.filter((c) => !["working", "waiting", "asking"].includes(c.status)).map((c) => c.name);
+  const names = arg === "" ? done : [term_agent(t, arg)].filter((n) => done.includes(n));
+  if (names.length === 0) {
+    term_note(t, arg === "" ? "No agent done to dismiss." : "No agent " + arg + " done.");
+  }
+  names.forEach((name) => term_send(t, { $: "dismiss", name }));
 }
 
 // the person's choice for block #id or #id+n (its name, View.block_name),
@@ -510,7 +721,7 @@ function term_fold(t: Term): void {
   }
 }
 
-// shows an agent's chat, by the start of its name, or UniiChat's; no
+// shows an agent's chat, by the start of its name, or Legion's; no
 // name lists the tabs
 function term_tab(t: Term, arg: string): void {
   const main = arg.toLowerCase() === View.MAIN.toLowerCase();
@@ -552,7 +763,9 @@ async function term_export(t: Term): Promise<void> {
 // Import.Want: since a day; tools; -#n: not session n): without go,
 // what it finds and costs (sessions: and the list); with go, sent;
 // pause, resume: the import running
-async function term_import(t: Term, arg: string): Promise<void> {
+// ask: as asked at the start (UNII_IMPORT_ASK): it says nothing unless
+// there is something new to import
+async function term_import(t: Term, arg: string, ask = false): Promise<void> {
   if (/^(pause|resume)$/.test(arg)) {
     return term_send(t, { $: "go", on: arg === "resume" });
   }
@@ -565,7 +778,9 @@ async function term_import(t: Term, arg: string): Promise<void> {
     term_note(t, "Not understood. " + HOW);
     return;
   }
-  term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
+  if (!ask) {
+    term_note(t, "Looking for Claude and ChatGPT chats on this computer…");
+  }
   const read = await Promise.all([...IMPORTS.map(term_sessions), ...files.map(export_sessions)]).catch((e) => String(e.message ?? e));
   if (typeof read === "string") {
     term_note(t, "Not imported: " + read);
@@ -582,7 +797,9 @@ async function term_import(t: Term, arg: string): Promise<void> {
   const plan  = Import.import_plan(sessions, want, old, View.view_count(t.v));
   const found = "Found " + Import.import_count(plan.msgs, "new ") + ". ";
   if (plan.msgs === 0) {
-    term_note(t, plan.first === "" ? Import.OLD : found + HOW);
+    if (!ask) {
+      term_note(t, plan.first === "" ? Import.OLD : found + HOW);
+    }
     return;
   }
   if (!words.includes("go")) {
@@ -597,11 +814,18 @@ async function term_import(t: Term, arg: string): Promise<void> {
 }
 
 // a dir's sessions (none if it is missing), a file at a time
+// a file to import, read whole into memory: a Bun.file streamed ends a
+// raw stdin at its next key (Bun 1.3.8), so what was typed was sent and
+// the terminal quit
+function import_blob(path: string): Blob {
+  return new Blob([fs.readFileSync(path)]);
+}
+
 async function term_sessions(dir: string): Promise<Import.Session[]> {
   const files = fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).map((f) => dir + "/" + f).filter(Import.import_file) : [];
   const found: Import.Session[] = [];
   for (const f of files) {
-    found.push(...[await Import.import_session(Bun.file(f), "log")].filter((s) => s !== null));
+    found.push(...[await Import.import_session(import_blob(f), "log")].filter((s) => s !== null));
   }
   return found;
 }
@@ -611,7 +835,7 @@ async function export_sessions(path: string): Promise<Import.Session[]> {
   if (!fs.existsSync(path)) {
     throw new Error("no file " + path);
   }
-  return Import.import_export(Bun.file(path));
+  return Import.import_export(import_blob(path));
 }
 
 async function term_topup(t: Term, arg: string): Promise<void> {
@@ -779,7 +1003,8 @@ function term_show(t: Term): void {
   if (page !== null) {
     const from = t.logs.get(page.name) ?? 0;
     t.logs.set(page.name, Math.max(from, page.log?.length ?? 0));
-    return term_rows(t, View.page_rows(t.v, page, from), false);
+    const rows = View.page_rows(t.v, page, from);
+    return term_rows(t, from === 0 ? rows : rows.slice(1), false);
   }
   if (t.v.fold === null) {
     return term_after(t);
@@ -883,6 +1108,9 @@ function term_inner(): number {
 // a new size: the page laid out again, at the new width, once the size
 // settles
 function term_resize(t: Term): void {
+  if (t.full !== undefined) {
+    return term_draw(t);
+  }
   clearTimeout(t.settle);
   t.settle = setTimeout(() => term_page(t), SETTLE);
 }
@@ -901,15 +1129,21 @@ function term_draw(t: Term): void {
 // The screen's top row stays free: an erase from the top left clears
 // the screen, which tmux keeps in its scrollback at each paint
 function term_paint(t: Term): void {
+  if (t.full !== undefined) {
+    return term_full_paint(t);
+  }
   t.out = t.out.concat(term_lines(t.v.notes.splice(0).map(View.Cap)));
   term_flow(t);
   const w     = Screen.screen_width();
   const iw    = term_inner();
   const room  = (process.stdout.rows || 24) - 1;
   const off   = !View.view_typing(t.v);
-  const input = Screen.screen_input(t.scr, iw, room - 3, off ? OFF : View.HINT + " · /help", off);
-  const under = Paint.rule_text(t.v.up ? "" : "offline", iw);
-  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, Paint.tabs_line(t.v, iw)]);
+  const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
+  const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
+  const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
+  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length, mode: t.v.mode, waiting: View.view_waiting(t.v) };
+  const under = Paint.rule_text(t.v.pick === null && t.v.up ? "" : Paint.status_text(status), iw);
+  const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));
   const held  = t.v.page === null ? View.view_rows(t.v, t.wait).flat() : [];
   const tail  = term_lines([...held, ...View.view_tail(t.v, rest)]).flatMap((l) => Paint.runs_wrap(l, w, true));
@@ -924,36 +1158,19 @@ function term_paint(t: Term): void {
 // Jobs
 // ----
 
-// the server's word on this terminal's jobs: a job, run unless it runs
-// or its output waits for an answer; or their ids, the rest halted
-function term_jobs(t: Term, msg: View.Server & { $: "jobs" | "job" }): void {
-  if (msg.$ === "job") {
-    const sent = t.v.out.some((p) => p.msg.$ === "out" && p.msg.job === msg.id);
-    if (!t.jobs.has(msg.id) && !sent) {
-      term_run(t, msg.id, msg.job as Job);
-    }
-    return;
+// the shell commands running here, sent to the background: each answers
+// now and goes on, its output to a file; dropped from the jobs, so the
+// server's ids no longer stop them (quitting does)
+function term_bg(t: Term): void {
+  const shells = [...t.jobs].filter(([, run]) => run.name === "shell");
+  if (shells.length === 0) {
+    return term_note(t, "No shell command is running here.");
   }
-  for (const [id, abort] of t.jobs) {
-    if (!msg.ids.includes(id)) {
-      abort.abort();
-    }
+  for (const [id, run] of shells) {
+    t.jobs.delete(id);
+    run.away.abort();
   }
-}
-
-// runs a job here, and answers its output; one too large for a socket
-// message (View.FRAME, the 1 KiB left for the act around it) answers its
-// size instead, failed (sent, it would close the socket at every try)
-async function term_run(t: Term, id: string, job: Job): Promise<void> {
-  const abort = new AbortController();
-  t.jobs.set(id, abort);
-  const no   = { text: "This terminal does no computer use.", fail: true };
-  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal);
-  const size = Buffer.byteLength(JSON.stringify(out));
-  const most = View.FRAME - 1024;
-  const big  = { text: "The output, " + size + " bytes, is over the " + most + " a tool may send.", fail: true };
-  t.jobs.delete(id);
-  term_send(t, { $: "out", job: id, out: size > most ? big : out });
+  term_note(t, "Sent " + shells.length + (shells.length === 1 ? " shell command" : " shell commands") + " to the background; each one's output goes to a file the AI is told of.");
 }
 
 // Login
@@ -984,7 +1201,7 @@ async function login_run(url: string): Promise<void> {
     const done = await fetch(url + "/api/wait", wait).catch(() => null);
     const ans  = await done?.json().catch(() => ({})) ?? {};
     if (done?.status === 410) {
-      login_fail("the link expired: run unii again");
+      login_fail("the link expired: run legion again");
     }
     if (done?.ok && ans.ok) {
       break;
@@ -1030,59 +1247,18 @@ function login_line(): Promise<string> {
 }
 
 function login_fail(why: string): never {
-  console.error("unii: " + why);
+  console.error("legion: " + why);
   process.exit(1);
 }
 
 // Update
 // ======
 
-// marks this computer as one that self-hosted (SELF), for good
-function self_mark(): void {
-  fs.writeFileSync(SELF, "");
-}
-
-// update_check is the whole telemetry: once a day, a GET of CHECK (plus
-// &self=1 once SELF exists; no account, no id), its answer {ver, notice}
-// cached in CHECKED (stamped before the request: one a day); a cached
-// ver newer than this one is a note. It never delays nor fails the chat
-async function update_check(t: Term): Promise<void> {
-  if (process.env.UNII_NO_TELEMETRY) {
-    return;
-  }
-  let last = { t: 0, ver: VERSION, notice: "" };
-  try {
-    last = { ...last, ...JSON.parse(fs.readFileSync(CHECKED, "utf8")) };
-  } catch {}
-  try {
-    if (Date.now() - last.t > DAY) {
-      last.t = Date.now();
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-      const got = await (await fetch(CHECK + (fs.existsSync(SELF) ? "&self=1" : ""), { signal: AbortSignal.timeout(3000) })).json() as { ver?: unknown; notice?: unknown };
-      last.ver = typeof got.ver === "string" ? got.ver : VERSION;
-      last.notice = typeof got.notice === "string" ? got.notice : "";
-      fs.writeFileSync(CHECKED, JSON.stringify(last) + "\n");
-    }
-  } catch {}
-  if (update_newer(last.ver)) {
-    const notice = last.notice.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 200);
-    term_note(t, "unii " + last.ver + " is available: run unii update" + (notice === "" ? "" : ". " + notice));
-  }
-}
-
-// whether ver (major.minor.patch) is newer than this unii
-function update_newer(ver: string): boolean {
-  const a = ver.split(".").map(Number);
-  const b = VERSION.split(".").map(Number);
-  return a.length === 3 && a.every(Number.isInteger) && (a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) > 0;
-}
-
-// runs the installer again: the one way unii changes. The command prints
-// first, so one can run it alone.
+// this build never installs by `curl | sh` (the hosted installer): it
+// changes only as its source does
 function update_run(url: string): void {
-  const cmd = "curl -fsSL " + url + "/install.sh | sh";
-  console.error(cmd);
-  process.exitCode = child.spawnSync("sh", ["-c", cmd], { stdio: "inherit" }).status ?? 1;
+  console.error("legion update is disabled in this build; pull its source instead (not " + url + "/install.sh)");
+  process.exitCode = 1;
 }
 
 // Main
@@ -1106,6 +1282,40 @@ async function term_signed(url: string): Promise<boolean> {
   return res === null || res.status !== 401;
 }
 
+// `legion device`: this computer runs the server's jobs with no screen
+// (Device.ts), signed in as this terminal is; signed out, it stops
+async function device_run(url: string): Promise<void> {
+  if (!await term_signed(url)) {
+    login_fail("sign in first: legion login");
+  }
+  const lost = async (up: boolean) => {
+    if (!up && !await term_signed(url)) {
+      login_fail("signed out: legion login, then legion device again");
+    }
+    console.error("legion device: offline, trying again");
+    return true;
+  };
+  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("legion device: " + line), lost);
+  console.log("legion device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
+}
+
+// `legion web`: a one-use link (a minute) that signs a browser in as this
+// terminal, printed and opened (`open` may be refused, e.g. in a sandbox)
+async function web_run(url: string): Promise<void> {
+  if (!await term_signed(url)) {
+    await login_run(url);
+  }
+  const res = await fetch(url + "/api/web-link", { method: "POST", headers: term_auth() }).catch(() => null);
+  const body = (await res?.json().catch(() => ({})) ?? {}) as { url?: string; error?: string };
+  if (res === null || !res.ok || body.url === undefined) {
+    login_fail(body.error ?? (res === null ? "no server at " + url + ": start it with unii" : "the server refused (" + res.status + ")"));
+  }
+  console.log("Open this within a minute (it works once):\n  " + body.url);
+  if (process.platform === "darwin") {
+    child.spawnSync("open", [body.url as string], { stdio: "ignore" });
+  }
+}
+
 fs.mkdirSync(TOKEN.slice(0, -"/token".length), { recursive: true, mode: 0o700 });
 
 if (HELP || ODD !== undefined) {
@@ -1114,20 +1324,20 @@ if (HELP || ODD !== undefined) {
   }
   console.log(USAGE);
 } else if (ASKVER) {
-  console.log("unii " + VERSION);
+  console.log("legion " + VERSION);
 } else if (UPDATE) {
   update_run(SERVER);
 } else if (SERVE) {
-  self_mark();
   await (await import("./Server.ts")).serve(Number(PORT ?? 8788), null);
 } else if (LOGIN) {
   await login_run(SERVER);
+} else if (WEBIN) {
+  await web_run(SERVER);
+} else if (DEVICED) {
+  await device_run(SERVER);
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);
-  }
-  if (SERVER !== OURS) {
-    self_mark();
   }
   const t = term_new(SERVER);
   term_connect(t);

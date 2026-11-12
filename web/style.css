@@ -1,4 +1,4 @@
-/* UniiChat: black ink on white paper, as the terminal (Theme.ts): what
+/* Legion: black ink on white paper, as the terminal (Theme.ts): what
    the machine wrote is filled (a block, a summary; a tool call, its
    result hooked right under it), what a person or Unii said is framed,
    unfilled. Every color is the palette's below; each kind's look, put
@@ -23,7 +23,7 @@
   --edge   : #111111; /* a person's frame: the user's message, a report */
   --add    : #1a7f37; /* a diff's line added */
   --del    : #cf222e; /* a diff's line dropped */
-  --accent : #6d3fd8; /* the name UniiChat in a message */
+  --accent : #6d3fd8; /* the name Legion in a message */
   --red    : #b42318; /* deleting the account */
   --veil   : rgb(0 0 0 / .3); /* the page behind a box over it */
   --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
@@ -73,7 +73,7 @@ body { text-wrap: balance; }
 
 /* a guest's chat: only the log and the message box; a note alone (the
    terminal signed in) */
-body.guest :is(.net, .credits, .all, .menu, .attach, .mic, #pick, #tabs) { display: none !important; }
+body.guest :is(.net, .credits, .all, .menu, .attach, .mic, #pick, #tabs, #mode, #crew) { display: none !important; }
 /* what only a server that bills shows (main.ts: body.bills) */
 body:not(.bills) .bill { display: none !important; }
 body.solo main { width: min(420px, 100% - 48px); margin: 18vh auto; text-align: center; }
@@ -101,6 +101,9 @@ header .net { font-size: 13px; color: var(--mid); }
 footer { position: sticky; bottom: 0; z-index: 2; padding: 18px max(20px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: linear-gradient(transparent, var(--paper) 14px); }
 body.account footer { position: fixed; inset: auto 0 0; background: none; pointer-events: none; }
 body.account footer > :not(#toast) { display: none; }
+/* the status line under the box, as the terminal's (View.view_status) */
+#status { width: min(var(--col), 100%); margin: 4px auto 0; color: var(--mid); font: 12px/18px var(--mono); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status:empty { display: none; }
 #pick { width: min(var(--col), 100%); margin: 0 auto 6px; display: flex; align-items: center; gap: 6px; font: 12.5px/20px var(--sans); color: var(--mid); }
 #pick .rule { flex: 1; height: 1px; background: var(--hair); margin-right: 4px; }
 #pick button { padding: 0 6px; border-radius: 6px; }
@@ -142,6 +145,105 @@ body.account footer > :not(#toast) { display: none; }
 #tabs button { flex: none; }
 #tabs button:hover, #tabs .here { color: var(--ink); }
 #tabs .here { font-weight: 600; }
+/* Chat | Crew (Html.mode_html) in the header, the pill on Crew */
+header:has(#mode) > .brand { margin-right: 18px; }
+#mode { margin-right: auto; display: flex; gap: 4px; font-size: 13.5px; font-weight: 500; }
+#mode a { padding: 6px 12px; border-radius: 8px; text-decoration: none; color: var(--mid); }
+#mode a:hover { color: var(--ink); background: var(--block); }
+#mode a.here { color: var(--ink); background: var(--block); }
+#mode .pill { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--hair); font: 500 12px var(--sans); color: var(--mid); }
+#mode .pill.need { background: var(--accent); color: var(--paper); }
+/* the Crew view: a column at the left, the focus's session at the right
+   (the log and footer as ever, moved over) */
+body.crewmode { padding-left: var(--crew); }
+/* the question backlog beside the chat (Html.questions_html) */
+body.qmode { padding-right: var(--crew); }
+#questions { position: fixed; inset: 0 0 0 auto; z-index: 3; width: var(--crew); overflow-y: auto; padding: 14px 10px 24px; border-left: 1px solid var(--hair); background: var(--paper); font: 13.5px/20px var(--sans); }
+#questions::before { content: "Waiting for you"; display: block; margin: 0 0 8px 4px; font-size: 12px; font-weight: 600; color: var(--accent); }
+#questions .q { margin-bottom: 10px; padding: 8px; border-radius: 10px; background: var(--block); }
+#questions .qh { display: flex; gap: 8px; align-items: baseline; }
+#questions .qh .meta { flex: 1; }
+#questions .qt { margin: 4px 0 6px; white-space: pre-wrap; }
+#questions .qos { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+#questions .qo { padding: 2px 8px; border: 1px solid var(--hair); border-radius: 6px; background: var(--paper); color: inherit; font: inherit; cursor: pointer; }
+#questions .qa input { width: 100%; box-sizing: border-box; padding: 4px 8px; border: 1px solid var(--hair); border-radius: 6px; background: var(--paper); color: inherit; font: inherit; }
+#mode .perm { margin-left: 8px; padding: 0 8px; border: 1px solid var(--hair); border-radius: 9px; background: none; color: var(--mid); font: 600 12px/18px var(--sans); cursor: pointer; }
+#mode .perm.plan { border-color: var(--accent); color: var(--accent); }
+#mode .perm.full { border-color: var(--del, #e5534b); color: var(--del, #e5534b); }
+#questions .q.plan { border-left: 3px solid var(--accent); }
+#questions .q.call { border-left: 3px solid var(--you, #d29922); }
+#mode .qs { margin-left: 8px; padding: 0 8px; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper); font: 600 12px/18px var(--sans); cursor: pointer; }
+body.crewmode #tabs { display: none; }
+:root { --crew: 360px; }
+#crew { position: fixed; inset: 0 auto 0 0; z-index: 3; width: var(--crew); overflow-y: auto; padding: 14px 10px 24px; border-right: 1px solid var(--hair); background: var(--paper); font: 13.5px/20px var(--sans); }
+#crew a { text-decoration: none; }
+#crew .needs:not(:empty) { margin-bottom: 12px; padding: 8px; border-radius: 10px; background: var(--block); }
+#crew .needs::before { content: "Needs you"; display: block; margin: 0 0 4px 4px; font-size: 12px; font-weight: 600; color: var(--accent); }
+#crew .needs:empty::before { content: none; }
+#crew .need { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+#crew .need a { flex: 1; }
+#crew .need.failed b { color: var(--del); }
+#crew .focus { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 10px; }
+#crew .focus .meta { color: var(--mid); }
+#crew .node { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; padding: 2px 4px; border-radius: 6px; }
+#crew .node .line { flex-basis: 100%; padding-left: 40px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px/18px var(--mono); color: var(--soft); }
+#crew .node:hover, #crew .node.here { background: var(--block); }
+#crew .node a { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; white-space: nowrap; }
+#crew .node .meta { overflow: hidden; text-overflow: ellipsis; color: var(--mid); }
+#crew .node .st { width: 1em; flex: none; text-align: center; }
+#crew .caret { width: 18px; flex: none; color: var(--mid); font-size: 15px; }
+#crew .d1 { padding-left: 20px; } #crew .d2 { padding-left: 36px; } #crew .d3 { padding-left: 52px; } #crew .d4 { padding-left: 68px; }
+#crew .failed .st { color: var(--del); }
+#crew .asking :is(.st, b) { color: var(--accent); }
+#crew :is(.done, .stopped) > a { color: var(--soft); }
+#crew .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
+#crew .x:hover { color: var(--ink); background: var(--hover); }
+#crew .x.yes:hover { color: var(--add); }
+/* an agent's repos (Html.who_html): chips after its title */
+.repo { flex: none; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--block); color: var(--mid); font: 11.5px/18px var(--mono); }
+#crew .focus .repo { display: inline-block; }
+/* a tile's repos: a row of their own under its title */
+.tile .repos { display: flex; flex-wrap: wrap; gap: 4px; }
+.tile .repos .repo { margin-left: 0; }
+/* an agent's checklist (Tools.todo): how far on a tile, the list in focus */
+.tile .todo { flex: none; margin-left: 6px; color: var(--mid); font: 11.5px/18px var(--mono); }
+.focus ol.todo { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
+.focus ol.todo li.done { color: var(--mid); text-decoration: line-through; }
+.focus ol.todo li.doing { font-weight: 600; }
+/* the focus's lane (Html.lane_html): a mark per event at its time */
+#crew .lane { position: relative; height: 18px; margin: -4px 0 12px; border-radius: 9px; background: var(--block); }
+#crew .mk { position: absolute; top: 3px; width: 6px; height: 12px; margin-left: -3px; padding: 0; border-radius: 3px; background: var(--mid); }
+#crew .mk.told { background: var(--accent); }
+#crew .mk.tool { background: var(--ink); }
+#crew .mk.words { background: var(--add); }
+#crew .mk.spawn { width: 2px; margin-left: -1px; top: 1px; height: 16px; background: var(--accent); }
+#crew .mk.stall { height: 4px; top: 7px; width: 14px; margin-left: -7px; background: var(--del); opacity: .6; }
+#crew button.mk:hover { transform: scaleY(1.3); }
+#log .flash { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+/* the Crew grid: tiles, each with a dot per agent under it; the footer
+   keeps only its toasts (a tile's box tells its agent) */
+body.gridmode #log { display: none; }
+body.gridmode footer > :not(#toast) { display: none; }
+#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 18px 20px 40px; font: 13.5px/20px var(--sans); }
+#grid a { text-decoration: none; }
+.tile { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--hair); border-radius: 12px; background: var(--lift); }
+.tile .top { display: flex; align-items: center; gap: 6px; }
+.tile .head { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; white-space: nowrap; }
+.tile .meta, .tile .roll { color: var(--mid); overflow: hidden; text-overflow: ellipsis; }
+.tile .line { font: 12px/18px var(--mono); color: var(--soft); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tile.asking { border-color: var(--accent); }
+.tile.failed .st { color: var(--del); }
+.tile .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
+.tile .x:hover { color: var(--ink); background: var(--hover); }
+.dots { display: flex; flex-wrap: wrap; gap: 5px; }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--hair); }
+.dot.working { background: var(--ink); }
+.dot.waiting { background: var(--mid); }
+.dot.asking { background: var(--accent); }
+.dot.failed { background: var(--del); }
+.dot.done { background: var(--add); opacity: .55; }
+.tell input { width: 100%; padding: 5px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px var(--sans); }
+.tell input:focus { outline: 0; border-color: var(--soft); }
 
 /* Popovers (the browser's): the menu, the wallet, Import History */
 [popover] { inset: 60px 20px auto auto; margin: 0; width: 280px; padding: 10px 14px; border: 1px solid var(--hair); border-radius: 14px; color: var(--ink); background: var(--lift); box-shadow: var(--shadow); }

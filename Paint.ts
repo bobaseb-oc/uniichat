@@ -409,13 +409,79 @@ export function rule_line(v: View.View, w: number): Line {
 }
 
 // a rule, a text at its right end ("": none)
+// what the status line under the input says: View.status_text, shared
+// with the web
+export type Status = View.StatusLine;
+export const status_text = View.status_text;
+
 export function rule_text(text: string, w: number): Line {
   const tag = text === "" ? "" : " " + text + " ";
   return [Run("─".repeat(Math.max(0, w - text_width(tag) - 1)) + tag + "─", DIM)];
 }
 
-// the last line, w wide: a tab for UniiChat and each agent at work, the
+// the last line, w wide: a tab for Legion and each agent at work, the
 // shown bold; with agents, the key that moves along them, if it fits
+// the crew panel: Legion (the orchestrator) on top, each agent under
+// who started it (View.view_crew), the page shown marked ▸ and bold, a
+// failed one red, done and stopped ones dim; `most` lines at most, the
+// rest counted; each line cut to w
+export function crew_lines(v: View.View, w: number, now: number, most: number): Line[] {
+  const at = v.page === null ? null : v.page.name;
+  const top = { name: null as string | null, text: "◆ " + View.MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"), status: "working" as View.Status };
+  const rows = [top, ...View.view_crew(v, now).map((r) => ({ name: r.name as string | null, text: "  " + r.text, status: r.status }))];
+  const shown = rows.length > most ? rows.slice(0, Math.max(1, most - 1)) : rows;
+  const lines = shown.map((r) => {
+    const here = r.name === at;
+    const ink = r.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
+    return [Run(here ? "▸ " : "  ", here ? { ...INK, b: true } : INK), Run(text_cut(r.text, w - 2), here ? { ...ink, b: true } : ink)];
+  });
+  return rows.length > shown.length ? [...lines, [Run(text_cut("  … +" + (rows.length - shown.length) + " more: /tab <name>", w), DIM)]] : lines;
+}
+
+// /crew full (Term.ts): a head (the pill, the keys), who needs you (at
+// most NEEDS, and a third of the screen), then the tree (View.view_tree) with each row's activity,
+// the selection marked "▸ " and kept in sight; w columns, h rows at most
+const NEEDS = 5;
+export function crew_full(v: View.View, w: number, h: number, sel: string | null, now: number): Line[] {
+  const keys = "↑↓ move · →← open · Enter focus · s stop · a/d approve · x dismiss · Esc back";
+  const head = [Run(text_cut("Crew · " + (View.view_pill(v) || "no agents") + " · " + keys, w), { ...INK, b: true })];
+  const needs = View.view_needs(v);
+  const most = Math.max(1, Math.min(NEEDS, Math.floor((h - 2) / 3)));
+  const need = needs.slice(0, most).map((c) => [Run(text_cut("  " + c.name + (c.status === "asking" ? " asks to start" : " failed"), w), c.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : { ...INK, c: Theme.ANSI.del })]);
+  const more = needs.length > most ? [[Run("  … +" + (needs.length - most) + " more", DIM)]] : [];
+  const top = [head, [Run("")], ...(need.length > 0 ? [[Run("Needs you", DIM)], ...need, ...more, [Run("")]] : [])];
+  const rows = View.view_tree(v, now);
+  const room = Math.max(1, h - top.length);
+  const at = Math.max(0, rows.findIndex((r) => r.name === sel));
+  const from = Math.min(Math.max(0, at - Math.floor(room / 2)), Math.max(0, rows.length - room));
+  const tree = rows.slice(from, from + room).map((r) => {
+    const here = r.name === sel;
+    const pulse = v.pulses.get(r.name);
+    const act = pulse === undefined ? "" : pulse.act || pulse.last;
+    const what = r.kids > 0 && !r.open ? "▸ " + r.rollup : r.tier + " · " + r.model;
+    const todo = View.view_step(r);
+    const text = "  ".repeat(r.depth) + View.CREW[r.status] + " " + View.view_label(r) + (todo === "" ? "" : " · " + todo) + " · " + what + (act === "" ? "" : " · " + act);
+    const ink = r.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
+    return [Run(here ? "▸ " : "  ", { ...INK, b: true }), Run(text_cut(text, w - 2), here ? { ...ink, b: true } : ink)];
+  });
+  return [...top, ...tree].slice(0, h);
+}
+
+// a text cut to w columns, its last one an ellipsis if cut
+export function text_cut(s: string, w: number): string {
+  if (text_width(s) <= w) {
+    return s;
+  }
+  let out = "";
+  for (const g of text_graphemes(s)) {
+    if (text_width(out + g) > w - 1) {
+      break;
+    }
+    out += g;
+  }
+  return out + "…";
+}
+
 export function tabs_line(v: View.View, w: number): Line {
   const tabs = View.view_tabs(v).map((tab) => Run(tab.text, tab.here ? { ...INK, b: true } : DIM));
   const line = tabs.flatMap((r, k) => (k === 0 ? [r] : [Run("  "), r]));

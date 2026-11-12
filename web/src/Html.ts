@@ -9,6 +9,7 @@
 import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
 import * as Theme from "../../Theme.ts";
+import type { Mode as Perm } from "../../Modes.ts";
 import * as View from "../../View.ts";
 
 // Constants
@@ -110,6 +111,159 @@ export function pick_html(fold: string | null, on: boolean, knobs: View.Knob[]):
   const parts = knobs.map((k) => `<button title="${esc(k.hint)}"${act_html({ $: "Move", move: k.move })}>${esc(k.text)}</button>`);
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
   return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => (i === 0 ? [part] : [`<span class="dot">·</span>`, part]))];
+}
+
+// Crew view
+// ---------
+
+// an agent's buttons by its status: at work, stop; asking, approve and
+// deny; done, failed or stopped, dismiss
+function acts_html(c: View.Crew): string {
+  const x = (label: string, title: string, a: View.Act, cls = "") => `<button class="x${cls}" title="${title}"${act_html(a)}>${label}</button>`;
+  switch (c.status) {
+    case "working":
+    case "waiting": return x("■", "stop", { $: "Stop", name: c.name });
+    case "asking":  return x("✓", "approve", { $: "Approve", name: c.name, yes: true }, " yes") + x("×", "deny", { $: "Approve", name: c.name, yes: false });
+    default:        return x("×", "dismiss", { $: "Dismiss", name: c.name });
+  }
+}
+
+// an agent's label: its title (its goal) as the main line, else its
+// name; its repos as chips; and what goes before what it is (its name,
+// when the title stands for it)
+function who_html(c: View.Crew, chips = true): string {
+  return `<b>${esc(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
+}
+function repos_html(c: View.Crew): string {
+  return (c.repos ?? []).map((r) => `<span class="repo">${esc(r)}</span>`).join("");
+}
+function also(c: View.Crew): string {
+  return c.title === undefined ? "" : c.name + " · ";
+}
+
+// the link that puts an agent in focus (#crew/<name>)
+function focus_href(name: string): string {
+  return ` href="${esc(View.view_hash("crew", name))}"`;
+}
+
+// the Crew tree (View.view_tree): per agent a caret (managers: fold or
+// open), its link (mark, name, tier, model; its roll-up or how long
+// ago), its actions
+export function tree_html(v: View.View, now: number): string[] {
+  return View.view_tree(v, now).map((r) => {
+    const here = v.page?.name === r.name ? " here" : "";
+    const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
+    const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
+    const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
+    const what = `<span class="st">${View.CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc(info)}</span>`;
+    const repos = (r.repos ?? []).length === 0 ? "" : " · " + r.repos!.join(", ");
+    const title = esc(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
+  });
+}
+
+// an agent's activity line, by its pulse: at work, what it does now;
+// else its report's last line (none: nothing)
+function line_html(v: View.View, c: View.Crew): string {
+  const p = v.pulses.get(c.name);
+  const at = c.status === "working" || c.status === "waiting" || c.status === "asking";
+  const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
+  return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
+}
+
+// the Crew grid (View.view_tiles), no agent in focus: per tile its head
+// (mark, name, what it is) and actions, a dot per agent under it (a link
+// to it), its roll-up and activity line, and a box that tells it
+export function grid_html(v: View.View, now: number): string[] {
+  return View.view_tiles(v, now).map((t) => {
+    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
+    const todo = View.view_todo(t);
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc(todo)}</span>`}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const repos = repos_html(t);
+    const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
+    const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${repos === "" ? "" : `<div class="repos">${repos}</div>`}${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+  });
+}
+
+// the lane of the agent in focus (View.view_lane): a mark per event at
+// its time, a message's a button that jumps to it (data-seek: its row in
+// the log); none in focus or no marks: nothing
+export function lane_html(v: View.View, now: number): string {
+  const marks = View.view_lane(v, now);
+  if (marks.length === 0) {
+    return "";
+  }
+  const pct = (at: number) => Math.round(at * 1000) / 10 + "%";
+  const mk = marks.map((m) => {
+    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
+    return m.k === null ? `<span ${attrs}></span>` : `<button ${attrs} data-seek="${m.k}"></button>`;
+  });
+  return `<div class="lane">${mk.join("")}</div>`;
+}
+
+// what needs the person (View.view_needs), each with what it waits on
+// and its buttons
+export function needs_html(v: View.View): string[] {
+  const plan = v.plan ? [`<div class="need question"><a href="#chat" data-qs-open><b>Plan ready</b> <span class="meta">waiting for your approval</span></a></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc(c.who)} wants to run</b> <span class="meta">${esc(c.what.slice(0, 80))}</span></a></div>`);
+  const asked = [...plan, ...calls, ...View.view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split("\n")[0]!)}</b> <span class="meta">question ${q.id}</span></a></div>`)];
+  return [...asked, ...View.view_needs(v).map((c) => {
+    const why = c.status === "asking" ? "asks to start" : "failed";
+    const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
+  })];
+}
+
+// what waits for the person besides questions, first in the pane: the
+// orchestrator's plan (approve into auto or full; send back with
+// feedback), then each call auto mode's reviewer couldn't check (run it,
+// or not); none: nothing
+export function waiting_html(v: View.View): string[] {
+  const b = (label: string, a: View.Act, cls = "qo") => `<button class="${cls}"${act_html(a)}>${label}</button>`;
+  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
+  return [...plan, ...calls];
+}
+
+// the question backlog (View.view_questions), beside the chat: each the
+// orchestrator's question (its lines kept), its offered answers as
+// buttons, a box to answer it, a dismiss; none: nothing
+export function questions_html(v: View.View): string[] {
+  return View.view_questions(v).map((q) => {
+    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
+    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
+    return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
+  });
+}
+
+// the agent in focus, over its session (the log): its name, what it
+// is, how it is, its actions; none: Unii's chat. One the crew no longer
+// tells (dismissed) shows its name only
+export function focus_html(v: View.View): string {
+  const name = v.page?.name ?? null;
+  if (name === null) {
+    return `<div class="focus"><b>${esc(View.MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
+  }
+  const c = v.crew.find((x) => x.name === name);
+  if (c === undefined) {
+    return `<div class="focus"><b>${esc(name)}</b></div>`;
+  }
+  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo!.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
+}
+
+// Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
+// marked when someone needs the person
+// and the questions open (a button showing or hiding their pane)
+// and the permission mode's chip (a click: the next)
+export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm): string[] {
+  const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
+  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
+  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 
 export function tabs_html(tabs: View.Tab[]): string[] {
@@ -241,7 +395,7 @@ function spans_html(spans: Md.Span[]): string {
 function span_html(s: Md.Span): string {
   switch (s.$) {
     case "Text": { // the name, in the brand's font
-      return esc(s.x).replaceAll("UniiChat", `<span class="brand">UniiChat</span>`);
+      return esc(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
     }
     case "Code": {
       return `<code>${esc(s.x)}</code>`;

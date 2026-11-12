@@ -1,4 +1,4 @@
-// UniiChat (the site)
+// Legion (the site)
 // ===================
 // The page around View.ts's chat: the server's messages go to
 // View.view_hear, a click's `data-act` (Html.ts) to View.view_act, and
@@ -13,6 +13,7 @@
 // credit is bought through the App Store (APP), and sign-in is by email
 // only (another company's would need Sign in with Apple).
 
+import * as Demo from "../../Demo.ts";
 import * as Import from "../../Import.ts";
 import { theme_css } from "../../Theme.ts";
 import * as View from "../../View.ts";
@@ -38,6 +39,8 @@ const DESK = matchMedia("(hover: hover)");
 
 // what a guest is told after the hello but its ask (View.ask): the ask
 // again (a link expired), the link sent
+// a terminal signed in already needs no email: `legion web` signs this in
+const TERMINAL = "Signed in from a terminal? Run `legion web` there and this page opens signed in.";
 const EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 // the line under a guest's box, where the server bills: signing in is
 // the consent (Billing.ts CONSENT says it in full); its links open a tab,
@@ -56,13 +59,18 @@ const PAID = new BroadcastChannel("unii.paid");
 // the intro's scenes: two lines, then the logo above the name
 const SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
-  <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
+  <div class="scene"><i class="mark"></i><h1>Legion</h1></div>`;
 
 // the chat
 const v = View.view_new();
 
 // the message box
 const BOX = $<HTMLTextAreaElement>("textarea");
+
+// /?demo=1: the demo crew (Demo.ts) instead of the server's, to see the
+// Crew view's layout; its agents' acts reach no agent (the server knows
+// none of them)
+const DEMO = new URLSearchParams(location.search).get("demo") === "1" ? Demo.demo_crew(Date.now()) : null;
 
 // the import's slider: the first day it takes, in days since 1970, from
 // the first new message's (its left end: all) to today's
@@ -87,6 +95,11 @@ const P = {
   done  : {} as Import.Done,
   off   : new Set<string>(),
   step  : "" as "" | "start" | "pay" | "send" | "run" | "seen" | "done",
+  crew  : false,
+  g     : 0,
+  watching : "",
+  watched  : null as WebSocket | null,
+  qhide    : false, // the questions' pane put away (the header's ? button)
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -107,19 +120,20 @@ function kept(fact: string): string {
 async function boot(): Promise<void> {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   const q = new URLSearchParams(location.search);
-  history.replaceState(null, "", location.pathname === "/account" ? "/account" : "/");
+  // the query read, the address keeps only its page and the mode (#crew)
+  history.replaceState(null, "", (location.pathname === "/account" ? "/account" : "/") + location.hash);
   if (q.has("terminal")) {
     solo("Your terminal is signed in.", "You can close this tab and go back to it.");
     return;
   }
   if (q.has("deleted")) {
-    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to UniiChat</a>`);
+    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to Legion</a>`);
     return;
   }
   if (q.get("paid") === "tab") {
     PAID.postMessage(true);
     close();
-    solo("Payment received.", "Close this tab: your import starts in the UniiChat tab you came from.");
+    solo("Payment received.", "Close this tab: your import starts in the Legion tab you came from.");
     return;
   }
   const me = await boot_me();
@@ -162,7 +176,7 @@ function solo(title: string, sub: string): void {
 
 // Guest
 // =====
-// UniiChat's hello, ending in its ask for an email; the answers come from
+// Legion's hello, ending in its ask for an email; the answers come from
 // here, by no AI: an email gets the sign-in link, "@name" goes to
 // GitHub, anything else gets the server's why. All in v.live (unlogged).
 
@@ -182,7 +196,7 @@ async function guest(expired: boolean): Promise<void> {
   BOX.placeholder = "Enter your email" + (ask ? " or @github" : "");
   // read from its start: on a phone it is taller than the screen
   P.end = false;
-  guest_say(hello + "\n\n" + (expired ? EXPIRED : View.email_ask(ask)));
+  guest_say(hello + "\n\n" + TERMINAL + "\n\n" + (expired ? EXPIRED : View.email_ask(ask)));
 }
 
 async function guest_send(text: string): Promise<void> {
@@ -219,13 +233,19 @@ function chat(): void {
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
   BOX.onkeydown = (ev) => {
+    // Shift+Tab in the box: the next mode, as Claude Code's
+    if (ev.key === "Tab" && ev.shiftKey && !P.guest) {
+      ev.preventDefault();
+      act({ $: "Mode" });
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && (DESK.matches || P.guest)) {
       ev.preventDefault();
       submit();
     }
   };
   BOX.onpaste = (ev) => attach([...(ev.clipboardData?.files ?? [])]);
-  $("form").onsubmit = (ev) => {
+  $("form.composer").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
   };
@@ -245,6 +265,12 @@ function chat(): void {
     attach([...(ev.dataTransfer?.files ?? [])]);
   };
   document.onclick = click;
+  onhashchange = crew_route;
+  $("#grid").onsubmit = tell;
+  $("#questions").onsubmit = answer;
+  $("#crew").addEventListener("click", seek);
+  document.addEventListener("keydown", crew_keys);
+  crew_route();
   // a phone's keyboard up or down: the bottom stays in sight, if at it
   visualViewport!.onresize = () => draw(true);
   document.onscroll = () => {
@@ -321,10 +347,16 @@ function pics(imgs: Blob[]): void {
 
 function act(a: View.Act): void {
   const said = a.$ === "Send" ? a.text.trim() : "";
+  if (a.$ === "Send" && "Notification" in window && Notification.permission === "default") {
+    void Notification.requestPermission();
+  }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
   for (const msg of View.view_act(v, a)) {
     View.link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
+  }
+  if (a.$ === "Goto") {
+    crew_sync();
   }
   draw(a.$ === "Send");
 }
@@ -333,6 +365,11 @@ function act(a: View.Act): void {
 // (Html.ts), unless it ends a selection dragged in
 // its element
 function click(ev: MouseEvent): void {
+  const qs = (ev.target as HTMLElement).closest<HTMLElement>("[data-qs], [data-qs-open]");
+  if (qs !== null) {
+    P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
+    paint();
+  }
   const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
@@ -377,7 +414,7 @@ async function mic(): Promise<void> {
   }
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
   if (stream === null) {
-    toast("UniiChat can't use the microphone.");
+    toast("Legion can't use the microphone.");
     return;
   }
   const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
@@ -484,13 +521,65 @@ function hear(msg: View.Server): void {
   for (const out of View.view_hear(v, msg)) {
     View.link_send(v, out);
   }
+  if (msg.$ === "agent") {
+    crew_sync();
+  }
+  if (DEMO !== null && msg.$ === "state") {
+    v.crew = DEMO;
+    Demo.demo_pulses(DEMO).forEach((p) => View.view_hear(v, p));
+  }
   const now = View.view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
   P.rows ||= msg.$ === "state" ? v.agents.join() !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  if (msg.$ === "state") {
+    View.view_alerts(v, Date.now()).forEach(notify);
+  }
   import_welcome();
   draw(true);
+}
+
+// an alert (View.view_alerts) as a desktop notification, while the page
+// is hidden and the person allowed them (asked at their first message);
+// a click shows its agent
+function notify(alert: View.Alert): void {
+  if (!document.hidden) {
+    return;
+  }
+  chime();
+  if (!("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
+  note.onclick = () => {
+    window.focus();
+    act({ $: "Goto", name: alert.name });
+    note.close();
+  };
+}
+
+// Legion's own sound for an alert (not Claude Code's): two rising notes,
+// soft; a browser that won't play yet (no click on the page so far) stays
+// silent
+let AUDIO: AudioContext | null = null;
+function chime(): void {
+  try {
+    AUDIO ??= new AudioContext();
+    void AUDIO.resume();
+    const at = AUDIO.currentTime;
+    for (const [k, hz] of [660, 990].entries()) {
+      const osc = AUDIO.createOscillator();
+      const gain = AUDIO.createGain();
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, at + k * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.15, at + k * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + k * 0.14 + 0.3);
+      osc.connect(gain).connect(AUDIO.destination);
+      osc.start(at + k * 0.14);
+      osc.stop(at + k * 0.14 + 0.32);
+    }
+  } catch {}
 }
 
 // Import
@@ -917,9 +1006,144 @@ function bars(): void {
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_pick(v)));
-  $("#tabs").hidden = tabs.length < 2;
-  markup($("#tabs"), Html.tabs_html(tabs));
+  // a crew is the Crew view's (the header's pill), not a list here: one
+  // row an agent buried the chat and the header under a tall footer
+  const crew = v.crew.length > 0;
+  $("#tabs").hidden = crew || tabs.length < 2;
+  markup($("#tabs"), crew ? [] : Html.tabs_html(tabs));
+  // textContent: the line is device-reported text, never markup
+  $("#status").textContent = P.guest ? "" : View.view_status(v);
+  crew_bars();
   import_bar();
+}
+
+// Crew
+// ====
+// The web's two modes by location.hash (View.view_route): #chat, or
+// #crew[/<name>], where a column shows who needs the person, the agent in
+// focus and the tree, and the log the focus's session (its page). Keys:
+// g c, the Crew; g m, the chat (not while typing).
+
+// the hash's focus put on screen: in the Crew, its page (none: Unii's);
+// to the chat, Unii's
+function crew_route(): void {
+  const r = View.view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+    act({ $: "Goto", name: r.name });
+  }
+  P.crew = r.mode === "crew";
+  draw(true);
+}
+
+// the header's switch and pill; in the Crew, its column. The mode is
+// the address's, read, never written here: a paint between a click's new
+// hash and its hashchange wrote the old one back, so Chat never came
+function crew_bars(): void {
+  const mode = View.view_route(location.hash).mode;
+  const crew = mode === "crew";
+  document.body.classList.toggle("crewmode", crew && !P.guest);
+  const asked = View.view_questions(v).length + View.view_waiting(v);
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode));
+  // the question backlog, beside the chat, till put away
+  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  document.body.classList.toggle("qmode", pane);
+  $("#questions").hidden = !pane;
+  markup($("#questions"), pane ? [...Html.waiting_html(v), ...Html.questions_html(v)] : []);
+  $("#crew").hidden = !crew;
+  if (!crew) {
+    document.body.classList.remove("gridmode");
+    $("#grid").hidden = true;
+    watch();
+    return;
+  }
+  markup($("#crew .needs"), Html.needs_html(v));
+  markup($("#crew .card"), [Html.focus_html(v), Html.lane_html(v, Date.now())].filter((h) => h !== ""));
+  markup($("#crew .tree"), Html.tree_html(v, Date.now()));
+  const grid = v.page === null;
+  document.body.classList.toggle("gridmode", grid);
+  $("#grid").hidden = !grid;
+  if (grid) {
+    markup($("#grid"), Html.grid_html(v, Date.now()));
+  }
+  watch();
+}
+
+// in the Crew, the address follows a focus changed by an act (a tab, the
+// logo) or by the server (no such agent): once, as it changes
+function crew_sync(): void {
+  const r = View.view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "crew" && r.name !== at) {
+    history.replaceState(null, "", location.pathname + location.search + View.view_hash("crew", at));
+  }
+}
+
+// the server told what's in sight (View.view_watch) when that changes, or
+// the socket did (a new one watches nothing)
+function watch(): void {
+  const tiles = $("#grid").hidden ? [] : [...$("#grid").querySelectorAll<HTMLElement>("form.tell")].filter(seen).map((f) => f.dataset.tell!);
+  const names = View.view_watch(v, tiles);
+  const key = names.join("\n");
+  if (key !== P.watching || v.ws !== P.watched) {
+    P.watching = key;
+    P.watched = v.ws;
+    View.link_send(v, { $: "watch", names });
+  }
+}
+
+// whether an element is on screen, some of it
+function seen(el: HTMLElement): boolean {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < innerHeight;
+}
+
+// a lane mark clicked: its message in sight (an agent's page draws its
+// caption, then one row per message: View.page_rows)
+function seek(ev: MouseEvent): void {
+  const k = (ev.target as HTMLElement).closest<HTMLElement>("[data-seek]")?.dataset.seek;
+  const row = k === undefined ? undefined : $("#log .rows").children[Number(k) + 1];
+  row?.scrollIntoView({ block: "center" });
+  row?.classList.add("flash");
+  setTimeout(() => row?.classList.remove("flash"), 1200);
+}
+
+// a tile's box sent: its words to its agent
+function tell(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.tell");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input")!;
+  act({ $: "Tell", name: form.dataset.tell!, text: input.value });
+  input.value = "";
+}
+
+// an answer typed in the question backlog: to the orchestrator
+// (or the plan sent back, with what to change)
+function answer(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.qa");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input")!;
+  act(form.dataset.verdict !== undefined ? { $: "Verdict", yes: false, text: input.value } : { $: "Answer", q: Number(form.dataset.q), text: input.value });
+  input.value = "";
+}
+
+// g, then c or m within a second: the Crew, or the chat
+function crew_keys(ev: KeyboardEvent): void {
+  const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;
+  if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat" } as Record<string, string>)[ev.key] : undefined;
+  P.g = ev.key === "g" ? Date.now() : 0;
+  if (to !== undefined) {
+    location.hash = to;
+  }
 }
 
 // the first row in sight with a first message (no row inside it): that

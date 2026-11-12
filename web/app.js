@@ -1,3 +1,43 @@
+// Demo.ts
+var STATUSES = ["working", "working", "done", "failed", "waiting", "working", "stopped"];
+var GOALS = [
+  ["Fix flaky login tests", ["auth-api", "web"]],
+  ["Ship the export to CSV", ["reports"]],
+  ["Upgrade to Bun 1.4", ["legion"]],
+  ["Reconcile the Q3 breaks", ["bank-recon"]],
+  ["Review rules from merged PRs", ["shared-skills"]],
+  ["Docs for the Crew view", ["legion", "docs"]],
+  ["Triage the open bugs", ["web"]],
+  ["Cut the 2.10 release", ["bank-recon", "infra"]]
+];
+var PARTS = ["Reproduce it", "Write the failing test", "Fix it", "Review the diff"];
+var STEPS = ["Read the failing test", "Find the race", "Fix it", "Run the suite"];
+function demo_crew(now) {
+  const crew = [];
+  for (let m = 0;m < 8; m++) {
+    const [title, repos] = GOALS[m];
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
+    for (let w = 0;w < 5; w++) {
+      const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
+      const todo = w === 0 ? { todo: STEPS.map((text, k) => ({ text, status: k < m % STEPS.length ? "done" : k === m % STEPS.length ? "doing" : "pending" })) } : {};
+      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part, ...todo });
+    }
+  }
+  crew.push({ name: "Sub3", parent: "Mgr3", tier: "manager", model: "opus-5.5", status: "waiting", since: now - 30000 });
+  crew.push({ name: "W3-sub", parent: "Sub3", tier: "worker", model: "haiku-5.5", status: "working", since: now - 5000 });
+  crew.push({ name: "Claude1", parent: "main", tier: "claude", model: "claude-code", status: "asking", since: now, title: "Refactor the device jobs", repos: ["legion"] });
+  return crew;
+}
+function demo_pulses(crew) {
+  return crew.map((c, k) => ({
+    $: "pulse",
+    name: c.name,
+    status: c.status,
+    act: c.status === "working" ? k % 2 === 0 ? "shell: bun test " + c.name + ".test.ts" : "Reading the failing case in " + c.name : "",
+    last: c.status === "done" ? "Done: 12 tests pass." : c.status === "failed" ? "failed: the build broke" : ""
+  }));
+}
+
 // Clip.ts
 var CAP = 30000;
 function clip_end(str, at) {
@@ -42,7 +82,7 @@ var PRICE = { base: 187, byte: 735, depth: 628 };
 var PART = 2 ** 20;
 var OLD = "Nothing new: these chats are in Unii's memory already.";
 var NOT_EXPORT = "Not a Claude or ChatGPT export.";
-var MIDWAY = "Meanwhile, UniiChat can answer with a partial tree.";
+var MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 var DONE = "Your past chats are in Unii's memory: ask about them any time.";
 var DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" });
 var COUNT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 0 });
@@ -372,11 +412,201 @@ function look_css(kind, look) {
   return ".msg." + kind + "{" + body + "}";
 }
 
+// Modes.ts
+var MODES = ["plan", "auto", "full"];
+var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
+var READS = ["read", "glob", "grep"];
+var REVIEWED = ["shell", "write", "edit"];
+var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
+var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
+var Modes;
+((Modes2) => {
+  function read(x) {
+    return MODES.includes(x) ? x : "auto";
+  }
+  Modes2.read = read;
+  function next(mode) {
+    return MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+  }
+  Modes2.next = next;
+  function allows(mode, tool, input) {
+    if (mode !== "plan" || READS.includes(tool)) {
+      return null;
+    }
+    const why = "In plan mode only reading is allowed, until the user approves a plan";
+    if (tool === "shell") {
+      const not = Modes.readonly(String(input?.command ?? ""));
+      return not === null ? null : why + ": " + not + ". " + AFTER;
+    }
+    return why + ": " + tool + " can change things. " + AFTER;
+  }
+  Modes2.allows = allows;
+  function reviews(mode, tool) {
+    return mode === "auto" && REVIEWED.includes(tool);
+  }
+  Modes2.reviews = reviews;
+  function readonly(command) {
+    const lexed = lex(command);
+    if (typeof lexed === "string") {
+      return lexed;
+    }
+    if (lexed.length === 0) {
+      return "no command";
+    }
+    for (const words of lexed) {
+      const why = words.length === 0 ? "an empty command" : check(words);
+      if (why !== null) {
+        return why;
+      }
+    }
+    return null;
+  }
+  Modes2.readonly = readonly;
+  function lex(line) {
+    const cmds = [[]];
+    let word = null;
+    const end = () => {
+      if (word !== null) {
+        cmds.at(-1).push(word);
+        word = null;
+      }
+    };
+    for (let k = 0;k < line.length; k++) {
+      const c = line[k];
+      if (c === "'") {
+        const close2 = line.indexOf("'", k + 1);
+        if (close2 < 0) {
+          return "an unclosed quote";
+        }
+        word = (word ?? "") + line.slice(k + 1, close2);
+        k = close2;
+      } else if (c === '"') {
+        const q = dquote(line, k);
+        if (typeof q === "string") {
+          return q;
+        }
+        word = (word ?? "") + q[0];
+        k = q[1];
+      } else if (c === "\\") {
+        if (line[k + 1] === `
+`) {
+          return "a newline";
+        }
+        word = (word ?? "") + (line[k + 1] ?? "");
+        k += 1;
+      } else if (c === " " || c === "\t") {
+        end();
+      } else if (c === `
+` || c === "\r") {
+        return "a newline (one command line only)";
+      } else if (c === "`" || c === "$" && line[k + 1] === "(") {
+        return "a command substitution";
+      } else if (c === "<") {
+        return "a redirect or process substitution (<)";
+      } else if (c === ">") {
+        const to = stderr(line, k, word);
+        if (typeof to === "string") {
+          return to;
+        }
+        word = null;
+        k = to;
+      } else if (c === "|" || c === ";" || c === "&") {
+        const two = line.slice(k, k + 2);
+        if (c === "&" && two !== "&&") {
+          return "a background job (&)";
+        }
+        end();
+        if (cmds.at(-1).length === 0) {
+          return "an empty command";
+        }
+        cmds.push([]);
+        if (two === "&&" || two === "||") {
+          k += 1;
+        }
+      } else {
+        word = (word ?? "") + c;
+      }
+    }
+    end();
+    return cmds.at(-1).length === 0 && cmds.length > 1 ? "an empty command" : cmds.filter((w) => w.length > 0);
+  }
+  function stderr(line, k, before) {
+    const rest = line.slice(k + 1);
+    const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
+    return before !== "2" || tail === null ? "a redirect (>)" : k + tail[0].length;
+  }
+  function dquote(line, k) {
+    let w = "";
+    for (k += 1;k < line.length && line[k] !== '"'; k++) {
+      if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
+        return "a command substitution";
+      }
+      if (line[k] === "\\") {
+        k += 1;
+      }
+      w += line[k] ?? "";
+    }
+    return k >= line.length ? "an unclosed quote" : [w, k];
+  }
+  function check(words) {
+    const [cmd, ...args] = words;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
+      return "a variable set before a command";
+    }
+    if (cmd.includes("/")) {
+      return "a program by its path (" + cmd + ")";
+    }
+    if (PLAIN.has(cmd)) {
+      return null;
+    }
+    switch (cmd) {
+      case "sort": {
+        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+      }
+      case "tree": {
+        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+      }
+      case "uniq": {
+        return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
+      }
+      case "rg": {
+        return args.some((a) => a === "--pre" || a.startsWith("--pre=") || a === "--pre-glob" || a.startsWith("--pre-glob=")) ? "rg --pre runs another program" : null;
+      }
+      case "find": {
+        const act = args.find((a) => FIND_WRITES.has(a));
+        return act === undefined ? null : "find " + act + " writes or runs";
+      }
+      case "git": {
+        const sub = args[0];
+        if (sub === undefined || sub.startsWith("-")) {
+          return "git with options before its subcommand";
+        }
+        if (!GIT.has(sub)) {
+          return "git " + sub + " is not one that only reads";
+        }
+        const rest = args.slice(1);
+        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+          return "git " + sub + " with an option that writes or runs";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+          return "git " + sub + " that makes, moves or deletes one";
+        }
+        return null;
+      }
+      default: {
+        return cmd + " is not on plan mode's read-only list";
+      }
+    }
+  }
+})(Modes ||= {});
+
 // Call.ts
 var SHORT = 60;
 var CALL = /^(\S+) (\{[\s\S]*)$/;
 var MCP = /^mcp__.+?__/;
-var READS = new Map([
+var READS2 = new Map([
   ["shell", (x) => ({ head: String(x.command ?? ""), blocks: [] })],
   ["read", (x) => ({ head: String(x.path ?? "") + lines_show(x.offset, x.limit), blocks: [] })],
   ["write", (x) => ({ head: String(x.path ?? ""), blocks: [] })],
@@ -399,7 +629,7 @@ function call_parse(text) {
   }
   const name = m[1].replace(MCP, "");
   const { device, ...rest } = input;
-  const shown = (READS.get(name) ?? input_shown)(rest);
+  const shown = (READS2.get(name) ?? input_shown)(rest);
   return { name, device: typeof device === "string" ? device : "", ...shown };
 }
 function call_line(c) {
@@ -675,42 +905,42 @@ function block_parse(lines, i) {
     return [null, i + 1];
   }
   if (FENCE.test(line)) {
-    const end2 = runs((l) => !FENCE.test(l));
+    const end = runs((l) => !FENCE.test(l));
     const k = line.trim().slice(3).trim();
-    const x2 = lines.slice(i + 1, end2).join(`
+    const x = lines.slice(i + 1, end).join(`
 `);
-    return [{ $: "Code", k, x: x2 }, end2 + 1];
+    return [{ $: "Code", k, x }, end + 1];
   }
   if (head !== null) {
-    const x2 = span_parse(head[2]);
-    return [{ $: "Head", k: head[1].length, x: x2 }, i + 1];
+    const x = span_parse(head[2]);
+    return [{ $: "Head", k: head[1].length, x }, i + 1];
   }
   if (RULE.test(line)) {
     return [{ $: "Rule" }, i + 1];
   }
   if (QUOT.test(line)) {
-    const end2 = runs((l) => QUOT.test(l));
-    const body = lines.slice(i, end2).map((l) => l.replace(QUOT, ""));
+    const end = runs((l) => QUOT.test(l));
+    const body = lines.slice(i, end).map((l) => l.replace(QUOT, ""));
     return [{ $: "Quot", x: md_parse(body.join(`
-`)) }, end2];
+`)) }, end];
   }
   if (numbered !== null) {
     const item = (l) => list_numbered(l) === numbered;
-    const end2 = runs((l) => item(l) || MORE.test(l));
+    const end = runs((l) => item(l) || MORE.test(l));
     const items = [];
-    for (const l of lines.slice(i, end2)) {
+    for (const l of lines.slice(i, end)) {
       if (item(l)) {
         items.push(l.replace(LIST, ""));
       } else {
         items[items.length - 1] += " " + l.trim();
       }
     }
-    return [{ $: "List", k: numbered, x: items.map(span_parse) }, end2];
+    return [{ $: "List", k: numbered, x: items.map(span_parse) }, end];
   }
   if (ROW.test(line) && BAR.test(lines[i + 1] ?? "")) {
-    const end2 = lines_run(lines, i + 1, (l) => ROW.test(l));
-    const rows = [line, ...lines.slice(i + 2, end2)];
-    return [{ $: "Tabl", x: rows.map(row_cells) }, end2];
+    const end = lines_run(lines, i + 1, (l) => ROW.test(l));
+    const rows = [line, ...lines.slice(i + 2, end)];
+    return [{ $: "Tabl", x: rows.map(row_cells) }, end];
   }
   const end = runs((l, j) => l.trim() !== "" && !block_starts(lines, j));
   const x = lines.slice(i, end).map(span_parse);
@@ -753,25 +983,25 @@ var EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 var SPEEDS = ["slow", "fast", "ultrafast"];
 var LABELS = [...new Set(Object.values(MODELS).flat().map((m) => m.label))];
 var Pick;
-((Pick) => {
-  function model(vendor, label2) {
-    return MODELS[vendor].find((m) => m.label === label2);
+((Pick2) => {
+  function model(vendor, label) {
+    return MODELS[vendor].find((m) => m.label === label);
   }
-  Pick.model = model;
-  function on(pick, vendor, model2) {
+  Pick2.model = model;
+  function on(pick, vendor, model) {
     const below = SPEEDS.slice(0, SPEEDS.indexOf(pick.speed) + 1);
-    const speed = below.filter((s) => model2.speeds.includes(s)).pop() ?? "slow";
-    return { ...pick, vendor, model: model2.label, speed };
+    const speed = below.filter((s) => model.speeds.includes(s)).pop() ?? "slow";
+    return { ...pick, vendor, model: model.label, speed };
   }
-  Pick.on = on;
+  Pick2.on = on;
   function models(vendors, labels) {
     return vendors.flatMap((v) => MODELS[v].filter((m) => labels.includes(m.label)).map((m) => [v, m]));
   }
-  Pick.models = models;
-  function options(pick, move2, { vendors, models: models2 }) {
+  Pick2.models = models;
+  function options(pick, move, { vendors, models }) {
     const speeds = Pick.model(pick.vendor, pick.model)?.speeds ?? [];
-    const all = (vs) => Pick.models(vs, models2).map(([v, m]) => [m.label, Pick.on(pick, v, m)]);
-    switch (move2) {
+    const all = (vs) => Pick.models(vs, models).map(([v, m]) => [m.label, Pick.on(pick, v, m)]);
+    switch (move) {
       case "next":
       case "prev":
       case "model": {
@@ -787,40 +1017,40 @@ var Pick;
       }
     }
   }
-  Pick.options = options;
-  function move(pick, move2, offer, to) {
-    const list = Pick.options(pick, move2, offer);
+  Pick2.options = options;
+  function move(pick, move, offer, to) {
+    const list = Pick.options(pick, move, offer);
     const n = list.length;
     const at = list.findIndex(([, p]) => Pick.label(p) === Pick.label(pick));
-    const d = move2 === "prev" || move2 === "down" ? -1 : 1;
-    const ends = move2 === "up" || move2 === "down";
+    const d = move === "prev" || move === "down" ? -1 : 1;
+    const ends = move === "up" || move === "down";
     const next = ends ? Math.max(0, Math.min(n - 1, at + d)) : (at + d + n) % n;
     const like = list.filter(([part]) => part.toLowerCase().includes(String(to).toLowerCase()));
     const hit = to === undefined ? list[next] : list.find(([part]) => part === to) ?? (like.length === 1 ? like[0] : undefined);
     return hit === undefined ? null : hit[1];
   }
-  Pick.move = move;
+  Pick2.move = move;
   function label(pick) {
     return [pick.vendor, pick.model, pick.effort, pick.speed].join(":");
   }
-  Pick.label = label;
+  Pick2.label = label;
   function ask(pick) {
-    const model2 = Pick.model(pick.vendor, pick.model);
-    return { ...pick, model: model2?.id ?? pick.model };
+    const model = Pick.model(pick.vendor, pick.model);
+    return { ...pick, model: model?.id ?? pick.model };
   }
-  Pick.ask = ask;
+  Pick2.ask = ask;
   function read(x, offer) {
-    const model2 = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
-    if (model2 === undefined || !EFFORTS.includes(x.effort) || !model2.speeds.includes(x.speed)) {
+    const model = offer.vendors.includes(x.vendor) && offer.models.includes(x.model) ? Pick.model(x.vendor, x.model) : undefined;
+    if (model === undefined || !EFFORTS.includes(x.effort) || !model.speeds.includes(x.speed)) {
       return null;
     }
     return { vendor: x.vendor, model: x.model, effort: x.effort, speed: x.speed };
   }
-  Pick.read = read;
+  Pick2.read = read;
   function load(saved, offer, def) {
     return Pick.read(saved ?? def, offer) ?? def;
   }
-  Pick.load = load;
+  Pick2.load = load;
 })(Pick ||= {});
 
 // Price.ts
@@ -842,31 +1072,31 @@ var MINUTES = {
 };
 var SPEEDS2 = { slow: 1, fast: 2, ultrafast: 6 };
 var Price;
-((Price) => {
+((Price2) => {
   function usage(speed) {
     return { input: 0, write: 0, read: 0, output: 0, searches: 0, seconds: 0, speed };
   }
-  Price.usage = usage;
+  Price2.usage = usage;
   function rate(model) {
     return RATES[model];
   }
-  Price.rate = rate;
+  Price2.rate = rate;
   function times(speed) {
     return SPEEDS2[speed] ?? 1;
   }
-  Price.times = times;
+  Price2.times = times;
   function cost(model, use) {
     const long = use.input + use.write + use.read > PROMPT ? LONG[model] : undefined;
-    const rate2 = long ?? RATES[model];
+    const rate = long ?? RATES[model];
     const minute = MINUTES[model];
-    if (rate2 === undefined && minute === undefined) {
+    if (rate === undefined && minute === undefined) {
       throw new Error("no price for " + model);
     }
-    const tokens = rate2 === undefined ? 0 : use.input * rate2.input + use.write * rate2.write + use.read * rate2.read + use.output * rate2.output;
+    const tokens = rate === undefined ? 0 : use.input * rate.input + use.write * rate.write + use.read * rate.read + use.output * rate.output;
     const audio = minute === undefined ? 0 : use.seconds / 60 * minute * 1e6;
     return Math.ceil(tokens * Price.times(use.speed) + use.searches * SEARCH * 1e6 + audio);
   }
-  Price.cost = cost;
+  Price2.cost = cost;
 })(Price ||= {});
 
 // View.ts
@@ -875,7 +1105,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var MAIN = "UniiChat";
+var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
 var PING = 1e4;
@@ -883,7 +1113,7 @@ var RETRY = 1000;
 var TICK = "+";
 var MOVE = 4001;
 var FRAME = 2 ** 22;
-var HINT = "Message UniiChat";
+var HINT = "Message Legion";
 var AI = "Unii is an AI, not a person, and can make mistakes.";
 var NOTICE = 3 * 60 * 60 * 1000;
 var WAIT = "compressing…";
@@ -904,11 +1134,15 @@ var SERVED = {
 function Cap(text) {
   return { $: "Cap", text };
 }
+var CREW = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+var STATUSES2 = ["asking", "failed", "working", "waiting", "stopped", "done"];
+var ALERT_GAP = 20000;
 function view_new() {
   return {
     busy: false,
     wait: "",
     agents: [],
+    crew: [],
     pick: null,
     vendors: [],
     models: LABELS,
@@ -925,6 +1159,10 @@ function view_new() {
     minds: new Map,
     pages: new Map,
     page: null,
+    expanded: new Set,
+    pulses: new Map,
+    heard: null,
+    alerted: new Map,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -973,7 +1211,7 @@ function view_hear(v, msg) {
     }
     case "state": {
       const { $, ...state } = msg;
-      Object.assign(v, state);
+      Object.assign(v, state, { crew: state.crew ?? [] });
       return [];
     }
     case "agent": {
@@ -994,6 +1232,10 @@ function view_hear(v, msg) {
     }
     case "note": {
       v.notes.push(msg.text);
+      return [];
+    }
+    case "pulse": {
+      v.pulses.set(msg.name, msg);
       return [];
     }
     case "ack": {
@@ -1017,11 +1259,24 @@ function view_act(v, act) {
       if (!view_typing(v)) {
         return [];
       }
+      if (text.startsWith("!")) {
+        const command = text.slice(1).trim();
+        v.notes.push(...command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []);
+        return command === "" ? [] : [{ $: "bang", command }];
+      }
+      if (v.page !== null) {
+        return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
+      }
       if (text === "" && images.length === 0) {
         return v.busy ? [{ $: "stop", name: TURN }] : [];
       }
       if (word === "/halt") {
         return [{ $: "goal", text: null }];
+      }
+      if (word === "/agent") {
+        const task = text.slice(word.length).trim();
+        v.notes.push(...task === "" ? ["/agent needs a task: /agent <task>."] : []);
+        return task === "" ? [] : [{ $: "spawn", task }];
       }
       if (goal === "") {
         v.notes.push("/goal needs one: /goal <message>.");
@@ -1065,6 +1320,42 @@ function view_act(v, act) {
       v.open.clear();
       v.fold = act.on ? [] : null;
       return act.on ? [{ $: "root" }] : [];
+    }
+    case "Dismiss": {
+      return [{ $: "dismiss", name: act.name }];
+    }
+    case "Approve": {
+      return [{ $: "approve", name: act.name, yes: act.yes }];
+    }
+    case "Stop": {
+      return [{ $: "stop", name: act.name }];
+    }
+    case "Tell": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "tell", name: act.name, text }];
+    }
+    case "Answer": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "answer", q: act.q, text }];
+    }
+    case "Drop": {
+      return [{ $: "answer", q: act.q }];
+    }
+    case "Mode": {
+      return [{ $: "mode", mode: act.mode ?? Modes.next(Modes.read(v.mode)) }];
+    }
+    case "Verdict": {
+      const text = (act.text ?? "").trim();
+      return [{ $: "plan", yes: act.yes, ...act.mode === undefined ? {} : { mode: act.mode }, ...text === "" ? {} : { text } }];
+    }
+    case "Consent": {
+      return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Expand": {
+      if (!v.expanded.delete(act.name)) {
+        v.expanded.add(act.name);
+      }
+      return [];
     }
     case "Goto": {
       if (act.name === null) {
@@ -1123,7 +1414,8 @@ function progress_need(p, credits) {
 }
 function view_tabs(v) {
   const at = v.page === null ? null : v.page.name;
-  const names = at === null || v.agents.includes(at) ? v.agents : [...v.agents, at];
+  const known = v.crew.length > 0 ? view_crew(v, 0).map((r) => r.name) : v.agents;
+  const names = at === null || known.includes(at) ? known : [...known, at];
   return [null, ...names].map((name) => {
     const here = name === at;
     const text = (here ? GLYPH.here : GLYPH.tab) + " " + (name ?? MAIN);
@@ -1136,8 +1428,179 @@ function view_fold(v) {
   }
   return v.fold === null ? "fold all" : "unfold all";
 }
-function view_typing(v) {
-  return v.page === null;
+function view_typing(_v) {
+  return true;
+}
+function view_crew(v, now) {
+  const known = new Set(v.crew.map((c) => c.name));
+  const kids = (parent) => v.crew.filter((c) => c.parent === parent || parent === "main" && !known.has(c.parent)).filter((c) => c.name !== parent).sort((a, b) => STATUSES2.indexOf(a.status) - STATUSES2.indexOf(b.status) || b.since - a.since);
+  const rows = [];
+  const add = (parent, depth) => {
+    for (const c of kids(parent)) {
+      if (rows.length < v.crew.length && !rows.some((r) => r.name === c.name)) {
+        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + view_label(c) + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
+        add(c.name, depth + 1);
+      }
+    }
+  };
+  add("main", 0);
+  return rows;
+}
+function view_todo(c) {
+  const list = c.todo ?? [];
+  return list.length === 0 ? "" : list.filter((x) => x.status === "done").length + "/" + list.length;
+}
+function view_label(c) {
+  const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";
+  return (c.title === undefined ? c.name : c.title + " (" + c.name + ")") + repos;
+}
+function view_alerts(v, now) {
+  const was = v.heard;
+  v.heard = { busy: v.busy, status: new Map(v.crew.map((c) => [c.name, c.status])) };
+  if (was === null) {
+    return [];
+  }
+  const fresh = (status) => v.crew.filter((c) => c.status === status && was.status.get(c.name) !== status);
+  const asks = fresh("asking").map((c) => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
+  const failed = [...asks, ...fresh("failed").map((c) => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
+  const ended = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  const asked = view_questions(v).map((q) => ({ key: "question " + q.id, title: MAIN + " asks", body: q.text.split(`
+`)[0].slice(0, 200), name: null }));
+  const plan = v.plan ? [{ key: "plan " + v.plan.date, title: "Plan ready", body: MAIN + "'s plan waits for your approval (/plan).", name: null }] : [];
+  const calls = (v.calls ?? []).map((c) => ({ key: "call " + c.id + " " + c.what, title: c.who + " wants to run a command", body: c.what.slice(0, 200) + ": /allow " + c.id + " or /refuse " + c.id + ".", name: null }));
+  const once = [...asked, ...plan, ...calls].filter((a) => !v.alerted.has(a.key));
+  once.forEach((a) => v.alerted.set(a.key, now));
+  return [...failed, ...ended].filter((a) => {
+    const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
+    if (due) {
+      v.alerted.set(a.key, now);
+    }
+    return due;
+  }).concat(once);
+}
+function view_tree(v, now) {
+  const rows = view_crew(v, now);
+  const up = new Map(v.crew.map((c) => [c.name, c.parent]));
+  const focus = new Set;
+  for (let at = up.get(v.page?.name ?? ""), k = 0;at !== undefined && k < rows.length; k++) {
+    focus.add(at);
+    at = up.get(at);
+  }
+  const out = [];
+  let shut = Infinity;
+  rows.forEach((r, i) => {
+    if (r.depth > shut) {
+      return;
+    }
+    shut = Infinity;
+    const end = rows.findIndex((s, j) => j > i && s.depth <= r.depth);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const open2 = under.length > 0 && (v.expanded.has(r.name) || focus.has(r.name));
+    out.push({ ...r, kids: under.length, rollup: rollup(under), open: open2 });
+    if (under.length > 0 && !open2) {
+      shut = r.depth;
+    }
+  });
+  return out;
+}
+var ROLLUP = ["working", "waiting", "asking", "failed", "stopped", "done"];
+function rollup(crew) {
+  return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length]).filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+var STALL = 120000;
+var LANE = { user: "told", tool: "tool", unii: "words", work: "words", note: "note", echo: "note" };
+function view_lane(v, now) {
+  const page = v.page;
+  if (page === null) {
+    return [];
+  }
+  const line = (text) => text.split(`
+`).map((l) => l.trim()).filter((l) => l !== "").at(-1)?.slice(0, 120) ?? "";
+  const said = (page.log ?? []).flatMap((e, k) => {
+    const t = Date.parse(e.date ?? "");
+    const kind = LANE[e.kind];
+    return kind === undefined || Number.isNaN(t) ? [] : [{ k, at: 0, kind, label: line(e.text), t }];
+  });
+  const kids = v.crew.filter((c) => c.parent === page.name).map((c) => ({ k: null, at: 0, kind: "spawn", label: "started " + c.name, t: c.since }));
+  const marks = [...said, ...kids].sort((a, b) => a.t - b.t);
+  if (marks.length === 0) {
+    return [];
+  }
+  const busy = v.crew.some((c) => c.name === page.name && (c.status === "working" || c.status === "waiting"));
+  const end = busy ? Math.max(now, marks[marks.length - 1].t) : marks[marks.length - 1].t;
+  const quiet = (a, b) => b - a > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(b - a), t: (a + b) / 2 }] : [];
+  const all = marks.flatMap((m, i) => i === 0 ? [m] : [...quiet(marks[i - 1].t, m.t), m]);
+  const tail = busy && end - marks[marks.length - 1].t > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(end - marks[marks.length - 1].t), t: end }] : [];
+  const t0 = marks[0].t;
+  return [...all, ...tail].map((m) => ({ ...m, at: end === t0 ? 0 : (m.t - t0) / (end - t0) }));
+}
+var WATCH = 16;
+function view_watch(v, tiles = []) {
+  return [...new Set([...v.page === null ? [] : [v.page.name], ...tiles])].slice(0, WATCH);
+}
+function view_tiles(v, now) {
+  const rows = view_crew(v, now);
+  return rows.flatMap((r, i) => {
+    if (r.depth > 0) {
+      return [];
+    }
+    const end = rows.findIndex((s, j) => j > i && s.depth === 0);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const { depth, text, ...crew } = r;
+    return [{ ...crew, dots: under.map((u) => ({ name: u.name, status: u.status })), rollup: rollup(under) }];
+  });
+}
+function view_needs(v) {
+  return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
+}
+function view_pill(v) {
+  const asked = view_questions(v).length + view_waiting(v);
+  if (v.crew.length === 0) {
+    return asked > 0 ? asked + " need you" : "";
+  }
+  const need = view_needs(v).length + asked;
+  return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+function status_text(s) {
+  const usd = (n) => n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2);
+  return [
+    ...s.up ? [] : ["offline"],
+    s.dir + (s.branch === null ? "" : " ⎇ " + s.branch),
+    s.model,
+    ...s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"],
+    ...s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"],
+    ...s.mode === undefined ? [] : [s.mode + " mode"],
+    ...!s.waiting ? [] : [s.waiting + " waiting for you"],
+    ...!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]
+  ].join(" · ");
+}
+function view_status(v) {
+  const s = v.status;
+  if (s === undefined || s === null) {
+    return "";
+  }
+  const spend = { spend: s.spend, stale: s.stale };
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v) });
+}
+function view_waiting(v) {
+  return (v.plan ? 1 : 0) + (v.calls ?? []).length;
+}
+function view_questions(v) {
+  return [...v.questions ?? []].sort((a, b) => a.id - b.id);
+}
+function view_route(hash) {
+  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  if (m === null || m[1] === "chat") {
+    return { mode: "chat", name: null };
+  }
+  return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
+}
+function view_hash(mode, name) {
+  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+}
+function ago(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
 }
 function view_pick(v) {
   if (v.pick === null) {
@@ -1282,8 +1745,8 @@ function part_rows(v, id, n, t, talk) {
   }
   const text = n === 1 ? "fold" : GLYPH.open + " " + n + "x · fold";
   if (n > 1) {
-    const rows2 = [...part_rows(v, id, half, t, talk), ...part_rows(v, id + half, half, t, talk)];
-    return [{ $: "Box", id, n, text, rows: rows2 }];
+    const rows = [...part_rows(v, id, half, t, talk), ...part_rows(v, id + half, half, t, talk)];
+    return [{ $: "Box", id, n, text, rows }];
   }
   const rows = entry === undefined ? [] : whole_rows(id, entry);
   return [{ $: "Box", id, n, text, rows }];
@@ -1446,6 +1909,115 @@ function pick_html(fold, on, knobs) {
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
   return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => i === 0 ? [part] : [`<span class="dot">·</span>`, part])];
 }
+function acts_html(c) {
+  const x = (label, title, a, cls = "") => `<button class="x${cls}" title="${title}"${act_html(a)}>${label}</button>`;
+  switch (c.status) {
+    case "working":
+    case "waiting":
+      return x("■", "stop", { $: "Stop", name: c.name });
+    case "asking":
+      return x("✓", "approve", { $: "Approve", name: c.name, yes: true }, " yes") + x("×", "deny", { $: "Approve", name: c.name, yes: false });
+    default:
+      return x("×", "dismiss", { $: "Dismiss", name: c.name });
+  }
+}
+function who_html(c, chips = true) {
+  return `<b>${esc(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
+}
+function repos_html(c) {
+  return (c.repos ?? []).map((r) => `<span class="repo">${esc(r)}</span>`).join("");
+}
+function also(c) {
+  return c.title === undefined ? "" : c.name + " · ";
+}
+function focus_href(name) {
+  return ` href="${esc(view_hash("crew", name))}"`;
+}
+function tree_html(v, now) {
+  return view_tree(v, now).map((r) => {
+    const here = v.page?.name === r.name ? " here" : "";
+    const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
+    const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
+    const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
+    const what = `<span class="st">${CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc(info)}</span>`;
+    const repos = (r.repos ?? []).length === 0 ? "" : " · " + r.repos.join(", ");
+    const title = esc(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
+  });
+}
+function line_html(v, c) {
+  const p = v.pulses.get(c.name);
+  const at = c.status === "working" || c.status === "waiting" || c.status === "asking";
+  const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
+  return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
+}
+function grid_html(v, now) {
+  return view_tiles(v, now).map((t) => {
+    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
+    const todo = view_todo(t);
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc(todo)}</span>`}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const repos = repos_html(t);
+    const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
+    const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${repos === "" ? "" : `<div class="repos">${repos}</div>`}${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+  });
+}
+function lane_html(v, now) {
+  const marks = view_lane(v, now);
+  if (marks.length === 0) {
+    return "";
+  }
+  const pct = (at) => Math.round(at * 1000) / 10 + "%";
+  const mk = marks.map((m) => {
+    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
+    return m.k === null ? `<span ${attrs}></span>` : `<button ${attrs} data-seek="${m.k}"></button>`;
+  });
+  return `<div class="lane">${mk.join("")}</div>`;
+}
+function needs_html(v) {
+  const plan = v.plan ? [`<div class="need question"><a href="#chat" data-qs-open><b>Plan ready</b> <span class="meta">waiting for your approval</span></a></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc(c.who)} wants to run</b> <span class="meta">${esc(c.what.slice(0, 80))}</span></a></div>`);
+  const asked = [...plan, ...calls, ...view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split(`
+`)[0])}</b> <span class="meta">question ${q.id}</span></a></div>`)];
+  return [...asked, ...view_needs(v).map((c) => {
+    const why = c.status === "asking" ? "asks to start" : "failed";
+    const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
+  })];
+}
+function waiting_html(v) {
+  const b = (label, a, cls = "qo") => `<button class="${cls}"${act_html(a)}>${label}</button>`;
+  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
+  return [...plan, ...calls];
+}
+function questions_html(v) {
+  return view_questions(v).map((q) => {
+    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
+    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
+    return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
+  });
+}
+function focus_html(v) {
+  const name = v.page?.name ?? null;
+  if (name === null) {
+    return `<div class="focus"><b>${esc(MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
+  }
+  const c = v.crew.find((x) => x.name === name);
+  if (c === undefined) {
+    return `<div class="focus"><b>${esc(name)}</b></div>`;
+  }
+  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
+}
+function mode_html(mode, pill, asked = 0, perm) {
+  const here = (m) => m === mode ? ` class="here"` : "";
+  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
+  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
+}
 function tabs_html(tabs) {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";
@@ -1549,7 +2121,7 @@ function spans_html(spans) {
 function span_html(s) {
   switch (s.$) {
     case "Text": {
-      return esc(s.x).replaceAll("UniiChat", `<span class="brand">UniiChat</span>`);
+      return esc(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
     }
     case "Code": {
       return `<code>${esc(s.x)}</code>`;
@@ -1572,6 +2144,7 @@ function span_html(s) {
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
 var DESK = matchMedia("(hover: hover)");
+var TERMINAL = "Signed in from a terminal? Run `legion web` there and this page opens signed in.";
 var EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 var GUEST_AI = `By signing in, you accept the <a href="/terms.html" target="_blank">terms</a> and <a href="/privacy.html" target="_blank">privacy policy</a>, and that Anthropic's and OpenAI's models answer you.`;
 var SENT = (email) => `Thanks! I sent a link to ${email}. Open it, and we'll go on from here.`;
@@ -1580,9 +2153,10 @@ var PAYING = "Waiting for your payment in the new tab…";
 var PAID = new BroadcastChannel("unii.paid");
 var SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
-  <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
+  <div class="scene"><i class="mark"></i><h1>Legion</h1></div>`;
 var v = view_new();
 var BOX = $("textarea");
+var DEMO = new URLSearchParams(location.search).get("demo") === "1" ? demo_crew(Date.now()) : null;
 var BACK = $("#import [name=back]");
 var P = {
   id: "",
@@ -1598,7 +2172,12 @@ var P = {
   found: new Map,
   done: {},
   off: new Set,
-  step: ""
+  step: "",
+  crew: false,
+  g: 0,
+  watching: "",
+  watched: null,
+  qhide: false
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -1609,19 +2188,19 @@ function kept(fact) {
 async function boot() {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   const q = new URLSearchParams(location.search);
-  history.replaceState(null, "", location.pathname === "/account" ? "/account" : "/");
+  history.replaceState(null, "", (location.pathname === "/account" ? "/account" : "/") + location.hash);
   if (q.has("terminal")) {
     solo("Your terminal is signed in.", "You can close this tab and go back to it.");
     return;
   }
   if (q.has("deleted")) {
-    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to UniiChat</a>`);
+    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to Legion</a>`);
     return;
   }
   if (q.get("paid") === "tab") {
     PAID.postMessage(true);
     close();
-    solo("Payment received.", "Close this tab: your import starts in the UniiChat tab you came from.");
+    solo("Payment received.", "Close this tab: your import starts in the Legion tab you came from.");
     return;
   }
   const me = await boot_me();
@@ -1670,6 +2249,8 @@ async function guest(expired) {
   P.end = false;
   guest_say(hello + `
 
+` + TERMINAL + `
+
 ` + (expired ? EXPIRED : email_ask(ask)));
 }
 async function guest_send(text) {
@@ -1698,13 +2279,18 @@ function chat() {
     draw(true);
   };
   BOX.onkeydown = (ev) => {
+    if (ev.key === "Tab" && ev.shiftKey && !P.guest) {
+      ev.preventDefault();
+      act({ $: "Mode" });
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && (DESK.matches || P.guest)) {
       ev.preventDefault();
       submit();
     }
   };
   BOX.onpaste = (ev) => attach([...ev.clipboardData?.files ?? []]);
-  $("form").onsubmit = (ev) => {
+  $("form.composer").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
   };
@@ -1724,6 +2310,12 @@ function chat() {
     attach([...ev.dataTransfer?.files ?? []]);
   };
   document.onclick = click;
+  onhashchange = crew_route;
+  $("#grid").onsubmit = tell;
+  $("#questions").onsubmit = answer;
+  $("#crew").addEventListener("click", seek);
+  document.addEventListener("keydown", crew_keys);
+  crew_route();
   visualViewport.onresize = () => draw(true);
   document.onscroll = () => {
     P.end = innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
@@ -1788,14 +2380,25 @@ function pics(imgs) {
 }
 function act(a) {
   const said = a.$ === "Send" ? a.text.trim() : "";
+  if (a.$ === "Send" && "Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
   for (const msg of view_act(v, a)) {
     link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
   }
+  if (a.$ === "Goto") {
+    crew_sync();
+  }
   draw(a.$ === "Send");
 }
 function click(ev) {
+  const qs = ev.target.closest("[data-qs], [data-qs-open]");
+  if (qs !== null) {
+    P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
+    paint();
+  }
   const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
   if (el === null || sel !== null && !sel.isCollapsed && el.contains(sel.focusNode)) {
@@ -1831,7 +2434,7 @@ async function mic() {
   }
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
   if (stream === null) {
-    toast("UniiChat can't use the microphone.");
+    toast("Legion can't use the microphone.");
     return;
   }
   const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
@@ -1883,8 +2486,8 @@ function meter(stream, rec) {
   requestAnimationFrame(frame);
 }
 function words(audio) {
-  const act2 = { $: "voice", type: audio.type, body: () => audio };
-  link_send(v, act2, heard);
+  const act = { $: "voice", type: audio.type, body: () => audio };
+  link_send(v, act, heard);
   draw(false);
 }
 function heard(out) {
@@ -1922,13 +2525,57 @@ function hear(msg) {
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
   }
+  if (msg.$ === "agent") {
+    crew_sync();
+  }
+  if (DEMO !== null && msg.$ === "state") {
+    v.crew = DEMO;
+    demo_pulses(DEMO).forEach((p) => view_hear(v, p));
+  }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
     toast("Now " + now.map((k) => k.hint).join("; ") + ".");
   }
   P.rows ||= msg.$ === "state" ? v.agents.join() !== agents : msg.$ !== "delta" && msg.$ !== "live";
+  if (msg.$ === "state") {
+    view_alerts(v, Date.now()).forEach(notify);
+  }
   import_welcome();
   draw(true);
+}
+function notify(alert) {
+  if (!document.hidden) {
+    return;
+  }
+  chime();
+  if (!("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
+  note.onclick = () => {
+    window.focus();
+    act({ $: "Goto", name: alert.name });
+    note.close();
+  };
+}
+var AUDIO = null;
+function chime() {
+  try {
+    AUDIO ??= new AudioContext;
+    AUDIO.resume();
+    const at = AUDIO.currentTime;
+    for (const [k, hz] of [660, 990].entries()) {
+      const osc = AUDIO.createOscillator();
+      const gain = AUDIO.createGain();
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, at + k * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.15, at + k * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + k * 0.14 + 0.3);
+      osc.connect(gain).connect(AUDIO.destination);
+      osc.start(at + k * 0.14);
+      osc.stop(at + k * 0.14 + 0.32);
+    }
+  } catch {}
 }
 function importer() {
   const form = $("#import form");
@@ -2267,9 +2914,109 @@ function bars() {
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_pick(v)));
-  $("#tabs").hidden = tabs.length < 2;
-  markup($("#tabs"), tabs_html(tabs));
+  const crew = v.crew.length > 0;
+  $("#tabs").hidden = crew || tabs.length < 2;
+  markup($("#tabs"), crew ? [] : tabs_html(tabs));
+  $("#status").textContent = P.guest ? "" : view_status(v);
+  crew_bars();
   import_bar();
+}
+function crew_route() {
+  const r = view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+    act({ $: "Goto", name: r.name });
+  }
+  P.crew = r.mode === "crew";
+  draw(true);
+}
+function crew_bars() {
+  const mode = view_route(location.hash).mode;
+  const crew = mode === "crew";
+  document.body.classList.toggle("crewmode", crew && !P.guest);
+  const asked = view_questions(v).length + view_waiting(v);
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode));
+  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  document.body.classList.toggle("qmode", pane);
+  $("#questions").hidden = !pane;
+  markup($("#questions"), pane ? [...waiting_html(v), ...questions_html(v)] : []);
+  $("#crew").hidden = !crew;
+  if (!crew) {
+    document.body.classList.remove("gridmode");
+    $("#grid").hidden = true;
+    watch();
+    return;
+  }
+  markup($("#crew .needs"), needs_html(v));
+  markup($("#crew .card"), [focus_html(v), lane_html(v, Date.now())].filter((h) => h !== ""));
+  markup($("#crew .tree"), tree_html(v, Date.now()));
+  const grid = v.page === null;
+  document.body.classList.toggle("gridmode", grid);
+  $("#grid").hidden = !grid;
+  if (grid) {
+    markup($("#grid"), grid_html(v, Date.now()));
+  }
+  watch();
+}
+function crew_sync() {
+  const r = view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "crew" && r.name !== at) {
+    history.replaceState(null, "", location.pathname + location.search + view_hash("crew", at));
+  }
+}
+function watch() {
+  const tiles = $("#grid").hidden ? [] : [...$("#grid").querySelectorAll("form.tell")].filter(seen).map((f) => f.dataset.tell);
+  const names = view_watch(v, tiles);
+  const key = names.join(`
+`);
+  if (key !== P.watching || v.ws !== P.watched) {
+    P.watching = key;
+    P.watched = v.ws;
+    link_send(v, { $: "watch", names });
+  }
+}
+function seen(el) {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < innerHeight;
+}
+function seek(ev) {
+  const k = ev.target.closest("[data-seek]")?.dataset.seek;
+  const row = k === undefined ? undefined : $("#log .rows").children[Number(k) + 1];
+  row?.scrollIntoView({ block: "center" });
+  row?.classList.add("flash");
+  setTimeout(() => row?.classList.remove("flash"), 1200);
+}
+function tell(ev) {
+  const form = ev.target.closest("form.tell");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input");
+  act({ $: "Tell", name: form.dataset.tell, text: input.value });
+  input.value = "";
+}
+function answer(ev) {
+  const form = ev.target.closest("form.qa");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input");
+  act(form.dataset.verdict !== undefined ? { $: "Verdict", yes: false, text: input.value } : { $: "Answer", q: Number(form.dataset.q), text: input.value });
+  input.value = "";
+}
+function crew_keys(ev) {
+  const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;
+  if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat" }[ev.key] : undefined;
+  P.g = ev.key === "g" ? Date.now() : 0;
+  if (to !== undefined) {
+    location.hash = to;
+  }
 }
 function anchor() {
   for (const r of document.querySelectorAll("#log [data-a]")) {

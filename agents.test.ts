@@ -1,0 +1,557 @@
+// Agents' memory test
+// ===================
+// `bun test agents.test.ts`. An agent's log is a tree of its own
+// (Memory.ts, docs/agent/<Name>/), compressed as the chat's is: its ask
+// carries its summaries' lines and only its latest messages raw. An old
+// agent's log (docs/agent/<Name>.jsonl) is still read, and moves onto a
+// tree only when the agent logs again. A chat moving to another process
+// takes its agents' running summaries along, as its own. The vendor is
+// a fake Anthropic answering each summary with a line.
+
+import { expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+
+const DIR = fs.mkdtempSync(os.tmpdir() + "/unii-agents-");
+
+process.env.UNII_DIR = DIR;
+
+const config = await import("./Config.ts");
+config.KEYS.anthropic = "test";
+
+const { Memory, OPEN } = await import("./Memory.ts");
+const { MASTER } = await import("./Tools.ts");
+
+const SHARE = { vendor: "claude-api" as const, model: "claude-opus-5-5", effort: "medium", speed: "slow", system: MASTER, searches: 1, server: "" };
+
+const real = { setTimeout, fetch };
+
+// summaries asked, and those held unanswered till `release`
+let asked = 0;
+let hold = false;
+const held: Array<() => void> = [];
+
+function answer(text: string): Response {
+  const events = [
+    { type: "message_start", message: { usage: {} } },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 10 } },
+    { type: "message_stop" },
+  ];
+  return new Response(events.map((ev) => "data: " + JSON.stringify(ev) + "\n\n").join(""));
+}
+
+// the requests that weren't summaries (an agent's calls): their bodies
+const calls: any[] = [];
+
+// rolling: an agent's first call asks the date tool, its request told
+// as 200K tokens in (past config.ROLL)
+let rolling = false;
+
+// script: answers an agent's call by its body, instead of the above
+let script: ((body: any) => Response) | null = null;
+
+function tooled(name = "date", input: object = { id: 0 }, tokens = 200000): Response {
+  const events = [
+    { type: "message_start", message: { usage: { input_tokens: 2000, cache_read_input_tokens: tokens - 2000 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "t" + calls.length, name, input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 10 } },
+    { type: "message_stop" },
+  ];
+  return new Response(events.map((ev) => "data: " + JSON.stringify(ev) + "\n\n").join(""));
+}
+
+async function vendor(url: string, init: any): Promise<Response> {
+  if (String(url).startsWith("http://127.0.0.1:")) {
+    return real.fetch(url, init);
+  }
+  const body = JSON.parse(init.body);
+  const content = body.messages[0].content;
+  const task: string = content[content.length - 1].text;
+  if (!task.startsWith("Compaction:")) {
+    calls.push(body);
+    if (script !== null) {
+      return script(body);
+    }
+    return rolling && calls.length === 1 ? tooled() : answer("the report");
+  }
+  asked += 1;
+  if (hold) {
+    await new Promise<void>((ok) => held.push(ok));
+  }
+  return answer("line for " + task.split("\n")[0]);
+}
+
+// a request's text, its system prompt and messages
+function said(body: any): string {
+  const parts = (x: any): string => (typeof x === "string" ? x : Array.isArray(x) ? x.map(parts).join("") : x?.text ?? (x?.content ? parts(x.content) : ""));
+  return parts(body.system) + parts(body.messages);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((ok) => real.setTimeout(ok, ms));
+}
+
+async function until(done: () => boolean): Promise<void> {
+  for (let t = 0; t < 200 && !done(); t++) {
+    await sleep(10);
+  }
+  expect(done()).toBe(true);
+}
+
+async function faked(go: () => Promise<void>): Promise<void> {
+  globalThis.fetch = vendor as any;
+  try {
+    await go();
+  } finally {
+    globalThis.fetch = real.fetch;
+  }
+}
+
+const LONG = (k: number) => k + " " + "word ".repeat(200);
+
+test("an agent's log is a tree of its own: its ask has its summaries, only its latest messages raw", () => faked(async () => {
+  const mem = Memory.load(DIR + "/chat", () => SHARE);
+  const name = Memory.agent_new(mem);
+  Memory.agent_push(mem, name, "user", "the task");
+  for (let k = 0; k < 8; k++) {
+    Memory.agent_push(mem, name, "unii", LONG(k));
+  }
+  Memory.agent_push(mem, name, "user", "go on");
+  expect(fs.existsSync(DIR + "/chat/docs/agent/" + name + "/main.index")).toBe(true);
+  expect(Memory.agent(mem, name)!.map((root) => root.text)).toEqual(["the task", ...Array.from({ length: 8 }, (_, k) => LONG(k)), "go on"]);
+
+  const blocks = await Memory.agent_blocks(mem, name, new AbortController().signal);
+  expect(typeof blocks).not.toBe("string");
+  const seen = blocks as { view: Array<{ text: string }>; log: { text: string } };
+  const text = [...seen.view, seen.log].map((b) => b.text).join("");
+  expect(text).toContain("line for Compaction: compress message 1 ");
+  expect(text).not.toContain(LONG(0));
+  expect(text).toContain("go on");
+  // the chat's own tree is untouched
+  expect(mem.count).toBe(0);
+  Memory.stop(mem);
+}));
+
+test("an old agent's log is read as it is, and moves onto a tree when it logs again", () => faked(async () => {
+  const mem = Memory.load(DIR + "/old", () => SHARE);
+  fs.mkdirSync(DIR + "/old/docs/agent", { recursive: true });
+  const old = [Memory.root(0, { kind: "note", text: "a subagent" }), Memory.root(1, { kind: "user", text: "old task" })];
+  fs.writeFileSync(DIR + "/old/docs/agent/OldOne.jsonl", old.map((r) => JSON.stringify(r) + "\n").join(""));
+  const before = asked;
+
+  expect(Memory.agent(mem, "OldOne")!.map((r) => r.text)).toEqual(["a subagent", "old task"]);
+  expect(fs.existsSync(DIR + "/old/docs/agent/OldOne")).toBe(false);
+  expect(asked).toBe(before);
+
+  Memory.agent_push(mem, "OldOne", "user", "told again");
+  expect(Memory.agent(mem, "OldOne")!.map((r) => r.text)).toEqual(["a subagent", "old task", "told again"]);
+  expect(fs.existsSync(DIR + "/old/docs/agent/OldOne/main.index")).toBe(true);
+  expect(fs.existsSync(DIR + "/old/docs/agent/OldOne.jsonl")).toBe(true);
+  // a name is never a path
+  expect(Memory.agent(mem, "../chat")).toBeNull();
+  Memory.stop(mem);
+}));
+
+test("a chat moving takes its agents' running summaries along; none is asked again", () => faked(async () => {
+  hold = true;
+  const mem = Memory.load(DIR + "/moving", () => SHARE);
+  const name = Memory.agent_new(mem);
+  Memory.agent_push(mem, name, "unii", LONG(0));
+  await until(() => held.length === 1);
+
+  Memory.halt(mem);
+  const given = Memory.give(mem, () => "call-1");
+  expect(given).toEqual([[0, 0, "call-1", name]]);
+
+  const there = Memory.load(DIR + "/moving", () => SHARE);
+  const before = asked;
+  const far = (_id: string) => ({ done: Promise.resolve({ ok: true, text: "the line from far", left: [] }), stop() {}, send() {}, move() {} }) as any;
+  Memory.take(there, given, far);
+  await until(() => Memory.node(Memory.agent_mem(there, name)!, { l: 0, i: 0 }) === "the line from far");
+  expect(asked).toBe(before);
+
+  hold = false;
+  held.splice(0).forEach((ok) => ok());
+  Memory.stop(mem);
+  Memory.stop(there);
+}));
+
+test("an agent's summaries are paid by the chat's payer, even one set after the agent's tree opened", () => faked(async () => {
+  const mem = Memory.load(DIR + "/paid", () => SHARE);
+  const name = Memory.agent_new(mem);
+  const paid: string[] = [];
+  mem.pay = ((kind: string, what: string) => (paid.push(kind + " " + what), undefined)) as any;
+  Memory.agent_push(mem, name, "unii", LONG(0));
+  await until(() => paid.length > 0);
+  expect(paid[0]).toBe("compactor 0+1");
+  Memory.stop(mem);
+}));
+
+const { Tools } = await import("./Tools.ts");
+const { Pick } = await import("./Pick.ts");
+
+// a chat's tools, its agents' entries logged on their trees (as Chat.on
+// does, in short), reports kept
+function served(mem: any, reports: string[]) {
+  const pick = Pick.load(null, config.OFFER, config.PICK);
+  return Tools.serve(mem, {
+    push   : (agent, kind, text) => void Memory.agent_push(mem, agent.name, kind, text),
+    on     : (agent, ev: any) => void (ev.$ === "Entry" && ev.kind !== "user" && Memory.agent_push(mem, agent.name, ev.kind, ev.text)),
+    report : (_agent, text) => void reports.push(text),
+    change : () => {},
+    pick   : () => pick,
+    halt   : () => new AbortController().signal,
+  });
+}
+
+test("a subagent sees its own tree and a brief of the chat's latest lines, never the chat's whole view", () => faked(async () => {
+  const mem = Memory.load(DIR + "/brief", () => SHARE);
+  Memory.push(mem, Array.from({ length: 40 }, (_, k) => ({ kind: "user" as const, text: "old chat " + k + " " + "x".repeat(380) })));
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  expect(await Tools.spawn(tools, "main", ["do the thing"], null, null, "worker")).toContain("Started ");
+  await until(() => reports.length === 1);
+  expect(calls.length).toBe(1);
+  const text = said(calls[0]);
+  expect(text).toContain("do the thing");
+  expect(text).toContain("old chat 39 ");
+  expect(text).not.toContain("old chat 0 ");
+  expect(text).toContain('zoom("^');
+  expect(reports[0]).toContain("the report");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("zoom from an agent: its own tree by id, its starter's chat by ^id; another agent's only for Unii", () => faked(async () => {
+  const mem = Memory.load(DIR + "/zoom", () => SHARE);
+  Memory.push(mem, [{ kind: "user", text: "the chat's first message" }]);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  await Tools.spawn(tools, "main", ["a task"], null, null, "worker");
+  await until(() => reports.length === 1);
+  const name = [...tools.agents.keys()][0];
+  const zoom = (who: string, args: object) => Tools.call(tools, who, "zoom", args, new AbortController().signal, "1");
+
+  expect((await zoom(name, { id: 1 })).text).toContain("a task");
+  expect((await zoom(name, { id: "^0" })).text).toContain("the chat's first message");
+  expect((await zoom("main", { id: name })).text).toContain("a task");
+  expect((await zoom("main", { id: name + ":1" })).text).toContain("a task");
+  const other = await zoom("Rogue", { id: name });
+  expect(other.fail).toBe(true);
+  expect(other.text).not.toContain("a task");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("a call past ROLL tokens rolls over: asked again from its tree, its tool's result kept, its task word for word", () => faked(async () => {
+  const mem = Memory.load(DIR + "/roll", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  rolling = true;
+  try {
+    await Tools.spawn(tools, "main", ["the rolling task"], null, null, "worker");
+    await until(() => reports.length === 1);
+  } finally {
+    rolling = false;
+  }
+  expect(calls.length).toBe(2);
+  // the first call went on past its tool's result: a second step would
+  // carry its first one's items; a roll asks anew, one message
+  expect(calls[1].messages.length).toBe(1);
+  const text = said(calls[1]);
+  expect(text).toContain("the rolling task");
+  expect(text).toMatch(/\|echo: /);
+  expect(reports[0]).toContain("the report");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+test("an agent's task stays word for word when its log since is too long to go raw", () => faked(async () => {
+  const mem = Memory.load(DIR + "/longlog", () => SHARE);
+  const name = Memory.agent_new(mem);
+  Memory.agent_push(mem, name, "user", "the task to keep");
+  for (let k = 0; k < 8; k++) {
+    Memory.agent_push(mem, name, "echo", k + " " + "y".repeat(20000));
+  }
+  const seen = await Memory.agent_blocks(mem, name, new AbortController().signal);
+  if (typeof seen === "string") {
+    throw new Error(seen);
+  }
+  expect(seen.log.text).toContain("0|user: the task to keep");
+  expect(seen.log.text).not.toContain("1|echo: ");
+  Memory.stop(mem);
+}));
+
+test("a manager spawns workers; a worker's report wakes its manager, never Unii, and the manager's reaches Unii", () => faked(async () => {
+  const mem = Memory.load(DIR + "/tiers", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  calls.length = 0;
+  const manager = (body: any) => said({ system: body.system }).includes("You are a manager");
+  let managed = 0;
+  script = (body) => {
+    if (!manager(body)) {
+      return answer("worker done");
+    }
+    managed += 1;
+    return managed === 1 ? tooled("spawn", { tasks: ["the worker's part"] }, 1000) : managed === 2 ? answer("waiting on my worker") : answer("all managed");
+  };
+  try {
+    expect(await Tools.spawn(tools, "main", ["manage it"], null, null, "manager")).toContain("Started ");
+    await until(() => reports.length === 1);
+  } finally {
+    script = null;
+  }
+  const [mgr, wkr] = [...tools.agents.values()];
+  expect(mgr.role).toMatchObject({ $: "sub", tier: "manager" });
+  expect(wkr.role).toMatchObject({ $: "sub", tier: "worker" });
+  expect(wkr.parent).toBe(mgr.name);
+  expect(reports).toHaveLength(1);
+  expect(reports[0]).toContain("all managed");
+  const log = Memory.agent(mem, mgr.name)!.map((r) => r.kind + ": " + r.text);
+  expect(log.some((line) => line.startsWith("work: [" + wkr.name + "]") && line.includes("worker done"))).toBe(true);
+  // a worker's request runs on the worker tier's model; the manager's on its own
+  const model = (who: string) => calls.find((c) => said({ system: c.system }).includes(who))?.model;
+  expect(model("You are a manager")).toBe("claude-sonnet-5-5");
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+// the parent labels what it spawns, task by task: a title (its goal) and
+// its repos; a task given none has none
+test("spawn labels each agent with its task's title and repos", () => faked(async () => {
+  const mem = Memory.load(DIR + "/labels", () => SHARE);
+  const tools = served(mem, []);
+  script = () => answer("done");
+  try {
+    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the notes"], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
+    expect(out.fail).toBe(false);
+  } finally {
+    script = null;
+  }
+  const [a, b] = Tools.crew(tools);
+  expect(a).toMatchObject({ title: "Fix login tests", repos: ["auth-api", "web"] });
+  expect(b.title).toBeUndefined();
+  expect(b.repos ?? []).toEqual([]);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+// the payer holds the chat's summaries as its user runs out of credit
+// (Billing.ts: the wallet holds its payee's mem): its agents' trees are
+// held with it, each refused summary asked once, not again and again;
+// with credit back, they build
+test("a payer's refusal holds the agents' trees with the chat's: asked once, built once credit is back", () => faked(async () => {
+  const mem = Memory.load(DIR + "/heldagents", () => SHARE);
+  const name = Memory.agent_new(mem);
+  let paid = 0;
+  let credit = false;
+  const grant = { max: 128000, cut: null, end: () => {} };
+  mem.pay = (() => async () => {
+    paid += 1;
+    mem.hold[0] = credit ? null : "not enough credit";
+    return credit ? grant : "not enough credit";
+  }) as any;
+  Memory.agent_push(mem, name, "unii", LONG(0));
+  await sleep(200);
+  expect(paid).toBe(1);
+  const sub = Memory.agent_mem(mem, name)!;
+  expect(Memory.node(sub, { l: 0, i: 0 })).toBeNull();
+  await sleep(200);
+  expect(paid).toBe(1);
+
+  credit = true;
+  mem.hold[0] = null;
+  Memory.pump(mem);
+  await until(() => Memory.node(sub, { l: 0, i: 0 }) !== null);
+  Memory.stop(mem);
+}));
+
+// the manager Claude Code workers report to (only managers start them):
+// stopped, so a report waits in its chat and starts no call of its own
+// (one revived elsewhere runs on); the reports it was told
+function manager(tools: any): string {
+  const name = Memory.agent_new(tools.mem);
+  const role = { $: "sub", tier: "manager", effort: null, model: null } as const;
+  Memory.agent_push(tools.mem, name, "note", Tools.note(role, "main"));
+  tools.agents.set(name, { name, parent: "main", role, call: null, live: [], calls: {}, stop: true, replies: [], user: false });
+  return name;
+}
+const told = (mem: any, boss: string) => (Memory.agent(mem, boss) ?? []).filter((r: any) => r.kind === "work").map((r: any) => r.text);
+
+// a Claude Code worker (spawn as "claude") asks the person first: no job
+// on its device till approved; approved, its job runs there and its
+// transcript and result reach its tree and its starter; denied, it says so
+test("a Claude Code worker asks first; approved it runs on its device and reports, denied it says so", () => faked(async () => {
+  const mem = Memory.load(DIR + "/claude", () => SHARE);
+  const reports: string[] = [];
+  const tools = served(mem, reports);
+  const boss = manager(tools);
+  const sent: any[] = [];
+  Tools.attach(tools, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
+  const go = new AbortController().signal;
+  const out = await Tools.call(tools, boss, "spawn", { tasks: ["fix the bug"], as: "claude", device: "mac", dir: "~/repos/x" }, go, "1");
+  expect(out.fail).toBe(false);
+  const name = [...tools.agents.keys()][1];
+  // labelled by its dir's folder, as no repos were given
+  expect(Tools.crew(tools)[1]).toMatchObject({ name, parent: boss, tier: "claude", status: "asking", repos: ["x"] });
+  expect(sent.filter((m) => m.$ === "job")).toEqual([]);
+
+  expect(Tools.approve(tools, name, true)).toContain("Approved");
+  await until(() => sent.some((m) => m.$ === "job"));
+  const job = sent.find((m) => m.$ === "job");
+  expect(job.job).toMatchObject({ name: "claude", cwd: name, input: { dir: "~/repos/x" } });
+  expect(job.job.input.task).toContain("fix the bug");
+  expect(Tools.crew(tools)[1].status).toBe("working");
+  Tools.done(tools, "mac", job.id, { text: "unii: on it\n\nResult ($0.0100): fixed it", fail: false });
+  await until(() => told(mem, boss).length === 1);
+  expect(told(mem, boss)[0]).toContain("fixed it");
+  expect(Memory.agent(mem, name)!.some((r) => r.kind === "echo" && r.text.includes("unii: on it"))).toBe(true);
+  expect(Tools.approve(tools, name, true)).toContain("No Claude Code worker");
+
+  await Tools.call(tools, boss, "spawn", { tasks: ["another"], as: "claude", device: "mac" }, go, "2");
+  const other = [...tools.agents.keys()][2];
+  Tools.approve(tools, other, false);
+  await until(() => told(mem, boss).length === 2);
+  expect(told(mem, boss)[1]).toContain("denied");
+  expect(sent.filter((m) => m.$ === "job")).toHaveLength(1);
+  expect((await Tools.call(tools, boss, "spawn", { tasks: ["x"], as: "claude", device: "nowhere" }, go, "3")).fail).toBe(true);
+  expect(reports).toEqual([]);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+// a chat moving to another process while a Claude Code worker runs: its
+// job moves with the device (Tools.give, take), and its report comes from
+// where the chat is now
+test("a Claude Code worker running as its chat moves still reports, from the new process", () => faked(async () => {
+  const mem = Memory.load(DIR + "/claudemove", () => SHARE);
+  const reports: string[] = [];
+  const here = served(mem, reports);
+  const sent: any[] = [];
+  Tools.attach(here, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
+  const boss = manager(here);
+  await Tools.call(here, boss, "spawn", { tasks: ["long work"], as: "claude", device: "mac" }, new AbortController().signal, "1");
+  const name = [...here.agents.keys()][1];
+  Tools.approve(here, name, true);
+  await until(() => sent.some((m) => m.$ === "job"));
+  const id = sent.find((m) => m.$ === "job").id;
+
+  const moved = Tools.give(here, "http://127.0.0.1:1/", () => "");
+  const there = served(mem, reports);
+  Tools.take(there, moved, (() => { throw new Error("no call moves"); }) as any);
+  expect(Tools.crew(there).find((c) => c.name === name)?.status).toBe("working");
+  Tools.done(there, "mac", id, { text: "Result ($0.0100): done there", fail: false });
+  await until(() => told(mem, boss).length === 1);
+  expect(told(mem, boss)[0]).toContain("done there");
+  Tools.close(there);
+  Memory.stop(mem);
+}));
+
+// a chat holds OPEN agents' trees open at most: past that the one used
+// longest ago, if idle (no summary running), closes, its files with it;
+// used again, it opens anew whole; one with a summary running stays open
+test("agents' trees past OPEN close, the idle one used longest ago first; one used again opens whole; one summarizing stays", () => faked(async () => {
+  hold = true;
+  const mem = Memory.load(DIR + "/many", () => SHARE);
+  const busy = Memory.agent_new(mem);
+  Memory.agent_push(mem, busy, "unii", LONG(0));
+  await until(() => held.length === 1);
+  const names = Array.from({ length: OPEN + 3 }, (_, k) => {
+    const name = Memory.agent_new(mem);
+    Memory.agent_push(mem, name, "user", "task " + k);
+    return name;
+  });
+  expect(mem.agents.size).toBe(OPEN);
+  expect(mem.agents.has(busy)).toBe(true);
+  expect(mem.agents.has(names[0])).toBe(false);
+  expect(mem.agents.has(names.at(-1)!)).toBe(true);
+  expect(Memory.agent(mem, names[0])!.map((r) => r.text)).toEqual(["task 0"]);
+  expect(mem.agents.has(names[0])).toBe(true);
+  expect(mem.agents.size).toBe(OPEN);
+  // the oldest idle one, used again, outlasts the next oldest
+  const [oldest, next] = [...mem.agents.keys()].filter((n) => n !== busy);
+  Memory.agent_mem(mem, oldest);
+  Memory.agent_push(mem, Memory.agent_new(mem), "user", "one more");
+  expect(mem.agents.has(oldest)).toBe(true);
+  expect(mem.agents.has(next)).toBe(false);
+  hold = false;
+  held.splice(0).forEach((ok) => ok());
+  Memory.stop(mem);
+}));
+
+// the orchestrator's questions for the user (ask): kept open with the chat
+// (view.json, so a reload keeps them), capped; close withdraws one; only
+// the orchestrator asks (managers ask it)
+test("ask: the orchestrator files questions, kept across a reload; close withdraws one; agents can't ask", () => faked(async () => {
+  const dir = DIR + "/ask";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const ask = (who: string, args: object) => Tools.call(tools, who, "ask", args, new AbortController().signal, "x");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("ask");
+  const one = await ask("main", { question: "  Which repo holds the\nrecon configs? ", options: [" bank-recon ", "pimco", "", "pimco"] });
+  expect(one).toEqual({ text: "Filed as question 1; the user's answer will reach you as a message.", fail: false });
+  await ask("main", { question: "Ship on Friday?" });
+  expect(mem.questions.map((q) => [q.id, q.text, q.options])).toEqual([[1, "Which repo holds the\nrecon configs?", ["bank-recon", "pimco"]], [2, "Ship on Friday?", undefined]]);
+  expect(mem.questions[0]!.at).toBe(mem.count);
+  expect((await ask("main", { question: "  " })).fail).toBe(true);
+  expect((await ask("main", { close: 1 })).fail).toBe(false);
+  expect(mem.questions.map((q) => q.id)).toEqual([2]);
+  expect((await ask("main", { close: 9 })).fail).toBe(true);
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("ask");
+  expect((await ask(name, { question: "mine?" })).fail).toBe(true);
+  // at most 20 open: past them, refused (none is dropped unseen)
+  for (let k = 0; k < 19; k++) {
+    await ask("main", { question: "q" + k + "x".repeat(3000) });
+  }
+  expect(mem.questions).toHaveLength(20);
+  expect(mem.questions.at(-1)!.text).toHaveLength(2000);
+  expect((await ask("main", { question: "one more" })).fail).toBe(true);
+  // ids go on after a reload, never reused
+  await ask("main", { close: 21 });
+  Tools.close(tools);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect(again.questions).toHaveLength(19);
+  const later = served(again, []);
+  await Tools.call(later, "main", "ask", { question: "and then?" }, new AbortController().signal, "y");
+  expect(again.questions.at(-1)!.id).toBe(22);
+  Tools.close(later);
+  Memory.stop(again);
+}));
+
+// plan mode's way out: the orchestrator files its plan (plan), kept with
+// the chat till the user answers; only in plan mode, only the orchestrator
+test("plan: the orchestrator files its plan in plan mode, kept across a reload; not otherwise, not agents", () => faked(async () => {
+  const dir = DIR + "/plan";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const plan = (who: string, args: object) => Tools.call(tools, who, "plan", args, new AbortController().signal, "x");
+  expect(mem.mode).toBe("auto");
+  expect((await plan("main", { plan: "1. read\n2. fix" })).text).toContain("not in plan mode");
+  mem.mode = "plan";
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("plan");
+  expect((await plan("main", { plan: "  " })).fail).toBe(true);
+  const filed = await plan("main", { plan: " 1. read the tests\n2. fix the race " });
+  expect(filed).toEqual({ text: "Filed your plan for the user's approval; their answer reaches you as a message. Until then, only reading.", fail: false });
+  expect(mem.plan?.text).toBe("1. read the tests\n2. fix the race");
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("plan");
+  expect((await plan(name, { plan: "mine" })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.save(mem);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect([again.mode, again.plan?.text]).toEqual(["plan", "1. read the tests\n2. fix the race"]);
+  Memory.stop(again);
+}));

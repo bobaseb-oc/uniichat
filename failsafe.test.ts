@@ -238,3 +238,54 @@ test("imports share a busy model alike", () => fast(async () => {
   expect(refusals.slice(5).sort()).toEqual(["a", "a", "b", "b"]);
   expect(logged.filter((line) => line.includes(LIMIT))).toHaveLength(1);
 }));
+
+// a stream of `events`, one each `gap` ms (real time) after a start, then
+// its end (or none: forever); a stop ends it, as fetch does
+function drip(events: object[], gap: number, forever: boolean, signal: AbortSignal): Response {
+  const body = new ReadableStream<Uint8Array>({
+    async start(c) {
+      signal.addEventListener("abort", () => c.error(signal.reason));
+      const say = (ev: object) => c.enqueue(new TextEncoder().encode("data: " + JSON.stringify(ev) + "\n\n"));
+      say({ type: "message_start", message: { usage: {} } });
+      for (let k = 0; forever || k < events.length; k++) {
+        await sleep(gap);
+        if (signal.aborted) {
+          return;
+        }
+        say(forever ? { type: "ping" } : events[k]);
+      }
+      c.close();
+    },
+  });
+  return new Response(body);
+}
+
+// a request through the real Anthropic wire, the stream `make`s; its step,
+// or "hung" if it never ends
+async function sent(make: (signal: AbortSignal) => Response): Promise<any> {
+  const { Anthropic } = await import("./Anthropic.ts");
+  globalThis.fetch = ((_url: string, init: any) => Promise.resolve(make(init.signal))) as any;
+  const run = { ask: { ...SHARE, blocks: [] }, on: () => {}, sent: [], abort: new AbortController(), end: () => {} } as any;
+  const grant = { max: 1000, cut: null, end: () => {} };
+  const go = Agent.send(Anthropic.wire, run, "test", {}, grant, { begun: () => {}, end: () => {} }, []).then((r: any) => r.step);
+  return Promise.race([go, sleep(3000).then(() => "hung")]);
+}
+
+test("a stream that only pings is stalled: its request ends as idle", () => fast(async () => {
+  const step = await sent((signal) => drip([], 50, true, signal));
+  expect(step).not.toBe("hung");
+  expect(step.why).toContain("no word from the API in 300 s");
+}));
+
+test("a stream that writes, each piece within the idle time, is never cut, however long it runs", () => fast(async () => {
+  const text = (t: string) => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: t } });
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    ...["a", "b", "c", "d", "e"].map(text),
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    { type: "message_stop" },
+  ];
+  const step = await sent((signal) => drip(events, 100, false, signal));
+  expect(step.stop).toBe("done");
+}));

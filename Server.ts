@@ -40,12 +40,14 @@ import { Cloud, type Account, type User } from "./Cloud.ts";
 import { Disk } from "./Disk.ts";
 import { Mail } from "./Mail.ts";
 import * as Import from "./Import.ts";
+import { Mcp } from "./Mcp.ts";
 import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.ts";
+import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -61,8 +63,8 @@ import style_css from "./web/style.css" with { type: "file" };
 // =====
 
 // a socket: its user, sign-in (hashed), its query's fields, its device,
-// the parts it was shown (Chat.teach)
-type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; device: string | null; seen: Set<string> }>;
+// the parts it was shown (Chat.teach), the agents whose pages it asked for
+type Sock = ServerWebSocket<{ user: User; who: string; tab: string; wire: string | null; host: string | null; computer: boolean; work: string; home: string | null; device: string | null; seen: Set<string>; watch: Set<string> }>;
 
 // a body: its file, its size so far
 type Body = { fh: fs.promises.FileHandle; size: number };
@@ -94,6 +96,7 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // post runs); writes, held: the posts logging, one after another, and
 // the logging held meanwhile (null: none); wallet: what pays its calls
 type Chat = {
+  status?: DeviceStatus; // the latest device's report, for the web's status line
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -118,6 +121,7 @@ type Chat = {
   ending: { all: boolean; then: () => void } | null;
   writes: Promise<unknown>;
   held  : Array<() => void> | null;
+  rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
 };
 
@@ -163,10 +167,21 @@ const LOCK       = config.DIR + "/lock";
 // often one that gave its chats looks whether its last requests ended
 const HAND       = config.DIR + "/hand";
 const LEAVE      = 500;
+
+// an agent's pulse (Tools.pulse) goes to every view at most once a PULSE
+// ms while it streams; a view watches (hears the deltas of) at most WATCH
+// agents: its focus and tiles in sight
+const PULSE      = 1000;
+const WATCH      = 16;
+// the agents of a chat with a pulse due
+const PULSES     = new WeakMap<object, Set<string>>();
 // how a call ends whose process ended first (a crash)
 const ENDED      = "the server process that ran it ended";
 // a turn's head, as a summary's is "Compaction:": one prompt serves both
 const HEAD       = "Turn: the user's new message:\n\n";
+// a turn asked again as its call rolled over (Agent.ts): the user's
+// message whole, then what the turn did since, its lines as "i|kind: text"
+const ROLLED     = "\n\nYour call for this message rolled over, its context too long: it was asked again from the chat above, which summarizes all you did. What you did since the message, as \"i|kind: text\" lines (zoom an id for more), then go on:\n\n";
 // a goal's check (Chat.check): its own system prompt (Unii's, which says
 // a call is a turn or a compaction, made the model summarize the chat
 // instead of answering), asked after the chat (the view, its latest
@@ -174,7 +189,7 @@ const HEAD       = "Turn: the user's new message:\n\n";
 const GOAL       = "You check a goal. Below is a chat between a user and Unii, an AI agent: its older messages as summary lines (id+n|text), then its latest messages whole, then the goal the user set with /goal. Answer yes if the chat shows the goal fully satisfied now, else no. Write that one word, nothing else.";
 const GOAL_ASK   = "\nThe goal:\n\n";
 const GOAL_NO    = "The goal isn't satisfied yet: keep working.";
-const FULL       = "UniiChat's disk is full; try again soon.";
+const FULL       = "Legion's disk is full; try again soon.";
 // an import running: its batch's file in the chat's dir (Chat.keep)
 const BATCH      = "/import.json";
 // under SPARE free, the disk takes no more (Chat.post)
@@ -251,7 +266,7 @@ const WEB: Record<string, string> = {
 // the email, and SIGNED. The hello's node is written with it, so no
 // compactor call summarizes the three (with an email of up to 254 bytes,
 // a node of at most 512 bytes) and a new account owes nothing.
-const HELLO_LINE = "unii: hello: UniiChat, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; the user's terminal install; asks their email.";
+const HELLO_LINE = "unii: hello: Legion, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; the user's terminal install; asks their email.";
 const SIGNED     = "You're in! What should we start with?";
 
 // Chat
@@ -297,7 +312,7 @@ export namespace Chat {
     const chat: Chat = {
       acct, mem, tools, pick, socks: new Set(), acts: new Map(), busy: false, posts: 1, call: null, model: "", check: null, asked: false, open: 0, sent: [], wait: [],
       halt: new AbortController(), live: [], calls: {}, eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null, ending: null,
-      writes: Promise.resolve(), held: null, wallet,
+      writes: Promise.resolve(), held: null, wallet, rolled: false,
     };
     // a saved pick not offered gave way: told once
     const saved = mem.pick === null ? null : Pick.label(mem.pick as Pick);
@@ -542,9 +557,12 @@ export namespace Chat {
       }
     }
     const msgs = (chat.sent = chat.wait.splice(0));
-    const says = msgs.filter((m) => m.end > from).map((m) => Memory.say(mem, Math.max(m.id, from), m.end));
+    const rolled = chat.rolled;
+    chat.rolled = false;
+    const says = (rolled ? msgs : msgs.filter((m) => m.end > from)).map((m) => Memory.say(mem, rolled ? m.id : Math.max(m.id, from), m.end));
     const view = Memory.view(mem, from);
-    const text = says.map((say) => say.text).join("\n\n");
+    const after = Math.max(from, msgs.at(-1)!.end);
+    const text = says.map((say) => say.text).join("\n\n") + (rolled ? ROLLED + Memory.tail(mem, after) : "");
     const imgs = says.flatMap((say) => say.imgs);
     const server = Tools.at(chat.tools, "main");
     chat.eye = Chat.eye(mem, from);
@@ -567,6 +585,10 @@ export namespace Chat {
     Chat.unanswered(chat, null);
     Chat.live(chat, null, []);
     chat.wait.unshift(...chat.sent.slice(chat.sent.length - end.left.length));
+    if (end.roll && !halt.signal.aborted) {
+      chat.wait.unshift(...chat.sent);
+      chat.rolled = true;
+    }
     if (!end.ok && !halt.signal.aborted) {
       Chat.failed(chat, end.text);
     }
@@ -630,9 +652,12 @@ export namespace Chat {
   // to the chat (in pages), or an agent's log; each told to every view
   export function push(chat: Chat, agent: Agent | null, kind: Kind, text: string, images: string[] = [], more = false, act?: string): Msg {
     if (agent !== null) {
-      const id = Memory.agent_push(chat.mem, agent.name, kind, text);
-      Chat.all(chat, { $: "entry", agent: agent.name, id, kind, text });
-      return { id, end: id + 1 };
+      const roots = Memory.agent_push(chat.mem, agent.name, kind, text);
+      for (const { i, kind, text, date } of roots) {
+        Chat.to(chat, agent.name, { $: "entry", agent: agent.name, id: i, kind, text, date });
+      }
+      Chat.pulse(chat, agent);
+      return { id: roots[0].i, end: roots[roots.length - 1].i + 1 };
     }
     const roots = Memory.push(chat.mem, [{ kind, text, images, more, act }]);
     for (const { i, kind, text, date, images } of roots) {
@@ -650,13 +675,16 @@ export namespace Chat {
     }
     if (ev.$ === "Delta") {
       live_push(at.live, ev.kind, ev.text, ev.fresh);
-      Chat.all(chat, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
+      Chat.to(chat, name, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
+      if (agent !== null) {
+        Chat.pulse(chat, agent);
+      }
       return;
     }
     if (ev.kind === "tool" && ev.of !== undefined) {
       at.calls[ev.of] = ev.text;
     } else if (ev.kind === "mind") {
-      Chat.all(chat, { $: "entry", agent: name, kind: ev.kind, text: ev.text });
+      Chat.to(chat, name, { $: "entry", agent: name, kind: ev.kind, text: ev.text });
     } else if (ev.kind !== "user") {
       const call = ev.of === undefined ? undefined : at.calls[ev.of];
       delete at.calls[ev.of ?? ""];
@@ -703,7 +731,7 @@ export namespace Chat {
   // what streams for the chat (agent: null) or an agent, set and told
   export function live(chat: Chat, agent: Agent | null, live: Live[]): void {
     (agent ?? chat).live = live;
-    Chat.all(chat, { $: "live", agent: agent?.name, live });
+    Chat.to(chat, agent?.name, { $: "live", agent: agent?.name, live });
   }
 
   // an agent's report, once it ends: a turn of its own, unless stopped or
@@ -716,7 +744,7 @@ export namespace Chat {
     Chat.hold(chat, () => {
       chat.posts += 1;
       const msg = Chat.chats.get(chat.acct.user) !== chat ? null : Chat.push(chat, null, "work", text);
-      if (msg !== null && !stopped && Chat.cloud.billing.refuse(chat.acct.user, 0) === null) {
+      if (msg !== null && !stopped && !agent.user && Chat.cloud.billing.refuse(chat.acct.user, 0) === null) {
         Chat.take(chat, msg);
       }
       chat.posts -= 1;
@@ -972,7 +1000,7 @@ export namespace Chat {
     }
     const text = "The server restarted, cutting " + work.join(", ") + "; nothing was lost: go on.";
     const msg = Chat.push(chat, null, "note", text);
-    await Promise.all(work.map((w) => (w === TURN ? Chat.take(chat, msg) : Tools.tell(chat.tools, w, text))));
+    await Promise.all(work.map((w) => (w === TURN ? Chat.take(chat, msg) : Tools.tell(chat.tools, "main", w, text))));
   }
 
   // Moving
@@ -1028,7 +1056,7 @@ export namespace Chat {
     return [...(chat.busy ? [TURN] : []), ...Tools.working(chat.tools).map((a) => a.name)];
   }
 
-  // UniiChat's turn only, with the spawns and tells it waits on (for the
+  // Legion's turn only, with the spawns and tells it waits on (for the
   // view: Tools.view, on chat.halt); agents go on. why: the note the turn's
   // end logs (Chat.turn), so after the reply the stop cut; null: none
   export function interrupt(chat: Chat, why: string | null): void {
@@ -1056,17 +1084,42 @@ export namespace Chat {
     chat.socks.forEach((sock) => Chat.send(sock, msg));
   }
 
+  // the chat's (agent: none) to every view, an agent's to those showing
+  // its page (they asked for it: Chat.ask)
+  export function to(chat: Chat, agent: string | undefined, msg: Out): void {
+    chat.socks.forEach((sock) => (agent === undefined || sock.data.watch.has(agent)) && Chat.send(sock, msg));
+  }
+
+  // an agent's pulse to every view, once PULSE ms after the first event
+  // since its last: a burst is one, told as it is then
+  export function pulse(chat: Chat, agent: Agent): void {
+    const due = PULSES.get(chat) ?? new Set<string>();
+    PULSES.set(chat, due);
+    if (due.has(agent.name)) {
+      return;
+    }
+    due.add(agent.name);
+    setTimeout(() => {
+      due.delete(agent.name);
+      const now = chat.tools.agents.get(agent.name);
+      if (now !== undefined) {
+        Chat.all(chat, Tools.pulse(chat.tools, now));
+      }
+    }, PULSE);
+  }
+
   export function send(sock: Sock, msg: object): void {
     sock.send(JSON.stringify(msg));
   }
 
   export function state(chat: Chat): Out {
     const agents = Tools.working(chat.tools).map((a) => a.name);
+    const crew = Tools.crew(chat.tools);
     const batch = chat.batch;
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools) };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1098,7 +1151,7 @@ export namespace Chat {
   // a view joins on the chat as it is now; a terminal's device too (told
   // its name if its host's was taken)
   export function join(chat: Chat, sock: Sock): void {
-    const { tab, host, computer, work } = sock.data;
+    const { tab, host, computer, work, home } = sock.data;
     chat.socks.add(sock);
     Chat.send(sock, Chat.state(chat));
     Chat.show(chat, sock);
@@ -1106,7 +1159,7 @@ export namespace Chat {
     if (host === null) {
       return;
     }
-    const link = { send: (msg: object) => Chat.send(sock, msg), live: () => chat.socks.has(sock), computer, work };
+    const link = { send: (msg: object) => Chat.send(sock, msg), live: () => chat.socks.has(sock), computer, work, home: home ?? undefined };
     sock.data.device = Tools.attach(chat.tools, tab, host, sock.data.who, link);
     if (sock.data.device !== host) {
       Chat.send(sock, { $: "note", text: host + " was taken: Unii calls this computer " + sock.data.device + "." });
@@ -1162,9 +1215,19 @@ export namespace Chat {
         Chat.send(sock, { $: "root", parts });
         return {};
       }
+      // what the view has in sight: those it hears the deltas and
+      // entries of from now (its focus asks for its log: "agent")
+      case "watch": {
+        const names: string[] = Array.isArray(msg.names) ? [...new Set<string>(msg.names.map((n: unknown) => String(n)))] : [];
+        sock.data.watch = new Set(names.filter((n) => Memory.agent(chat.mem, n) !== null).slice(0, WATCH));
+        return {};
+      }
       case "agent": {
         const name = String(msg.name);
         const log = Memory.agent(chat.mem, name);
+        if (log !== null) {
+          sock.data.watch.add(name);
+        }
         Chat.send(sock, { $: "agent", name, found: log !== null });
         log?.forEach(({ kind, text, date }) => Chat.send(sock, { $: "entry", agent: name, kind, text, date }));
         Chat.send(sock, { $: "live", agent: name, live: chat.tools.agents.get(name)?.live ?? [] });
@@ -1264,8 +1327,86 @@ export namespace Chat {
         Tools.done(chat.tools, device, String(msg.job), msg.out);
         return {};
       }
+      case "spawn": {
+        // refused as a post is, short of credit
+        const task = String(msg.task ?? "").trim();
+        if (task === "") {
+          return { error: "No task." };
+        }
+        const refused = await Chat.afford(chat);
+        if (refused !== null) {
+          return refused;
+        }
+        Chat.mark(chat, id, {});
+        const begun = await Tools.begin(chat.tools, task);
+        Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
+        return {};
+      }
+      case "mode": {
+        return Chat.remode(chat, msg.mode);
+      }
+      case "status": {
+        return Chat.reported(chat, device, msg);
+      }
+      case "consent": {
+        return Tools.consent(chat.tools, Number(msg.n), msg.yes === true) ? {} : { error: "No call " + msg.n + " waits for you." };
+      }
+      case "plan": {
+        return Chat.verdict(chat, id, msg.yes === true, msg.mode, msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
+      }
+      case "answer": {
+        return Chat.reply(chat, id, Number(msg.q), msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
+      }
+      case "bang": {
+        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device);
+      }
+      case "tell": {
+        // the person's message to an agent, as Unii's tell; refused as a
+        // post is, short of credit
+        const text = String(msg.text ?? "").trim();
+        if (text === "") {
+          return { error: "No message." };
+        }
+        const refused = await Chat.afford(chat);
+        if (refused !== null) {
+          return refused;
+        }
+        const told = await Tools.tell(chat.tools, "main", String(msg.name), text);
+        return told.fail ? { error: told.text } : {};
+      }
+      case "approve": {
+        // the person's yes (refused as a post is, short of credit: its
+        // report takes a turn) or no to a Claude Code worker asking
+        const yes = msg.yes === true;
+        const refused = yes ? await Chat.afford(chat) : null;
+        if (refused !== null) {
+          return refused;
+        }
+        const said = Tools.approve(chat.tools, String(msg.name), yes);
+        Chat.note(chat, said);
+        return said.startsWith("No ") ? { error: said } : {};
+      }
+      case "dismiss": {
+        const agent = chat.tools.agents.get(String(msg.name));
+        if (agent === undefined || Tools.working(chat.tools).includes(agent)) {
+          return { error: "No agent " + msg.name + " done to dismiss." };
+        }
+        agent.hidden = true;
+        Chat.change(chat);
+        return {};
+      }
     }
     return { error: "No act " + msg.$ + "." };
+  }
+
+  // why the user can't start work now (no credit, a balance read first:
+  // a top-up lands there); null: they can
+  export async function afford(chat: Chat): Promise<Answer | null> {
+    const billing = Chat.cloud.billing;
+    if (billing.refuse(chat.acct.user, 0) !== null) {
+      await billing.balance(chat.acct.user);
+    }
+    return billing.refuse(chat.acct.user, 0);
   }
 
   // a post (msg.req) refused before a byte of its body is read, so a chat
@@ -1309,6 +1450,117 @@ export namespace Chat {
     } finally {
       await body.fh.close();
     }
+  }
+
+  // the person's answer to an open question (Tools.question): logged as
+  // their message quoting it, which Unii answers in a turn (refused as a
+  // post is, short of credit); no text dismisses it, a note, no turn
+  export async function reply(chat: Chat, id: string, n: number, text: string): Promise<Answer> {
+    const q = chat.mem.questions.find((x) => x.id === n);
+    if (q === undefined) {
+      return { error: "No open question " + n + "." };
+    }
+    const refused = text === "" ? null : await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    chat.mem.questions = chat.mem.questions.filter((x) => x !== q);
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    if (text === "") {
+      Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      return {};
+    }
+    await Chat.said(chat, id, "Answer to your question " + n + " (" + q.text + "):\n" + text);
+    return {};
+  }
+
+  // a message logged as the user's, which Unii answers in a turn
+  export function said(chat: Chat, id: string, text: string): Promise<void> {
+    return Chat.writing(chat, async () => {
+      const at = chat.mem.count;
+      Chat.push(chat, null, "user", text, [], false, id);
+      Chat.take(chat, { id: at, end: chat.mem.count });
+    });
+  }
+
+  // a device's report for the status line (Device.device_status), only
+  // a device's (a terminal or `legion device`), its fields checked; kept
+  // as the latest, told every view when it changes
+  export function reported(chat: Chat, device: string, msg: any): Answer {
+    const text = (x: unknown) => typeof x === "string" && x.length <= 200;
+    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && (msg.spend === null || Number.isFinite(msg.spend)) && typeof msg.stale === "boolean";
+    if (device === "" || !ok) {
+      return { error: device === "" ? "Only a device reports its status." : "A status needs dir, branch, spend and stale." };
+    }
+    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale };
+    if (JSON.stringify(status) !== JSON.stringify(chat.status ?? null)) {
+      chat.status = status;
+      Chat.change(chat);
+    }
+    return {};
+  }
+
+  // the user sets the chat's mode (Modes.ts): a note Unii reads, no turn
+  export function remode(chat: Chat, to: unknown): Answer {
+    if (!MODES.includes(to as Mode)) {
+      return { error: "No mode " + String(to) + "; one of " + MODES.join(", ") + "." };
+    }
+    const mode = to as Mode;
+    if (mode !== chat.mem.mode) {
+      chat.mem.mode = mode;
+      chat.mem.plan = mode === "plan" ? chat.mem.plan : null;
+      Memory.save(chat.mem);
+      Chat.change(chat);
+      Chat.note(chat, "The user switched to " + ABOUT[mode] + ".");
+    }
+    return {};
+  }
+
+  // the user's answer to the plan waiting (Tools.plan): approved, the
+  // mode they picked (by default auto); sent back, still plan mode, their
+  // feedback; either way a message Unii answers in a turn (refused as a
+  // post is, short of credit)
+  export async function verdict(chat: Chat, id: string, yes: boolean, to: unknown, text: string): Promise<Answer> {
+    const plan = chat.mem.plan;
+    if (plan === null) {
+      return { error: "No plan is waiting for approval." };
+    }
+    const mode: Mode = yes ? (to === "full" ? "full" : "auto") : "plan";
+    const refused = await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    chat.mem.plan = null;
+    chat.mem.mode = mode;
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    const said = yes
+      ? "The user approved your plan; now in " + ABOUT[mode] + ". Go ahead with it." + (text === "" ? "" : "\nThey add: " + text)
+      : "The user didn't approve your plan: " + (text || "no reason given") + "\nStill in plan mode: revise it and file it again with plan.";
+    await Chat.said(chat, id, said);
+    return {};
+  }
+
+  // the person's !command: a shell job, as Unii's own (in the home repo,
+  // gated by Claude Code's hooks there: Hooks.ts), on the device it came
+  // from, else the only one open; its command and output a note the AI
+  // reads, starting no turn. Answered at once; the note comes when it ends
+  export function bang(chat: Chat, id: string, command: string, from: string): Answer {
+    if (command === "") {
+      return { error: "No command." };
+    }
+    const open = Tools.opened(chat.tools).map(([name]) => name);
+    const device = open.includes(from) ? from : open.length === 1 ? open[0]! : null;
+    if (device === null) {
+      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): type the !command in the terminal of the one to run it on." };
+    }
+    Chat.mark(chat, id, {});
+    const job = { name: "shell", input: { command }, cwd: "main" };
+    Tools.job(chat.tools, device, job, new AbortController().signal, "bang-" + id).then((out) => {
+      Chat.note(chat, "The user ran on " + device + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
+    });
+    return {};
   }
 
   // an act's record, a line of its own (Memory.ts)
@@ -1583,7 +1835,8 @@ export namespace Main {
         const q    = new URL(req.url).searchParams;
         const who  = Cloud.hash(Cloud.token(req));
         const work = q.get("work") ?? "~/.unii/work";
-        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, device: null, seen: new Set<string>() };
+        const home = q.get("home") || null;
+        const data = { user, who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), computer: q.get("computer") === "1", work, home, device: null, seen: new Set<string>(), watch: new Set<string>() };
         return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
       }
       const chat = Chat.open(user);
@@ -1665,6 +1918,7 @@ export namespace Main {
     const signed = (session: string) => (send === undefined ? Cloud.wake(Chat.cloud, session) : send({ $: "signed", session }));
     const post = (mail: object) => (send === undefined ? Mail.send(config.KEYS.resend, mail) : Main.mail(send, mail));
     const hand = HAND + Main.index;
+    Mcp.sweep(config.DIR + "/children." + Main.index + ".pids");
     Main.port = port;
     Chat.cloud = Cloud.open(change, signed, post);
     Main.back = await Main.dial(hand);
@@ -1694,7 +1948,7 @@ export namespace Main {
           Main.opened(ws.data.user.id, 1);
           Main.event("a socket of user " + ws.data.user.id, () => {
             if (ws.data.wire !== String(WIRE)) {
-              ws.send(JSON.stringify({ $: "error", text: "This page or unii is older than the server: reload or reopen it (`unii update` for the latest)." }));
+              ws.send(JSON.stringify({ $: "error", text: "This page or unii is older than the server: reload or reopen it (`legion update` for the latest)." }));
               return;
             }
             const chat = Chat.open(ws.data.user);
@@ -1737,6 +1991,7 @@ export namespace Main {
     }
     process.on("exit", () => {
       fs.rmSync(Main.addr, { force: true });
+      Mcp.end();
       for (const chat of Chat.chats.values()) {
         Chat.stop(chat, null);
         Memory.stop(chat.mem);

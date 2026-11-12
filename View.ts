@@ -10,6 +10,7 @@
 // and comes again before a message in another 3-hour window.
 
 import type { Kind, Vendor } from "./AskAI.ts";
+import { Modes, type Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
 import * as Md from "./Md.ts";
@@ -62,18 +63,73 @@ export type State = {
   busy      : boolean;
   wait      : Wait;
   agents    : string[];
+  crew      : Crew[];
   pick      : Pick | null;
   vendors   : Vendor[];
   models    : string[];
   bills     : boolean;
   credits   : number | null;
   importing : Progress | null;
+  questions?: Question[]; // the orchestrator's, open (Tools.question)
+  mode?     : Perm;       // the chat's permission mode (Modes.ts)
+  status?   : DeviceStatus | null; // the latest device's report (Device.device_status)
+  calls?    : Waiting[];  // calls waiting for the user's yes (auto mode's reviewer couldn't check them)
+  plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
 };
+
+// an agent of the chat, at work or done (till dismissed): who started it
+// ("main": Unii), what it is, its model, how it is, since when its run
+// began (ms since 1970)
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+// a call waiting for the user's yes (Tools.ask_user): its number, who
+// calls, its tool, what it does
+export type Waiting = { id: number; who: string; tool: string; what: string };
+
+// a device's report for the status line (Device.device_status): its
+// name, the folder Unii works in there, its branch, today's spend (stale)
+export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean };
+
+// a question the orchestrator asked the user (Tools.question), open till
+// answered or dismissed: its number, its text, answers it offers, the
+// chat message count when asked, when
+export type Question = { id: number; text: string; options?: string[]; at: number; date: string };
+
+// an item of an agent's checklist (Tools.todo): what, and how far
+export type Todo = { text: string; status: "pending" | "doing" | "done" };
+// an agent's pulse (Tools.pulse), told every view as it streams: how it
+// is, what it does now, its report's last line
+export type Pulse = { $: "pulse"; name: string; status: Status; act: string; last: string };
+// asking: a Claude Code worker waiting for the person's approval
+export type Status = "asking" | "working" | "waiting" | "failed" | "stopped" | "done";
+
+// a desktop alert (view_alerts): its key (debounced by), what it says,
+// the agent to show on a click (null: Legion)
+export type Alert = { key: string; title: string; body: string; name: string | null };
+
+// what the last alerts were worked out from: whether a turn ran, each
+// agent's status
+export type Heard = { busy: boolean; status: Map<string, Status> };
+
+// a crew row as drawn: its agent, how deep under Unii, its text
+export type CrewRow = Crew & { depth: number; text: string };
+
+// a row of the web's Crew tree: how many are under it, them by status
+// ("3 working, 1 failed"; none: ""), whether its children show
+export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
+
+// the web's two modes, and the agent in focus (location.hash: #chat,
+// #crew, #crew/<name>)
+export type Mode = "chat" | "crew";
+
+// a tile of the Crew grid: an agent Unii started, a dot per agent under
+// it (any depth), them by status
+export type Tile = Crew & { dots: { name: string; status: Status }[]; rollup: string };
+export type Route = { mode: Mode; name: string | null };
 
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
 // ("id+n") and messages known; open: the blocks opened (true) or shut by
 // hand; minds: the thoughts after each message; pages: the agents' asked
-// for; page: the one shown (null: UniiChat's); the Link's: this view's
+// for; page: the one shown (null: Legion's); the Link's: this view's
 // id, acts not answered, socket (up: it showed the chat)
 export type View = State & {
   parts : Part[];
@@ -86,6 +142,10 @@ export type View = State & {
   minds : Map<number, string[]>;
   pages : Map<string, Page>;
   page  : Page | null;
+  expanded : Set<string>;
+  pulses : Map<string, Pulse>;
+  heard : Heard | null;
+  alerted : Map<string, number>;
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -107,6 +167,7 @@ export type Server =
   | { $: "live"; agent?: string; live: Live[] }
   | ({ $: "state" } & State)
   | { $: "agent"; name: string; found: boolean }
+  | Pulse
   | { $: "note"; text: string }
   | ({ $: "ack"; id: string } & Answer)
   | { $: "jobs"; ids: string[] }
@@ -135,7 +196,18 @@ export type Client =
   | { $: "zoom"; part: Part }
   | { $: "root" }
   | { $: "agent"; name: string }
-  | { $: "guess"; body: Body }; // an import's cost
+  | { $: "watch"; names: string[] } // the agents in sight, whose deltas it hears
+  | { $: "spawn"; task: string } // an agent the person starts (/agent)
+  | { $: "tell"; name: string; text: string } // a message to the agent whose page is shown
+  | { $: "dismiss"; name: string } // a done agent out of the crew
+  | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
+  | { $: "guess"; body: Body } // an import's cost
+  | { $: "bang"; command: string } // the person's !command, run with the shell on a device
+  | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
+  | { $: "mode"; mode: Perm } // the chat's permission mode set
+  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
+  | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
+  | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
 // an act not answered: with its id, the socket it went by, what its
 // answer does, what a message said (shown while offline: view_tail)
@@ -158,7 +230,17 @@ export type Act =
   | { $: "Open"; id: number; n: number }        // a click on a block
   | { $: "Shut"; id: number; n: number }        // a click on an open block's bar
   | { $: "Fold"; on: boolean }                  // fold all, unfold all
-  | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
+  | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: Legion)
+  | { $: "Dismiss"; name: string }              // a done agent out of the crew
+  | { $: "Approve"; name: string; yes: boolean } // a Claude Code worker asking to start: let it, or not
+  | { $: "Stop"; name: string }                 // that agent's work stopped (the Crew view)
+  | { $: "Expand"; name: string }               // a manager's workers shown, or folded again
+  | { $: "Tell"; name: string; text: string }   // a message to that agent (a tile's box)
+  | { $: "Answer"; q: number; text: string }    // an open question answered (the backlog pane)
+  | { $: "Drop"; q: number }                    // an open question dismissed
+  | { $: "Mode"; mode?: Perm }                  // the mode set; none: the next (Shift+Tab, the chip)
+  | { $: "Verdict"; yes: boolean; mode?: Perm; text?: string } // the plan waiting: approved into a mode, or sent back
+  | { $: "Consent"; n: number; yes: boolean }   // a waiting call: run it, or not
 
 // what a page draws, top to bottom
 export type Row =
@@ -187,9 +269,9 @@ export type Day = { date: string; what: string; usd: number };
 // Constants
 // =========
 
-export const MAIN = "UniiChat";
+export const MAIN = "Legion";
 
-// UniiChat's turn, as a stop names it among the agents at work
+// Legion's turn, as a stop names it among the agents at work
 export const TURN = "Unii's turn";
 
 // the messages' version, in a view's query; one more for each change an
@@ -211,7 +293,7 @@ export const MOVE  = 4001;
 // ~0.15 MB). A bigger one closes its socket (Server.ts)
 export const FRAME = 2 ** 22;
 
-export const HINT = "Message UniiChat";
+export const HINT = "Message Legion";
 
 // the disclosure both views show (EU AI Act art. 50, California SB 243,
 // New York GBL art. 47, Anthropic's usage policy)
@@ -266,11 +348,18 @@ export function Cap(text: string): Row {
 // View
 // ====
 
+// a crew row's mark by status, and the order siblings are listed in
+export const CREW: Record<Status, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+const STATUSES: Status[] = ["asking", "failed", "working", "waiting", "stopped", "done"];
+// the least time between two alerts of a key (a turn's ends: one in a run)
+const ALERT_GAP = 20000;
+
 export function view_new(): View {
   return {
     busy      : false,
     wait      : "",
     agents    : [],
+    crew      : [],
     pick      : null,
     vendors   : [],
     models    : LABELS,
@@ -287,6 +376,10 @@ export function view_new(): View {
     minds     : new Map(),
     pages     : new Map(),
     page      : null,
+    expanded  : new Set(),
+    pulses    : new Map(),
+    heard     : null,
+    alerted   : new Map(),
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -336,7 +429,7 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "state": {
       const { $, ...state } = msg;
-      Object.assign(v, state);
+      Object.assign(v, state, { crew: state.crew ?? [] });
       return [];
     }
     case "agent": {
@@ -359,6 +452,10 @@ export function view_hear(v: View, msg: Server): Client[] {
       v.notes.push(msg.text);
       return [];
     }
+    case "pulse": {
+      v.pulses.set(msg.name, msg);
+      return [];
+    }
     case "ack": {
       const post = v.out.find((p) => p.msg.id === msg.id);
       v.out = v.out.filter((p) => p !== post);
@@ -379,18 +476,34 @@ export function view_act(v: View, act: Act): Client[] {
       const text   = act.text.trim();
       const images = act.images ?? [];
       // a `/word` reaching here is no command (the terminal ran its
-      // own), but /goal (a message, sent as typed, set as the goal) and
-      // /halt: it errs, never goes to the AI as a message
+      // own), but /goal (a message, sent as typed, set as the goal),
+      // /halt and /agent (an agent on the task): it errs, never goes to
+      // the AI as a message
       const word   = /^\/[a-z]+(?=\s|$)/i.exec(text)?.[0];
       const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
         return [];
+      }
+      // !command: run with the shell on a device, its output a note the
+      // AI reads (as Claude Code's), from any page
+      if (text.startsWith("!")) {
+        const command = text.slice(1).trim();
+        v.notes.push(...(command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []));
+        return command === "" ? [] : [{ $: "bang", command }];
+      }
+      if (v.page !== null) {
+        return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
       }
       if (text === "" && images.length === 0) {
         return v.busy ? [{ $: "stop", name: TURN }] : [];
       }
       if (word === "/halt") {
         return [{ $: "goal", text: null }];
+      }
+      if (word === "/agent") {
+        const task = text.slice(word.length).trim();
+        v.notes.push(...(task === "" ? ["/agent needs a task: /agent <task>."] : []));
+        return task === "" ? [] : [{ $: "spawn", task }];
       }
       if (goal === "") {
         v.notes.push("/goal needs one: /goal <message>.");
@@ -435,6 +548,42 @@ export function view_act(v: View, act: Act): Client[] {
       v.open.clear();
       v.fold = act.on ? [] : null;
       return act.on ? [{ $: "root" }] : [];
+    }
+    case "Dismiss": {
+      return [{ $: "dismiss", name: act.name }];
+    }
+    case "Approve": {
+      return [{ $: "approve", name: act.name, yes: act.yes }];
+    }
+    case "Stop": {
+      return [{ $: "stop", name: act.name }];
+    }
+    case "Tell": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "tell", name: act.name, text }];
+    }
+    case "Answer": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "answer", q: act.q, text }];
+    }
+    case "Drop": {
+      return [{ $: "answer", q: act.q }];
+    }
+    case "Mode": {
+      return [{ $: "mode", mode: act.mode ?? Modes.next(Modes.read(v.mode)) }];
+    }
+    case "Verdict": {
+      const text = (act.text ?? "").trim();
+      return [{ $: "plan", yes: act.yes, ...(act.mode === undefined ? {} : { mode: act.mode }), ...(text === "" ? {} : { text }) }];
+    }
+    case "Consent": {
+      return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Expand": {
+      if (!v.expanded.delete(act.name)) {
+        v.expanded.add(act.name);
+      }
+      return [];
     }
     case "Goto": {
       if (act.name === null) {
@@ -514,9 +663,12 @@ export function progress_need(p: Progress, credits: number | null): number {
 
 // the chat, each agent at work, and the page shown while its agent is
 // done (so it can be left: the tabs were the way back, and hid)
+// Legion, then the agents: in crew order (View.view_crew) if the
+// server tells the crew, else those at work; the page shown too
 export function view_tabs(v: View): Tab[] {
   const at    = v.page === null ? null : v.page.name;
-  const names = at === null || v.agents.includes(at) ? v.agents : [...v.agents, at];
+  const known = v.crew.length > 0 ? view_crew(v, 0).map((r) => r.name) : v.agents;
+  const names = at === null || known.includes(at) ? known : [...known, at];
   return [null, ...names].map((name) => {
     const here = name === at;
     const text = (here ? GLYPH.here : GLYPH.tab) + " " + (name ?? MAIN);
@@ -531,8 +683,364 @@ export function view_fold(v: View): string | null {
   return v.fold === null ? "fold all" : "unfold all";
 }
 
-export function view_typing(v: View): boolean {
-  return v.page === null;
+// the agent of the crew (or at work) whose name starts with arg, else arg
+export function view_named(v: View, arg: string): string {
+  const names = [...v.crew.map((c) => c.name), ...v.agents];
+  return names.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
+}
+
+// typing goes to Legion, or on an agent's page to that agent
+export function view_typing(_v: View): boolean {
+  return true;
+}
+
+// the crew in rows: each agent under who started it, siblings failed
+// first, then at work, waiting, stopped, done, the latest first
+export function view_crew(v: View, now: number): CrewRow[] {
+  const known = new Set(v.crew.map((c) => c.name));
+  const kids = (parent: string) => v.crew
+    .filter((c) => c.parent === parent || (parent === "main" && !known.has(c.parent)))
+    .filter((c) => c.name !== parent)
+    .sort((a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || b.since - a.since);
+  const rows: CrewRow[] = [];
+  const add = (parent: string, depth: number) => {
+    for (const c of kids(parent)) {
+      if (rows.length < v.crew.length && !rows.some((r) => r.name === c.name)) {
+        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + view_label(c) + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
+        add(c.name, depth + 1);
+      }
+    }
+  };
+  add("main", 0);
+  return rows;
+}
+
+// how far an agent's checklist is (Tools.todo): done/all; no checklist: ""
+export function view_todo(c: Crew): string {
+  const list = c.todo ?? [];
+  return list.length === 0 ? "" : list.filter((x) => x.status === "done").length + "/" + list.length;
+}
+
+// how far, and the item it is doing, as "1/3: Fix the race" (none doing:
+// how far only)
+export function view_step(c: Crew): string {
+  const doing = c.todo?.find((x) => x.status === "doing")?.text;
+  return doing === undefined ? view_todo(c) : view_todo(c) + ": " + doing;
+}
+
+// an agent as a line of text says it: its title (its goal) and name, or
+// its name, then its repos
+export function view_label(c: Crew): string {
+  const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";
+  return (c.title === undefined ? c.name : c.title + " (" + c.name + ")") + repos;
+}
+
+// what the person is alerted to since the state last asked (a client
+// shows them only when it isn't in front): an agent that failed, a turn
+// that ended; none from the first state heard, each key at most once in
+// ALERT_GAP ms
+export function view_alerts(v: View, now: number): Alert[] {
+  const was = v.heard;
+  v.heard = { busy: v.busy, status: new Map(v.crew.map((c) => [c.name, c.status])) };
+  if (was === null) {
+    return [];
+  }
+  const fresh = (status: Status) => v.crew.filter((c) => c.status === status && was.status.get(c.name) !== status);
+  const asks = fresh("asking").map((c): Alert => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
+  const failed = [...asks, ...fresh("failed").map((c): Alert => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
+  const ended: Alert[] = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  // what newly waits for the person (keyed, so each comes once)
+  const asked = view_questions(v).map((q): Alert => ({ key: "question " + q.id, title: MAIN + " asks", body: q.text.split("\n")[0]!.slice(0, 200), name: null }));
+  const plan: Alert[] = v.plan ? [{ key: "plan " + v.plan.date, title: "Plan ready", body: MAIN + "'s plan waits for your approval (/plan).", name: null }] : [];
+  const calls = (v.calls ?? []).map((c): Alert => ({ key: "call " + c.id + " " + c.what, title: c.who + " wants to run a command", body: c.what.slice(0, 200) + ": /allow " + c.id + " or /refuse " + c.id + ".", name: null }));
+  const once = [...asked, ...plan, ...calls].filter((a) => !v.alerted.has(a.key));
+  once.forEach((a) => v.alerted.set(a.key, now));
+  return [...failed, ...ended].filter((a) => {
+    const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
+    if (due) {
+      v.alerted.set(a.key, now);
+    }
+    return due;
+  }).concat(once);
+}
+
+// the Crew tree: the crew's rows (view_crew), a manager's children shown
+// once opened, or while the agent in focus is under it; each row with
+// what's under it, by status
+export function view_tree(v: View, now: number): TreeRow[] {
+  const rows = view_crew(v, now);
+  const up = new Map(v.crew.map((c) => [c.name, c.parent]));
+  const focus = new Set<string>();
+  for (let at = up.get(v.page?.name ?? ""), k = 0; at !== undefined && k < rows.length; k++) {
+    focus.add(at);
+    at = up.get(at);
+  }
+  const out: TreeRow[] = [];
+  let shut = Infinity;
+  rows.forEach((r, i) => {
+    if (r.depth > shut) {
+      return;
+    }
+    shut = Infinity;
+    const end = rows.findIndex((s, j) => j > i && s.depth <= r.depth);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const open = under.length > 0 && (v.expanded.has(r.name) || focus.has(r.name));
+    out.push({ ...r, kids: under.length, rollup: rollup(under), open });
+    if (under.length > 0 && !open) {
+      shut = r.depth;
+    }
+  });
+  return out;
+}
+
+// agents by status, in ROLLUP order: "3 working, 1 failed" ("": none)
+const ROLLUP: Status[] = ["working", "waiting", "asking", "failed", "stopped", "done"];
+function rollup(crew: Crew[]): string {
+  return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length] as const)
+    .filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+
+// a key on the terminal's full-screen Crew (Paint.crew_full): the agent
+// selected next (by name: the tree may change under it), the acts it
+// sends, whether the screen closes (focus: the agent whose page to show)
+export type Full = { sel: string | null; acts: Client[]; done: boolean; focus?: string };
+
+export function view_full(v: View, sel: string | null, key: string): Full {
+  const rows = view_tree(v, 0);
+  const at = Math.max(0, rows.findIndex((r) => r.name === sel));
+  const row = rows[at];
+  const name = row?.name ?? null;
+  const go = (k: number): Full => ({ sel: rows[Math.min(rows.length - 1, Math.max(0, k))]?.name ?? null, acts: [], done: false });
+  const now = (acts: Client[]): Full => ({ sel: name, acts, done: false });
+  const at_work = row?.status === "working" || row?.status === "waiting";
+  switch (key) {
+    case "Up": case "k": return go(at - 1);
+    case "Down": case "j": return go(at + 1);
+    case "Right": case "l": case "Left": case "h": case " ": {
+      const want = key === " " ? !row?.open : key === "Right" || key === "l";
+      return now(row !== undefined && row.kids > 0 && row.open !== want ? view_act(v, { $: "Expand", name: row.name }) : []);
+    }
+    case "s": return now(row !== undefined && at_work ? view_act(v, { $: "Stop", name: row.name }) : []);
+    case "a": case "d": return now(row?.status === "asking" ? view_act(v, { $: "Approve", name: row.name, yes: key === "a" }) : []);
+    case "x": return now(row !== undefined && !at_work && row.status !== "asking" ? view_act(v, { $: "Dismiss", name: row.name }) : []);
+    case "Enter": return { sel: name, acts: [], done: true, focus: name ?? undefined };
+    case "Esc": case "q": return { sel: name, acts: [], done: true };
+  }
+  return now([]);
+}
+
+// a mark on the timeline lane: the message it is (k, in its page's log;
+// null: none), where (0: the first, 1: the last or now), what, its
+// label, its time (ms since 1970)
+export type Mark = { k: number | null; at: number; kind: "told" | "tool" | "words" | "note" | "spawn" | "stall"; label: string; t: number };
+
+// a gap past STALL ms with nothing in it is a stall
+const STALL = 120000;
+const LANE: Partial<Record<Kind, Mark["kind"]>> = { user: "told", tool: "tool", unii: "words", work: "words", note: "note", echo: "note" };
+
+// the lane of the agent in focus: its messages with a date (thoughts
+// left out), the agents it started, a stall per quiet gap; one at work
+// runs to now, a quiet end a stall too
+export function view_lane(v: View, now: number): Mark[] {
+  const page = v.page;
+  if (page === null) {
+    return [];
+  }
+  const line = (text: string) => text.split("\n").map((l) => l.trim()).filter((l) => l !== "").at(-1)?.slice(0, 120) ?? "";
+  const said = (page.log ?? []).flatMap((e, k): Mark[] => {
+    const t = Date.parse(e.date ?? "");
+    const kind = LANE[e.kind];
+    return kind === undefined || Number.isNaN(t) ? [] : [{ k, at: 0, kind, label: line(e.text), t }];
+  });
+  const kids = v.crew.filter((c) => c.parent === page.name).map((c): Mark => ({ k: null, at: 0, kind: "spawn", label: "started " + c.name, t: c.since }));
+  const marks = [...said, ...kids].sort((a, b) => a.t - b.t);
+  if (marks.length === 0) {
+    return [];
+  }
+  const busy = v.crew.some((c) => c.name === page.name && (c.status === "working" || c.status === "waiting"));
+  const end = busy ? Math.max(now, marks[marks.length - 1].t) : marks[marks.length - 1].t;
+  const quiet = (a: number, b: number): Mark[] => b - a > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(b - a), t: (a + b) / 2 }] : [];
+  const all = marks.flatMap((m, i) => (i === 0 ? [m] : [...quiet(marks[i - 1].t, m.t), m]));
+  const tail = busy && end - marks[marks.length - 1].t > STALL ? [{ k: null, at: 0, kind: "stall" as const, label: "quiet " + ago(end - marks[marks.length - 1].t), t: end }] : [];
+  const t0 = marks[0].t;
+  return [...all, ...tail].map((m) => ({ ...m, at: end === t0 ? 0 : (m.t - t0) / (end - t0) }));
+}
+
+// the agents the view has in sight, whose deltas it hears (the server
+// tells their pulses to all): its focus, then the tiles shown; at most
+// WATCH, as the server keeps
+const WATCH = 16;
+export function view_watch(v: View, tiles: string[] = []): string[] {
+  return [...new Set([...(v.page === null ? [] : [v.page.name]), ...tiles])].slice(0, WATCH);
+}
+
+// the Crew grid: a tile per agent Unii started, in the tree's order
+export function view_tiles(v: View, now: number): Tile[] {
+  const rows = view_crew(v, now);
+  return rows.flatMap((r, i) => {
+    if (r.depth > 0) {
+      return [];
+    }
+    const end = rows.findIndex((s, j) => j > i && s.depth === 0);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const { depth, text, ...crew } = r;
+    return [{ ...crew, dots: under.map((u) => ({ name: u.name, status: u.status })), rollup: rollup(under) }];
+  });
+}
+
+// the agents that need the person, those asking first, then the failed
+export function view_needs(v: View): Crew[] {
+  return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
+}
+
+// the Chat's pill: "3 working, 2 need you" ("": no crew)
+export function view_pill(v: View): string {
+  const asked = view_questions(v).length + view_waiting(v);
+  if (v.crew.length === 0) {
+    return asked > 0 ? asked + " need you" : "";
+  }
+  const need = view_needs(v).length + asked;
+  return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+
+// what the status line says (as Claude Code's), in the terminal and on
+// the web: offline first, the folder Unii works in and its branch, its
+// model, the agents at work, today's LiteLLM spend (Cost.ts; * stale),
+// the mode, the orchestrator's questions open
+export type StatusLine = { up: boolean; dir: string; branch: string | null; model: string; working: number; spend: { spend: number | null; stale: boolean }; questions?: number; mode?: Perm; waiting?: number };
+
+export function status_text(s: StatusLine): string {
+  const usd = (n: number) => (n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2));
+  return [
+    ...(s.up ? [] : ["offline"]),
+    s.dir + (s.branch === null ? "" : " ⎇ " + s.branch),
+    s.model,
+    ...(s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"]),
+    ...(s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"]),
+    ...(s.mode === undefined ? [] : [s.mode + " mode"]),
+    ...(!s.waiting ? [] : [s.waiting + " waiting for you"]),
+    ...(!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]),
+  ].join(" · ");
+}
+
+// the web's status line: from the latest device's report (Device.ts), the
+// pick's model, the crew, the mode, the questions; no report yet: ""
+export function view_status(v: View): string {
+  const s = v.status;
+  if (s === undefined || s === null) {
+    return "";
+  }
+  const spend = { spend: s.spend, stale: s.stale };
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v) });
+}
+
+// what waits for the person besides questions: the plan, calls
+export function view_waiting(v: View): number {
+  return (v.plan ? 1 : 0) + (v.calls ?? []).length;
+}
+
+// /mode's argument as a Mode act (none: the next); else why not
+export function view_mode_cmd(arg: string): Act | string {
+  const m = arg.trim();
+  if (m === "") {
+    return { $: "Mode" };
+  }
+  return ["plan", "auto", "full"].includes(m) ? { $: "Mode", mode: m as Perm } : "No mode " + m + ": plan, auto or full.";
+}
+
+// /plan: the plan waiting, shown; /plan yes [auto|full], /plan no
+// <feedback>: a Verdict; else why not
+export function view_plan_cmd(v: View, arg: string): Act | string {
+  if (!v.plan) {
+    return "No plan is waiting for you.";
+  }
+  const [word, ...rest] = arg.trim().split(/\s+/);
+  const more = rest.join(" ");
+  if (word === "" || word === undefined) {
+    return "The plan waiting for you:\n" + v.plan.text + "\n/plan yes [auto|full] to approve it, /plan no <feedback> to send it back.";
+  }
+  if (word === "yes" && (more === "" || more === "auto" || more === "full")) {
+    return { $: "Verdict", yes: true, mode: more === "full" ? "full" : "auto" };
+  }
+  if (word === "no") {
+    return { $: "Verdict", yes: false, text: more };
+  }
+  return "/plan, /plan yes [auto|full] or /plan no <feedback>.";
+}
+
+// /allow <n> or /refuse <n>: a Consent to a waiting call; else why not
+export function view_consent_cmd(v: View, arg: string, yes: boolean): Act | string {
+  const c = (v.calls ?? []).find((x) => String(x.id) === arg.trim());
+  return c === undefined ? "No call " + arg.trim() + " waits for you." : { $: "Consent", n: c.id, yes };
+}
+
+// the orchestrator's questions still open, oldest first
+export function view_questions(v: View): Question[] {
+  return [...(v.questions ?? [])].sort((a, b) => a.id - b.id);
+}
+
+// the open questions as the terminal lists them (/questions)
+export function view_questions_note(v: View): string {
+  const qs = view_questions(v);
+  if (qs.length === 0) {
+    return "No open questions.";
+  }
+  const item = (q: Question) => {
+    const [first, ...more] = q.text.split("\n");
+    const pad = " ".repeat(String(q.id).length + 2);
+    return [q.id + ". " + first, ...more.map((l) => pad + l), ...(q.options === undefined ? [] : [pad + "answers: " + q.options.join(" | ")])].join("\n");
+  };
+  return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
+}
+
+// /answer's argument, "<n> <text>", as an Answer: a text that is just the
+// number of one of its offered answers means that answer; else why not
+export function view_answer(v: View, arg: string): Act | string {
+  const m = /^(\S+)\s+([\s\S]*\S)\s*$/.exec(arg.trim());
+  if (m === null) {
+    return "/answer needs a question's number and the answer: /answer <n> <text>.";
+  }
+  const q = view_questions(v).find((x) => String(x.id) === m[1]);
+  if (q === undefined) {
+    return "No open question " + m[1] + ": /questions lists them.";
+  }
+  const k = /^\d+$/.test(m[2]!) ? Number(m[2]) - 1 : -1;
+  return { $: "Answer", q: q.id, text: q.options?.[k] ?? m[2]! };
+}
+
+// /drop's argument, a question's number, as a Drop; else why not
+export function view_drop(v: View, arg: string): Act | string {
+  const q = view_questions(v).find((x) => String(x.id) === arg.trim());
+  return q === undefined ? "No open question " + arg.trim() + ": /questions lists them." : { $: "Drop", q: q.id };
+}
+
+// the web's route by its hash, and back
+export function view_route(hash: string): Route {
+  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  if (m === null || m[1] === "chat") {
+    return { mode: "chat", name: null };
+  }
+  return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
+}
+
+export function view_hash(mode: Mode, name: string | null): string {
+  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+}
+
+// the Claude Code workers waiting for the person's approval, by name
+export function view_asking(v: View): string[] {
+  return v.crew.filter((c) => c.status === "asking").map((c) => c.name);
+}
+
+// the agents that need the person: failed ones
+export function view_attention(v: View): CrewRow[] {
+  return view_crew(v, Date.now()).filter((r) => r.status === "failed");
+}
+
+// a time span, short: 45s, 3m, 2h
+function ago(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h";
 }
 
 export function view_running(v: View): boolean {

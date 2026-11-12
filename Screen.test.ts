@@ -44,6 +44,19 @@ test("kitty's keys never leak into the text, whatever their reads", () => {
   });
 });
 
+test("a character a terminal sends as a sequence, Shift or none held, is typed, whatever its reads", () => {
+  // kitty's (code, its shifted alternate; repeat), modifyOtherKeys'; a
+  // release, Ctrl and Shift+Enter stay keys
+  splits("a\x1b[115;2uE\x1b[99:67;2:2u\x1b[32;2u\x1b[27;2;69~\x1b[100;1u!\x1b[47:63;2u\x1b[115;1:3u\x1b[115;5u\x1b[13;2u", (text, keys) => {
+    expect(text).toBe("aSEC Ed!?\n");
+    expect(keys).toEqual(["S", "Ctrl+S"]);
+  });
+});
+
+test("kitty's alternate keys are asked, so Shift+/ comes as ? (the shifted key's own code; upper case is only right for letters)", () => {
+  expect(Screen.MODES_ON).toContain("\x1b[>5u");
+});
+
 test("a pipe's last line, without a newline, waits in the input for the end", () => {
   const sent: string[] = [];
   const ed  = { text: "", pos: 0, hist: [], at: 0, draft: "", moved: false, w: 80, tall: 1 };
@@ -96,4 +109,14 @@ test("a frame never passes its width, however long its title", () => {
   const diff = "--- a/" + "dir/".repeat(30) + "f.ts\n+++ b/" + "dir/".repeat(30) + "f.ts\n@@ -1,1 +1,1 @@\n-x\n+y";
   const rows = View.entry_rows(1, "echo", diff);
   expect(Paint.rows_lines(rows, 60).map((l) => Paint.text_width(l.map((r) => r.x).join("")))).toEqual([60, 60, 60, 60]);
+});
+
+// the terminal tells focus (CSI ?1004h asked): CSI I in, CSI O out, as
+// keys, never typed
+test("focus in and out come as keys, never as text", () => {
+  expect(Screen.MODES_ON).toContain("\x1b[?1004h");
+  splits("a\x1b[Ib\x1b[O", (text, keys) => {
+    expect(text).toBe("ab");
+    expect(keys).toEqual(["FocusIn", "FocusOut"]);
+  });
 });

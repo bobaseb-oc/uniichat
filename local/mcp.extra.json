@@ -1,0 +1,19 @@
+{
+  "playwright": {
+    "command": "local/tools/node_modules/.bin/playwright-mcp",
+    "args": ["--browser", "chrome", "--user-data-dir", "~/.unii/browser/playwright", "--output-dir", "~/.unii/browser/playwright-out"],
+    "allowed_origins": ["http://localhost:*", "http://127.0.0.1:*"]
+  },
+  "chrome-devtools": {
+    "command": "local/tools/node_modules/.bin/chrome-devtools-mcp",
+    "args": [
+      "--channel", "stable", "--userDataDir", "~/.unii/browser/chrome",
+      "--allowedUrlPattern", "http://localhost:*/*", "--allowedUrlPattern", "http://127.0.0.1:*/*",
+      "--no-usage-statistics", "--no-performance-crux"
+    ]
+  },
+  "atlassian": {
+    "url": "https://mcp.atlassian.com/v2/mcp",
+    "oauth": true
+  }
+}

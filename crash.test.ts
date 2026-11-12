@@ -33,6 +33,7 @@ test("a worker outlives a failure no one owned", async () => {
 test("an agent whose run throws still reports", async () => {
   let told = "";
   const tools: any = {
+    agents: new Map(),
     hooks: {
       change: () => {
         throw new Error("boom");
@@ -41,7 +42,7 @@ test("an agent whose run throws still reports", async () => {
       report: (_agent: unknown, text: string) => (told = text),
     },
   };
-  const agent: any = { name: "Probe", call: null, replies: [], stop: false };
+  const agent: any = { name: "Probe", parent: "main", call: null, replies: [], stop: false };
   const call: any = { done: Promise.resolve({ ok: true, text: "never", left: [] }) };
   await Tools.run(tools, agent, call);
   expect(agent.call).toBeNull();

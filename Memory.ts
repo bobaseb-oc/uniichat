@@ -47,11 +47,18 @@
 // the chat.
 // Memory holds only the view's nodes and those built above them; any
 // other line is read by its index. Images are in docs/images/ by their
-// hash; an agent's log in docs/agent/<Name>.jsonl.
+// hash. An agent's log is a chat of its own, in docs/agent/<Name>/: its
+// tree compresses as the chat's does, on the chat's payer, and its call
+// sees its view (agent_blocks), as a turn sees the chat's. An older
+// agent's log, docs/agent/<Name>.jsonl, is read as it is, and moves onto
+// a tree (kept beside it) only as the agent logs again: reading one asks
+// no summary.
 
 import * as fs from "node:fs";
 import { AskAI, type Ask, type Bill, type Block, type Call, type Img, type Kind, type Pay, type Say, type Served } from "./AskAI.ts";
 import { clip_page, clip_pages } from "./Clip.ts";
+import { type Mode, Modes } from "./Modes.ts";
+import type { Question } from "./View.ts";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
 import { Pick } from "./Pick.ts";
@@ -79,8 +86,13 @@ type View = { parts: Part[]; size: number; batch: boolean; high: number };
 // a summary running: its node, what it serves
 type Sum = Part & { kind: Served };
 
-// a summary running as its chat moved (Memory.give): its node, its call's id
-export type Given = [number, number, string];
+// what an agent's call sees (Memory.agent_blocks): its view's lines, then
+// its latest messages raw
+export type Seen = { view: Block[]; log: Block };
+
+// a summary running as its chat moved (Memory.give): its node, its call's id,
+// its agent's name (none: the chat's)
+export type Given = [number, number, string, string?];
 
 // what a compaction shares with the chat's turns: all but the blocks
 export type Share = Omit<Ask, "blocks">;
@@ -94,14 +106,22 @@ type End = [number, number];
 // a view in view.json
 type Kept = { parts: Array<[number, number]>; batch: boolean };
 
+// the orchestrator's plan waiting for the user's approval: its text, when
+export type Plan = { text: string; date: string };
+
 // view.json: the chat's view, the compactions' (none: the chat's)
-type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[] };
+type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; questions?: Question[]; asked?: number; mode?: Mode; plan?: Plan | null };
 
 // fds: files read lately, open, oldest first; count: the pages logged
 // whole; open: those after, not whole yet; pick: the chat's, as last set;
 // goal: the user's (/goal; null: none), till met or halted (Server.ts);
+// questions: the orchestrator's to the user still open (Tools.question), asked:
+// the last one's number (never reused); mode: the chat's (Modes.ts; none
+// saved: auto); plan: the orchestrator's plan waiting for the user's yes
+// (Tools.plan), or none;
 // work: what ran, as last saved; nodes: the texts of the views' nodes
-// built and of those above them, by slot; agents: their logs' lengths;
+// built and of those above them, by slot; agents: their trees, each a
+// Memory of its own (docs/agent/<Name>/), as opened;
 // view: the chat's view; seen: the compactions'; ready: the nodes not
 // built whose halves are, by side and level, in order; ends: how far
 // each log is indexed; busy: nodes building, by slot, with their side;
@@ -117,9 +137,13 @@ export type Memory = {
   open   : number;
   pick   : object | null;
   goal   : string | null;
+  questions: Question[];
+  asked  : number;
+  mode   : Mode;
+  plan   : Plan | null;
   work   : string[];
   nodes  : Map<number, string>;
-  agents : Map<string, number>;
+  agents : Map<string, Memory>;
   view   : View;
   seen   : View;
   ready  : number[][][];
@@ -141,6 +165,9 @@ export type Memory = {
 
 const NODE  = 512;
 export const JOBS = 64;
+// the agents' trees a chat holds open at most (Memory.agent_trim): each
+// holds its indexes and a few day files
+export const OPEN = 16;
 const TRIES = 5;
 // a view past its `high` merges to half: the chat's 64-128 KB (96 KB on
 // average), the compactions' 16-32 KB (24 KB)
@@ -196,13 +223,17 @@ export namespace Memory {
 
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, work: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, questions: [], asked: 0, mode: "auto", plan: null, work: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: SEEN },
       busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted,
     };
     const saved = Memory.saved(dir);
     mem.pick = saved?.pick ?? null;
     mem.goal = saved?.goal ?? null;
+    mem.questions = Array.isArray(saved?.questions) ? saved.questions : [];
+    mem.asked = Number(saved?.asked ?? 0) || 0;
+    mem.mode = Modes.read(saved?.mode);
+    mem.plan = typeof saved?.plan?.text === "string" ? saved.plan : null;
     mem.work = saved?.work ?? [];
     mem.ends.main = Memory.index(mem, "main", saved?.main ?? [0, 0]);
     mem.ends.tree = Memory.index(mem, "tree", saved?.tree ?? [0, 0]);
@@ -239,7 +270,7 @@ export namespace Memory {
   export function save(mem: Memory): void {
     const file = mem.dir + "/view.json";
     const [chat, seen] = [mem.view, mem.seen].map((view): Kept => ({ parts: view.parts.map((part) => [part.l, part.i]), batch: view.batch }));
-    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, work: mem.work, ...mem.ends }));
+    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, questions: mem.questions, asked: mem.asked, mode: mem.mode, plan: mem.plan, work: mem.work, ...mem.ends }));
     fs.renameSync(file + ".new", file);
     Disk.wrote(file);
   }
@@ -614,6 +645,8 @@ export namespace Memory {
 
   // the nodes to build; those whose source fits take no call: built at
   // once, together (as jobs, a chain of them held the event loop)
+  // (and its agents': a side let go, as credit comes back, goes on there
+  // too)
   export function pump(mem: Memory): void {
     let built = false;
     for (let free = Memory.starts(mem); free.length > 0 && !mem.done; free = Memory.starts(mem)) {
@@ -623,6 +656,7 @@ export namespace Memory {
     if (built) {
       Memory.fit(mem);
     }
+    mem.agents.forEach(Memory.pump);
   }
 
   // of each side not held, the nodes ready up to its JOBS-th line not
@@ -695,6 +729,7 @@ export namespace Memory {
   // no node starts again (the chat moves: Memory.give)
   export function halt(mem: Memory): void {
     mem.done = true;
+    mem.agents.forEach(Memory.halt);
   }
 
   // nor runs: those running are cut
@@ -703,6 +738,7 @@ export namespace Memory {
     mem.calls.forEach((_, call) => call.stop());
     mem.fds.forEach((fd) => fs.closeSync(fd));
     mem.fds.clear();
+    mem.agents.forEach(Memory.stop);
   }
 
   // the summaries running, as the chat moves to another process (Server.ts
@@ -711,15 +747,21 @@ export namespace Memory {
   export function give(mem: Memory, far: (call: Call) => string): Given[] {
     const given = [...mem.calls].map(([call, { l, i }]): Given => [l, i, far(call)]);
     mem.calls.clear();
+    for (const [name, sub] of mem.agents) {
+      given.push(...Memory.give(sub, far).map(([l, i, id]): Given => [l, i, id, name]));
+    }
     return given;
   }
 
   // the summaries a chat moved here was running (Memory.give) build here
   // as their calls end there: `far` makes the call of an id, paid here
   export function take(mem: Memory, given: Given[], far: (id: string, bill?: Bill) => Call): void {
-    for (const [l, i, id] of given) {
-      const text = Memory.source(mem, l, i)!;
-      Memory.job(mem, l, i, text, far(id, Memory.bill(mem, l, i, text)));
+    for (const [l, i, id, name] of given) {
+      const at = name === undefined ? mem : Memory.agent_mem(mem, name);
+      const text = at === null ? null : Memory.source(at, l, i);
+      if (at !== null && text !== null) {
+        Memory.job(at, l, i, text, far(id, Memory.bill(at, l, i, text)));
+      }
     }
   }
 
@@ -1087,7 +1129,7 @@ ${Memory.cut(line)}| ← LIMIT`;
     }
     yield '],\n"agents": {';
     sep = "\n";
-    for (const name of ls(AGENTS).map((file) => file.replace(/\.jsonl$/, ""))) {
+    for (const name of new Set<string>(ls(AGENTS).map((file: string) => file.replace(/\.jsonl$/, "")))) {
       const log = Memory.agent(mem, name);
       if (log === null) {
         continue;
@@ -1126,7 +1168,7 @@ ${Memory.cut(line)}| ← LIMIT`;
     };
     const levels = Memory.levels(mem);
     const menu = ["VIEW", "ROOT", ...levels.map((l) => "LVL" + l)].map((name) => `<a href="#${name}">${name}</a>`);
-    yield `<!doctype html><meta charset="utf-8"><title>UniiChat memory</title>
+    yield `<!doctype html><meta charset="utf-8"><title>Legion memory</title>
 <style>
 body { font: 13px/1.4 ui-monospace, monospace; margin: 2em; } nav a { margin-right: 1em; }
 section { display: none; } section:target { display: block; }
@@ -1153,34 +1195,106 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
   // Agents
   // ------
 
-  // read whole; a name is letters and hyphens, never a path
-  export function agent(mem: Memory, name: string): Root[] | null {
-    const file = mem.dir + AGENTS + name + ".jsonl";
-    return /^[A-Za-z-]+$/.test(name) && fs.existsSync(file) ? Memory.file(file) : null;
+  // a name is letters and hyphens, never a path
+  export function agent_name(name: string): boolean {
+    return /^[A-Za-z-]+$/.test(name);
   }
 
+  // its tree, opened once (its summaries paid as the chat's); an older
+  // log moved onto it first. null: no such agent
+  export function agent_mem(mem: Memory, name: string): Memory | null {
+    const open = mem.agents.get(name);
+    if (open !== undefined) {
+      mem.agents.delete(name);
+      mem.agents.set(name, open);
+      return open;
+    }
+    if (!Memory.agent_name(name)) {
+      return null;
+    }
+    const dir = mem.dir + AGENTS + name;
+    const old = dir + ".jsonl";
+    if (!fs.existsSync(dir + "/main.index") && !fs.existsSync(old)) {
+      return null;
+    }
+    const sub = Memory.agent_load(mem, dir);
+    if (sub.count === 0 && fs.existsSync(old)) {
+      Memory.push(sub, Memory.file(old).map(({ kind, text, date }: Root) => ({ kind, text, date })));
+    }
+    return sub;
+  }
+
+  // an agent's tree, opened: paid as the chat is, whatever pays it now
+  // (never free for having opened before its payer was set), held as
+  // its sides are (the one array: the payer holds the chat's, Billing.ts,
+  // so a refused summary is asked once, never in a loop), halted with it
+  export function agent_load(mem: Memory, dir: string): Memory {
+    const sub = Memory.load(dir, mem.share);
+    Object.defineProperty(sub, "pay", { get: () => mem.pay });
+    sub.hold = mem.hold;
+    sub.done = mem.done;
+    const name = dir.slice(dir.lastIndexOf("/") + 1);
+    mem.agents.set(name, sub);
+    Memory.agent_trim(mem, name);
+    return sub;
+  }
+
+  // past OPEN trees open, the idle ones (no summary running) used longest
+  // ago close, their files with them, but `keep`; one used again opens
+  // anew (its summaries not built go on as the chat's pump, or a call
+  // waiting on them, starts them: Memory.agent_blocks)
+  export function agent_trim(mem: Memory, keep: string): void {
+    for (const [name, sub] of mem.agents) {
+      if (mem.agents.size <= OPEN) {
+        return;
+      }
+      if (name !== keep && sub.calls.size === 0 && sub.busy.size === 0) {
+        Memory.stop(sub);
+        mem.agents.delete(name);
+      }
+    }
+  }
+
+  // its log, read whole (an older one's from its file: no tree opened)
+  export function agent(mem: Memory, name: string): Root[] | null {
+    const dir = mem.dir + AGENTS + name;
+    if (!Memory.agent_name(name)) {
+      return null;
+    }
+    if (!mem.agents.has(name) && !fs.existsSync(dir + "/main.index")) {
+      return fs.existsSync(dir + ".jsonl") ? Memory.file(dir + ".jsonl") : null;
+    }
+    const sub = Memory.agent_mem(mem, name)!;
+    return Array.from({ length: sub.count }, (_, i) => Memory.message(sub, i)!);
+  }
+
+  // a name not taken, its tree made
   export function agent_new(mem: Memory): string {
     const name = names.name_random();
     fs.mkdirSync(mem.dir + AGENTS, { recursive: true });
     try {
-      fs.writeFileSync(mem.dir + AGENTS + name + ".jsonl", "", { flag: "wx" });
+      fs.mkdirSync(mem.dir + AGENTS + name);
     } catch (err: any) {
       if (err.code === "EEXIST") {
         return Memory.agent_new(mem);
       }
       throw err;
     }
-    mem.agents.set(name, 0);
+    if (fs.existsSync(mem.dir + AGENTS + name + ".jsonl")) {
+      fs.rmdirSync(mem.dir + AGENTS + name);
+      return Memory.agent_new(mem);
+    }
+    Memory.agent_load(mem, mem.dir + AGENTS + name);
     return name;
   }
 
-  // its length read once, then counted (mem.agents)
-  export function agent_push(mem: Memory, name: string, kind: Kind, text: string): number {
-    const n = mem.agents.get(name) ?? Memory.agent(mem, name)?.length ?? 0;
-    const root = Memory.root(n, { kind, text });
-    Memory.append(mem.dir + AGENTS + name + ".jsonl", [JSON.stringify(root)]);
-    mem.agents.set(name, n + 1);
-    return root.i;
+  // logged on its tree (in pages, as the chat's); its pages
+  export function agent_push(mem: Memory, name: string, kind: Kind, text: string): Root[] {
+    const sub = Memory.agent_mem(mem, name);
+    if (sub === null) {
+      throw new Error("no agent " + name);
+    }
+    return Memory.push(sub, [{ kind, text }]);
   }
 
   export function agent_show(mem: Memory, name: string): string {
@@ -1189,6 +1303,37 @@ h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; w
 
   export function agent_line(root: Root): string {
     return root.i + "|" + Memory.show(root);
+  }
+
+  // what an agent's call sees, as a turn sees the chat (Server.ts
+  // Chat.call): its view's lines up to its latest task or message, its
+  // summaries waited for, then its log from there raw; that task or
+  // message word for word even if older (a roll's lines summarize the
+  // rest). A string: why not (Memory.settle)
+  export async function agent_blocks(mem: Memory, name: string, signal: AbortSignal): Promise<Seen | string> {
+    const sub = Memory.agent_mem(mem, name);
+    if (sub === null) {
+      return "No agent " + name + ".";
+    }
+    let last = sub.count - 1;
+    while (last > 0 && Memory.message(sub, last)?.kind !== "user") {
+      last -= 1;
+    }
+    last = Math.max(0, last);
+    const from = Memory.whole(sub, last);
+    Memory.pump(sub);
+    const why = await Memory.settle(sub, from, signal);
+    if (why !== null) {
+      return why;
+    }
+    const task = last < from ? Memory.agent_line(Memory.message(sub, last)!) + "\n\n" : "";
+    return { view: Memory.view(sub, from), log: { text: task + Memory.tail(sub, from), mark: true } };
+  }
+
+  // the messages from `from` on, as "i|kind: text" lines: an agent's
+  // latest, a rolled turn's steps (Server.ts)
+  export function tail(mem: Memory, from: number): string {
+    return Array.from({ length: mem.count - from }, (_, k) => Memory.agent_line(Memory.message(mem, from + k)!)).join("\n\n");
   }
 
 }

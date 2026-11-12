@@ -3,16 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="description" content="UniiChat: the one chat you keep forever. It never forgets.">
+<meta name="description" content="Legion: the one chat you keep forever. It never forgets.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://uniichat.com/">
-<meta property="og:title" content="UniiChat">
+<meta property="og:title" content="Legion">
 <meta property="og:description" content="Your entire life. One single chat.">
-<meta property="og:image" content="https://uniichat.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<title>UniiChat</title>
+<title>Legion</title>
 <link rel="icon" href="/favicon.svg">
 <link rel="stylesheet" href="/style.css">
 <script type="module" src="/app.js"></script>
@@ -20,13 +18,19 @@
 <!-- the page, as a guest sees it until signed in (web/src/main.ts) -->
 <body class="guest">
 <header>
-  <button class="brand" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>UniiChat</span></button>
+  <button class="brand" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>Legion</span></button>
+  <nav id="mode"></nav>
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="credits" data-go="/account"></button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
+<!-- the Crew view (#crew): who needs you, the agent in focus, the tree; the log shows the focus's session -->
+<aside id="crew" hidden><section class="needs"></section><div class="card"></div><div class="tree"></div></aside>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
+<aside id="questions" hidden></aside>
+<!-- the Crew grid (#crew, no agent in focus): a tile per agent Unii started -->
+<main id="grid" hidden></main>
 <main id="account" hidden></main>
 <footer>
   <div id="toast" hidden></div>
@@ -37,6 +41,7 @@
     <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
     <textarea rows="1" inputmode="email" autocomplete="email" enterkeyhint="send"></textarea><div class="voice"><canvas></canvas><span>0:00</span></div><button class="mic" type="button" aria-label="dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="send" type="submit" aria-label="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
   </form>
+  <div id="status"></div>
   <nav id="tabs"></nav>
   <p class="ai"></p>
 </footer>
@@ -53,7 +58,7 @@
 <div id="risk" popover="manual">
   <p class="title">⚠️ WARNING: use at your own risk</p>
   <ul>
-    <li>UniiChat is <a href="/experimental.jpg" target="_blank">experimental</a>. Expect bugs.</li>
+    <li>Legion is <a href="/experimental.jpg" target="_blank">experimental</a>. Expect bugs.</li>
     <li class="bill">Money you add may be lost. All of it.</li>
     <li>Your uploads may leak. Keep secrets out.</li>
     <li class="bill">Billed by API use, not a subscription.</li>
