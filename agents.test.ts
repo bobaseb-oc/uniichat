@@ -324,6 +324,26 @@ test("a manager spawns workers; a worker's report wakes its manager, never Unii,
   Memory.stop(mem);
 }));
 
+// the parent labels what it spawns, task by task: a title (its goal) and
+// its repos; a task given none has none
+test("spawn labels each agent with its task's title and repos", () => faked(async () => {
+  const mem = Memory.load(DIR + "/labels", () => SHARE);
+  const tools = served(mem, []);
+  script = () => answer("done");
+  try {
+    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the notes"], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
+    expect(out.fail).toBe(false);
+  } finally {
+    script = null;
+  }
+  const [a, b] = Tools.crew(tools);
+  expect(a).toMatchObject({ title: "Fix login tests", repos: ["auth-api", "web"] });
+  expect(b.title).toBeUndefined();
+  expect(b.repos ?? []).toEqual([]);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
 // the payer holds the chat's summaries as its user runs out of credit
 // (Billing.ts: the wallet holds its payee's mem): its agents' trees are
 // held with it, each refused summary asked once, not again and again;
@@ -367,7 +387,8 @@ test("a Claude Code worker asks first; approved it runs on its device and report
   const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the bug"], as: "claude", device: "mac", dir: "~/repos/x" }, go, "1");
   expect(out.fail).toBe(false);
   const name = [...tools.agents.keys()][0];
-  expect(Tools.crew(tools)[0]).toMatchObject({ name, tier: "claude", status: "asking" });
+  // labelled by its dir's folder, as no repos were given
+  expect(Tools.crew(tools)[0]).toMatchObject({ name, tier: "claude", status: "asking", repos: ["x"] });
   expect(sent.filter((m) => m.$ === "job")).toEqual([]);
 
   expect(Tools.approve(tools, name, true)).toContain("Approved");

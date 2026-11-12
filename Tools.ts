@@ -76,6 +76,8 @@ export type Agent = {
   hidden? : boolean; // dismissed from the crew (View.ts) by the person
   asks?   : boolean; // a Claude Code worker waiting for the person's approval
   task?   : string;  // a Claude Code worker's task, as it was given
+  title?  : string;  // its goal, as the person sees it (Tools.label)
+  repos?  : string[]; // the repos its work touches (Tools.label)
   abort?  : AbortController; // a Claude Code worker's job's stop
 };
 
@@ -86,6 +88,12 @@ export type Tier = "manager" | "worker";
 // cli: Claude Code itself on a device (Machine.claude), in auto mode, once
 // the person approves; in `dir` there (null: its work dir)
 export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string | null } | { $: "hands"; device: string } | { $: "cli"; device: string; dir: string | null };
+
+// an agent's label (Tools.labels): its goal, the repos its work touches
+export type Label = { title?: string; repos?: string[] };
+const TITLE = 80;
+const REPOS = 8;
+const REPO  = 60;
 
 // a chat's tools as they move to another process (Tools.give): the
 // calls of its agents at work by the id `far` takes (Server.ts)
@@ -307,7 +315,9 @@ const CODE: Spec[] = Object.keys(LSP.langs).length === 0 ? [] : [
   spec("lsp", "Ask a language server about code (" + Object.keys(LSP.langs).join(", ") + "): a symbol's definition, references or hover type, a file's symbols, the workspace's symbols by name (query), or a file's diagnostics (type errors). It reads files on " + os.hostname() + " only, the computer unii's server runs on, not other devices; the file is an absolute path there, its project the nearest folder up with .git, pyproject.toml, package.json or tsconfig.json. Positions are 1-based, as an editor shows them. Answers come as path:line:col, with the source line.", { operation: { type: "string", enum: OPS }, file: STR, line: INT, character: INT, query: { type: "string", description: "The name to look for, for workspaceSymbol." } }, ["operation", "file"]),
 ];
 
+const LABEL = "Set the label the user sees for an agent: title, its goal in a few words (\"Fix flaky login tests\"); repos, the repos its work touches. With no name, your own; else one under you. Keep it true as the work changes: a title \"\" clears it.";
 const OWN: Spec[] = [
+  spec("label", LABEL, { name: STR, title: STR, repos: { type: "array", items: STR } }, []),
   spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. With an agent's name as id, give that agent's whole chat; Name:id opens a line of that agent's chat; ^id, one of the chat of whoever started you. A long text comes in pages from character at, saying where to go on.", { id: { type: ["integer", "string"] }, n: INT, at: INT }, ["id"]),
   spec("date", "The date and time of message id.", { id: { type: ["integer", "string"] } }, ["id"]),
   ...SEARCH,
@@ -317,12 +327,16 @@ const AS = "manager (the default): splits its task among workers of its own and 
 const AS_WORKER = "worker (the default): does its task itself; claude: Claude Code itself does it on a device (give device, and dir: the repo there), in auto mode, once the user approves it: for coding work in a repo.";
 const MODEL = { type: "string", enum: LABELS, description: "The model it runs on: its tier's (the default) or a cheaper one below it, as for a simple task." };
 function boss(main: boolean): Spec[] {
+  const labels = {
+    titles: { type: "array", items: STR, description: "Each task's goal in a few words, in order (\"Fix flaky login tests\"): the label the user sees for it." },
+    repos: { type: "array", items: { type: "array", items: STR }, description: "The repos each task's work touches, in order: shown with its label." },
+  };
   const tasks = { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as their model does." }, model: MODEL };
   const as = { as: { type: "string", enum: main ? ["manager", "worker", "claude"] : ["worker", "claude"], description: main ? AS : AS_WORKER } };
   const where = { device: { type: "string", description: "For claude: the device to run on, one listed under Devices." }, dir: { type: "string", description: "For claude: the directory there to work in (a repo); by default its own work dir." } };
   const whom = main ? "an agent (a manager, a worker or a computer task)" : "a worker of yours";
   return [
-    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...as, ...where }, ["tasks"]),
+    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...labels, ...as, ...where }, ["tasks"]),
     spec("tell", "Send a message to " + whom + ", by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
     spec("stop", "Stop " + (main ? "agents" : "workers of yours") + " at work, by name, at once, and the workers under them: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped one can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
   ];
@@ -501,6 +515,9 @@ export namespace Tools {
         const imgs = n === 1 && at === 0 ? Memory.images(to.mem, to.id) : [];
         return { text: Memory.zoom(to.mem, to.id, n, at), fail: false, imgs };
       }
+      case "label": {
+        return Tools.label(tools, who, args.name === undefined ? who : String(args.name), args.title, args.repos);
+      }
       case "date": {
         const to = Tools.tree(tools, who, String(args.id));
         return typeof to === "string" || "name" in to ? { text: typeof to === "string" ? to : "date takes a message's id.", fail: true } : { text: Memory.date(to.mem, to.id), fail: false };
@@ -519,8 +536,9 @@ export namespace Tools {
         if (effort !== null && !EFFORTS.includes(effort)) {
           return { text: "No effort " + effort + "; one of " + EFFORTS.join(", ") + ".", fail: true };
         }
+        const labels = Tools.labels(args.titles, args.repos);
         if (args.as === "claude") {
-          return Tools.claude(tools, who, String(args.device ?? ""), (args.tasks ?? []).map(String), args.dir ? String(args.dir) : null);
+          return Tools.claude(tools, who, String(args.device ?? ""), (args.tasks ?? []).map(String), args.dir ? String(args.dir) : null, labels);
         }
         const tier: Tier = who === "main" && args.as !== "worker" ? "manager" : "worker";
         const model = args.model === undefined ? null : String(args.model);
@@ -528,7 +546,7 @@ export namespace Tools {
         if (typeof pick === "string") {
           return { text: pick, fail: true };
         }
-        return { text: await Tools.spawn(tools, who, (args.tasks ?? []).map(String), effort, model, tier), fail: false };
+        return { text: await Tools.spawn(tools, who, (args.tasks ?? []).map(String), effort, model, tier, labels), fail: false };
       }
       case "tell": {
         if (!Tools.boss(tools, who)) {
@@ -718,7 +736,8 @@ export namespace Tools {
       const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
       const status = Tools.status(tools, a);
       const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
-      return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0 };
+      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }) };
+      return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0, ...label };
     });
   }
 
@@ -812,7 +831,7 @@ export namespace Tools {
 
   // agents `who` starts (Unii or a manager), of a tier, on a model
   // (Tools.child), each its task ending with `who`'s latest lines
-  export async function spawn(tools: Tools, who: string, tasks: string[], effort: string | null, model: string | null, tier: Tier): Promise<string> {
+  export async function spawn(tools: Tools, who: string, tasks: string[], effort: string | null, model: string | null, tier: Tier, labels: Label[] = []): Promise<string> {
     const pick = Tools.child(tier, model);
     if (typeof pick === "string") {
       return pick;
@@ -821,7 +840,7 @@ export namespace Tools {
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task) => Tools.start(tools, who, { $: "sub", tier, effort, model }, task + Tools.brief(view, who)));
+    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "sub", tier, effort, model }, task + Tools.brief(view, who), false, labels[k]));
     return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
@@ -866,9 +885,9 @@ export namespace Tools {
     return typeof view === "string" ? { why: view } : { name: Tools.start(tools, "main", role, task + Tools.brief(view, "main"), true) };
   }
 
-  export function start(tools: Tools, parent: string, role: Role, task: string, user = false): string {
+  export function start(tools: Tools, parent: string, role: Role, task: string, user = false, label: Label = {}): string {
     const name = Memory.agent_new(tools.mem);
-    const agent: Agent = { name, parent, role, call: null, live: [], calls: {}, stop: false, replies: [], user };
+    const agent: Agent = { name, parent, role, call: null, live: [], calls: {}, stop: false, replies: [], user, ...label };
     fs.mkdirSync(config.WORK + "/" + name, { recursive: true });
     tools.agents.set(name, agent);
     tools.hooks.push(agent, "note", Tools.note(role, parent));
@@ -885,7 +904,7 @@ export namespace Tools {
   // Claude Code workers `who` starts on a device, one per task (its
   // starter's latest lines after it, as context): each waits for the
   // person's approval (Tools.approve)
-  export async function claude(tools: Tools, who: string, device: string, tasks: string[], dir: string | null): Promise<Out> {
+  export async function claude(tools: Tools, who: string, device: string, tasks: string[], dir: string | null, labels: Label[] = []): Promise<Out> {
     const d = Tools.open(tools, device, false);
     if (typeof d === "string") {
       return { text: d, fail: true };
@@ -894,8 +913,45 @@ export namespace Tools {
     if (typeof view === "string") {
       return { text: view, fail: true };
     }
-    const names = tasks.map((task) => Tools.start(tools, who, { $: "cli", device, dir }, task + Tools.brief(view, who)));
+    const here = dir === null ? [] : [path.basename(dir.replace(/\/+$/, ""))].filter((r) => r !== "");
+    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "cli", device, dir }, task + Tools.brief(view, who), false, { repos: here, ...labels[k] }));
     return { text: "Asked the user to approve " + names.join(", ") + " (Claude Code on " + device + "). Each one's report, or the user's no, will reach you as a message.", fail: false };
+  }
+
+  // an agent's label set by itself, or by Unii or a manager over it (one
+  // of the crew: an agent this chat holds), and what the person sees of
+  // it now
+  export function label(tools: Tools, who: string, name: string, title: unknown, repos: unknown): Out {
+    const agent = tools.agents.get(name);
+    if (agent === undefined || (name !== who && !Tools.under(tools, who, name))) {
+      return { text: "No agent " + name + " of yours to label.", fail: true };
+    }
+    if (title === undefined && repos === undefined) {
+      return { text: "Give a title, repos, or both.", fail: true };
+    }
+    const now = Tools.labels(title === undefined ? undefined : [title], repos === undefined ? undefined : [repos])[0] ?? {};
+    if (title !== undefined) {
+      agent.title = now.title;
+    }
+    if (repos !== undefined) {
+      agent.repos = now.repos ?? [];
+    }
+    tools.hooks.change();
+    return { text: name + ": " + [agent.title ?? "(no title)", (agent.repos ?? []).join(", ")].filter((x) => x !== "").join(" · "), fail: false };
+  }
+
+  // labels by task (spawn's titles and repos, in order), cleaned: a title
+  // one line, at most TITLE; at most REPOS repos, each one line, at most
+  // REPO, none twice; "" or none: unset
+  export function labels(titles: unknown, repos: unknown): Label[] {
+    const line = (x: unknown, most: number) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, most);
+    const ts = Array.isArray(titles) ? titles : [];
+    const rs = Array.isArray(repos) ? repos : [];
+    return Array.from({ length: Math.max(ts.length, rs.length) }, (_, k): Label => {
+      const title = line(ts[k], TITLE);
+      const list = Array.isArray(rs[k]) ? [...new Set(rs[k].map((r: unknown) => line(r, REPO)).filter((r: string) => r !== ""))].slice(0, REPOS) as string[] : undefined;
+      return { ...(title === "" ? {} : { title }), ...(list === undefined || list.length === 0 ? {} : { repos: list }) };
+    });
   }
 
   // the person's yes (it runs) or no (it reports so) to a Claude Code

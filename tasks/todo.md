@@ -229,6 +229,24 @@ no cost display; desktop only.
       fails. tsc: only missing Bun/Node type noise (Buffer moved with the code). Live: signed out it
       refuses ("sign in first"); signed in it connects and stays up, no errors.
 
+## Agent labels (user's ask 2026-11-12: names that say the work, its repos and goal)
+Decided with the user: keep the short name as the handle (memory, tell/stop, #crew/<name>), and show a
+title (the goal) and repos as labels on top of it; the parent sets them at spawn and changes them on the
+fly, and an agent can relabel itself.
+- [x] L1. Server: Agent.title / repos; spawn's titles and repos (by task, in order); a Claude Code
+      worker's repo defaults to its dir's folder; a `label` tool (itself, or an agent under it: name);
+      inputs trimmed and capped (title ≤ 80, ≤ 8 repos ≤ 60 each, no newlines); in the crew (Tools.crew).
+      Proof: tests incl. refusing another's agent and capping.
+      Done: Agent.title/repos, Tools.labels (cleans and caps), Tools.label (the crew's agents; itself, or
+      one under it), `label` in every thinking agent's tools, spawn's titles/repos, the Claude Code
+      worker's dir folder as its repo. Proof: Tools.test.ts label test, agents.test.ts spawn labels and
+      the Claude worker's default repo; mutants (anyone labels anyone, no caps, dupes kept, spawn ignores
+      labels, no default repo, empty label accepted) each 24 pass 1 fail (the first "anyone" try hit
+      zoom's same text and didn't parse: redone on the label line, checked with Bun.Transpiler).
+- [ ] L2. Views: the title as the main line, repo chips, the name under it (web tree, tiles, focus,
+      needs; terminal panel and /crew full); the demo crew labelled. Proof: View/Html/Paint tests, a
+      demo-crew render.
+
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.

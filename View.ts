@@ -74,7 +74,7 @@ export type State = {
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number };
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[] };
 // an agent's pulse (Tools.pulse), told every view as it streams: how it
 // is, what it does now, its report's last line
 export type Pulse = { $: "pulse"; name: string; status: Status; act: string; last: string };

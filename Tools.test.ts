@@ -177,3 +177,37 @@ test("an agent's pulse: status, its stream's last line, its report's last line",
   agent.replies = ["All done.\nTests: 12 pass.\n"];
   expect(Tools.pulse(tools, agent)).toMatchObject({ status: "done", last: "Tests: 12 pass." });
 });
+
+// Labels: an agent's title (its goal) and the repos its work touches, set
+// by the agent itself or by Unii or a manager over it, trimmed and capped,
+// in the crew the views show; another's agent can't be labelled
+test("label: itself or an agent under it, trimmed and capped, in the crew", async () => {
+  const tools = Tools.serve({} as any, { change: () => {} } as any);
+  const sub = (name: string, parent: string, tier: string) => ({ name, parent, role: { $: "sub", tier, effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false }) as any;
+  for (const a of [sub("Mgr", "main", "manager"), sub("Wkr", "Mgr", "worker"), sub("Other", "main", "manager")]) {
+    tools.agents.set(a.name, a);
+  }
+  const label = (who: string, args: object) => Tools.call(tools, who, "label", args, new AbortController().signal, "x");
+  expect(await label("main", { name: "Mgr", title: "  Fix the\nlogin flow  ", repos: [" auth-api ", "web", "web", ""] })).toEqual({ text: "Mgr: Fix the login flow · auth-api, web", fail: false });
+  expect(Tools.crew(tools).find((c) => c.name === "Mgr")).toMatchObject({ title: "Fix the login flow", repos: ["auth-api", "web"] });
+  expect((await label("Mgr", { name: "Wkr", title: "Login tests" })).fail).toBe(false);
+  expect((await label("Wkr", { repos: ["auth-api"] })).fail).toBe(false);
+  expect(Tools.crew(tools).find((c) => c.name === "Wkr")).toMatchObject({ title: "Login tests", repos: ["auth-api"] });
+  const refused = await label("Other", { name: "Wkr", title: "mine now" });
+  expect(refused.fail).toBe(true);
+  expect(Tools.crew(tools).find((c) => c.name === "Wkr")!.title).toBe("Login tests");
+  expect((await label("Wkr", { name: "Mgr", title: "up" })).fail).toBe(true);
+  expect((await label("main", { name: "Nobody", title: "x" })).fail).toBe(true);
+  await label("main", { name: "Mgr", title: "t".repeat(200), repos: Array.from({ length: 20 }, (_, k) => "r" + k + "x".repeat(100)) });
+  const mgr = Tools.crew(tools).find((c) => c.name === "Mgr")!;
+  expect(mgr.title).toHaveLength(80);
+  expect(mgr.repos).toHaveLength(8);
+  expect(mgr.repos![0]).toHaveLength(60);
+  // nothing given: refused; a title "" clears it
+  expect((await label("main", { name: "Mgr" })).fail).toBe(true);
+  await label("main", { name: "Mgr", title: "" });
+  expect(Tools.crew(tools).find((c) => c.name === "Mgr")!.title).toBeUndefined();
+  // every agent that thinks has the tool; a worker can't name another
+  expect(Tools.list(tools, "Wkr").some((s: any) => s.name === "label")).toBe(true);
+  expect(Tools.list(tools, "main").some((s: any) => s.name === "label")).toBe(true);
+});
