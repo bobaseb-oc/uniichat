@@ -250,6 +250,13 @@ no cost display; desktop only.
   CSS and its 3 tests removed (escaping and approve/deny are covered by the tree's tests). Proof: real
   clicks over CDP with the demo crew, Chat ↔ Crew 4 times, each hit the header link; footer 112 px in Chat;
   Html.test.ts 10/10; full suite below.
+- 2026-11-12 fix 2 (user: still stuck on #crew, no agents): crew_bars rewrote the hash to the Crew's on
+  every paint, so a paint between the click's new hash and its hashchange put #crew back, and the late
+  hashchange read it. The mode is now read from the address at each paint, never written there;
+  crew_sync writes it only when an act (Goto) or the server ("agent": none) moves the focus. Proof:
+  CDP repro (replaceState to #chat with no event, a paint, then the hashchange): before, "#crew |
+  crewmode"; after, "#chat"; an unknown agent and the logo still bring the address back to #crew; demo
+  crew clicks Chat ↔ Crew ×4 pass; suite as before.
 - 2026-11-12 rename (user: "Legion"; scope: name + command, keep data): "UniiChat" → "Legion" wherever it is
   shown (web, terminal, mail, greeting, README, tests); the command is `legion` (local/legion, a symlink
   to unii-local.sh; `unii` still works), and every "run unii …" a person is told says legion. Kept as

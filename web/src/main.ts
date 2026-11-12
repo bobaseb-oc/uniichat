@@ -347,6 +347,9 @@ function act(a: View.Act): void {
   for (const msg of View.view_act(v, a)) {
     View.link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
   }
+  if (a.$ === "Goto") {
+    crew_sync();
+  }
   draw(a.$ === "Send");
 }
 
@@ -504,6 +507,9 @@ function hear(msg: View.Server): void {
   const agents = v.agents.join();
   for (const out of View.view_hear(v, msg)) {
     View.link_send(v, out);
+  }
+  if (msg.$ === "agent") {
+    crew_sync();
   }
   if (DEMO !== null && msg.$ === "state") {
     v.crew = DEMO;
@@ -988,14 +994,16 @@ function crew_route(): void {
   draw(true);
 }
 
-// the header's switch and pill; in the Crew, its column, and the hash
-// kept on the focus (a Goto elsewhere: a tab, the logo)
+// the header's switch and pill; in the Crew, its column. The mode is
+// the address's, read, never written here: a paint between a click's new
+// hash and its hashchange wrote the old one back, so Chat never came
 function crew_bars(): void {
-  const mode = P.crew ? "crew" : "chat";
-  document.body.classList.toggle("crewmode", P.crew && !P.guest);
+  const mode = View.view_route(location.hash).mode;
+  const crew = mode === "crew";
+  document.body.classList.toggle("crewmode", crew && !P.guest);
   markup($("#mode"), Html.mode_html(mode, View.view_pill(v)));
-  $("#crew").hidden = !P.crew;
-  if (!P.crew) {
+  $("#crew").hidden = !crew;
+  if (!crew) {
     document.body.classList.remove("gridmode");
     $("#grid").hidden = true;
     watch();
@@ -1011,9 +1019,15 @@ function crew_bars(): void {
     markup($("#grid"), Html.grid_html(v, Date.now()));
   }
   watch();
-  const hash = View.view_hash("crew", v.page?.name ?? null);
-  if (location.hash !== hash) {
-    history.replaceState(null, "", location.pathname + location.search + hash);
+}
+
+// in the Crew, the address follows a focus changed by an act (a tab, the
+// logo) or by the server (no such agent): once, as it changes
+function crew_sync(): void {
+  const r = View.view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "crew" && r.name !== at) {
+    history.replaceState(null, "", location.pathname + location.search + View.view_hash("crew", at));
   }
 }
 

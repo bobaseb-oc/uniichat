@@ -2078,6 +2078,9 @@ function act(a) {
   for (const msg of view_act(v, a)) {
     link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
   }
+  if (a.$ === "Goto") {
+    crew_sync();
+  }
   draw(a.$ === "Send");
 }
 function click(ev) {
@@ -2206,6 +2209,9 @@ function hear(msg) {
   const agents = v.agents.join();
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
+  }
+  if (msg.$ === "agent") {
+    crew_sync();
   }
   if (DEMO !== null && msg.$ === "state") {
     v.crew = DEMO;
@@ -2586,11 +2592,12 @@ function crew_route() {
   draw(true);
 }
 function crew_bars() {
-  const mode = P.crew ? "crew" : "chat";
-  document.body.classList.toggle("crewmode", P.crew && !P.guest);
+  const mode = view_route(location.hash).mode;
+  const crew = mode === "crew";
+  document.body.classList.toggle("crewmode", crew && !P.guest);
   markup($("#mode"), mode_html(mode, view_pill(v)));
-  $("#crew").hidden = !P.crew;
-  if (!P.crew) {
+  $("#crew").hidden = !crew;
+  if (!crew) {
     document.body.classList.remove("gridmode");
     $("#grid").hidden = true;
     watch();
@@ -2606,9 +2613,12 @@ function crew_bars() {
     markup($("#grid"), grid_html(v, Date.now()));
   }
   watch();
-  const hash = view_hash("crew", v.page?.name ?? null);
-  if (location.hash !== hash) {
-    history.replaceState(null, "", location.pathname + location.search + hash);
+}
+function crew_sync() {
+  const r = view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "crew" && r.name !== at) {
+    history.replaceState(null, "", location.pathname + location.search + view_hash("crew", at));
   }
 }
 function watch() {
