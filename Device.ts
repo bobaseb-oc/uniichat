@@ -9,6 +9,7 @@
 // stopped. Approvals stay the server's (a Claude Code worker waits for
 // the person's ✓, from the web or a terminal), so a device asks nothing.
 
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as Cost from "./Cost.ts";
@@ -105,10 +106,93 @@ function home(dir: string): string {
   return dir.startsWith("~/") ? os.homedir() + dir.slice(1) : dir;
 }
 
-// the repos the inbox reads worktrees in
-export function device_spaces(rules: Rules): string[] {
-  const spaces = rules.spaces ?? (process.env.UNII_SPACES ?? "").split(",").map((s: string) => s.trim()).filter((s: string) => s !== "");
-  return (spaces.length > 0 ? spaces : rules.home ? [rules.home] : []).map(home);
+// Spaces
+// ------
+// The repos the cockpit covers: those listed (Rules.spaces, a test's),
+// else found: git repos under the roots (UNII_SPACES, comma-separated; by
+// default /Volumes/dev/git and ~/.claude) and the home repo. All are
+// checked for worktrees to clean up (git runs only where .git/worktrees
+// is); the active ones (git files changed in ACTIVE) feed the digest and
+// the sidebar, newest first. Found anew every FIND.
+
+export type Space = { path: string; at: number }; // at: its git files' last change (ms)
+
+export const ROOTS = ["/Volumes/dev/git", "~/.claude"];
+const DEPTH = 4;
+const SKIP = new Set(["node_modules", "vendor", "dist", "build", "target"]);
+export const ACTIVE = 14 * 86400e3;
+const FIND = 30 * 60e3;
+// the most active spaces the digest asks GitHub about
+const DIGESTED = 40;
+
+// the roots, as UNII_SPACES says (none: ROOTS)
+export function device_roots(env: string | undefined): string[] {
+  const roots = (env ?? "").split(",").map((s: string) => s.trim()).filter((s: string) => s !== "");
+  return (roots.length > 0 ? roots : ROOTS).map(home);
+}
+
+// a repo's last activity: its HEAD's, index's and last fetch's change
+function activity(repo: string): number {
+  let at = 0;
+  for (const f of ["HEAD", "index", "FETCH_HEAD", "logs/HEAD"]) {
+    try {
+      at = Math.max(at, fs.statSync(repo + "/.git/" + f).mtimeMs);
+    } catch {
+      continue;
+    }
+  }
+  return at;
+}
+
+// the git repos under the roots (a root that is one, itself), DEPTH
+// folders down at most, not inside a repo, node_modules, a build or a
+// hidden folder; a linked worktree's .git is a file: not a repo here.
+// The home repo first, then newest first
+export function device_discover(roots: string[], now: number, home_repo?: string): Space[] {
+  const found = new Map<string, Space>();
+  const walk = (dir: string, depth: number) => {
+    let kids: fs.Dirent[];
+    try {
+      kids = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (kids.some((k) => k.name === ".git" && k.isDirectory())) {
+      found.set(dir, { path: dir, at: activity(dir) });
+      return;
+    }
+    if (depth === DEPTH) {
+      return;
+    }
+    for (const k of kids) {
+      if (k.isDirectory() && !k.name.startsWith(".") && !SKIP.has(k.name)) {
+        walk(dir + "/" + k.name, depth + 1);
+      }
+    }
+  };
+  roots.forEach((r) => walk(r.replace(/\/+$/, ""), 0));
+  const all = [...found.values()].sort((a, b) => b.at - a.at);
+  const first = home_repo === undefined ? null : home(home_repo).replace(/\/+$/, "");
+  return first === null ? all : [{ path: first, at: now }, ...all.filter((s) => s.path !== first)];
+}
+
+export function device_active(s: Space, now: number): boolean {
+  return now - s.at <= ACTIVE;
+}
+
+let found: { at: number; key: string; spaces: Space[] } | null = null;
+
+// the spaces: listed (all active), else found (kept FIND)
+export function device_spaces(rules: Rules, now: number): { spaces: Space[]; listed: boolean } {
+  if (rules.spaces !== undefined) {
+    return { spaces: rules.spaces.map((p) => ({ path: home(p), at: now })), listed: true };
+  }
+  const roots = device_roots(process.env.UNII_SPACES);
+  const key = roots.join(",") + "|" + (rules.home ?? "");
+  if (found === null || found.key !== key || now - found.at > FIND) {
+    found = { at: now, key, spaces: device_discover(roots, now, rules.home) };
+  }
+  return { spaces: found.spaces, listed: false };
 }
 
 // this device's inbox (Inbox.ts) read with the user's own CLIs, read-only:
@@ -130,13 +214,16 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
     }
   };
   const vars = Object.entries(Inbox.inbox_vars(now)).flatMap(([k, v]) => ["-f", k + "=" + v]);
+  const { spaces, listed } = device_spaces(rules, now.getTime());
+  const worktreed = listed ? spaces : spaces.filter((s) => fs.existsSync(s.path + "/.git/worktrees"));
+  const active = spaces.filter((s) => listed || device_active(s, now.getTime()));
   const jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
   const [gql, notes, jira, clean, digest] = await Promise.all([
     run(["gh", "api", "graphql", "-f", "query=" + Inbox.QUERY, ...vars]),
     run(["gh", "api", "notifications?participating=true&per_page=30"]),
     run(["acli", "jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50"]),
-    Promise.all(device_spaces(rules).map((s) => device_clean(s, run))).then((x) => x.flat()),
-    device_digest(rules, run, now, said),
+    Promise.all(worktreed.map((s) => device_clean(s.path, run))).then((x) => x.flat()),
+    device_digest(active.slice(0, DIGESTED).map((s) => s.path), run, now, said),
   ]);
   const gh = Inbox.inbox_github(json(gql, "gh") ?? {});
   if (gh.error !== undefined) {
@@ -146,30 +233,44 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
   const inbox: Inbox.Inbox = {
     at: now.getTime(), login: gh.login, reviews: gh.reviews, mine: gh.mine, merged: gh.merged, today: gh.today,
     tickets: tickets === null ? null : Inbox.inbox_tickets(tickets), clean, notes: Inbox.inbox_notes(json(notes, "gh") ?? []), errors, digest,
+    spaces: active.slice(0, Inbox.MOST).map((s) => path.basename(s.path)),
   };
   return { $: "inbox", inbox };
 }
 
-// the team digest: the spaces' GitHub repos (their origin), their PRs
+// the team digest: the spaces' GitHub repos (upstream, else origin), their PRs
 // merged this week and open; none on GitHub: null
-async function device_digest(rules: Rules, run: Exec, now: Date, said: (tool: string, r: { out: string }) => void): Promise<Inbox.Digest | null> {
-  const remotes = await Promise.all(device_spaces(rules).map((s) => run(["git", "-C", s, "remote", "get-url", "origin"])));
+async function device_digest(spaces: string[], run: Exec, now: Date, said: (tool: string, r: { out: string }) => void): Promise<Inbox.Digest | null> {
+  // a fork's upstream first: the team's PRs are there, not on the fork
+  const remote = async (s: string) => {
+    const up = await run(["git", "-C", s, "remote", "get-url", "upstream"]);
+    return up.code === 0 ? up : run(["git", "-C", s, "remote", "get-url", "origin"]);
+  };
+  const remotes = await Promise.all(spaces.map(remote));
   const repos = [...new Set(remotes.filter((r) => r.code === 0).map((r) => Inbox.inbox_repo(r.out)).filter((r): r is string => r !== null))];
   if (repos.length === 0) {
     return null;
   }
-  const vars = Object.entries(Inbox.digest_vars(repos, now)).flatMap(([k, v]) => ["-f", k + "=" + v]);
-  const r = await run(["gh", "api", "graphql", "-f", "query=" + Inbox.DIGEST, ...vars]);
-  if (r.code !== 0) {
-    said("gh", r);
-    return null;
+  // one search per chunk of repos that fits GitHub's query length
+  const chunks = Inbox.digest_chunks(repos, now);
+  const digest: Inbox.Digest = { repos: repos.slice(0, chunks.reduce((n, c) => n + c.merged.split("repo:").length - 1, 0)), merged: [], open: [] };
+  for (const chunk of chunks) {
+    const vars = Object.entries(chunk).flatMap(([k, v]) => ["-f", k + "=" + v]);
+    const r = await run(["gh", "api", "graphql", "-f", "query=" + Inbox.DIGEST, ...vars]);
+    if (r.code !== 0) {
+      said("gh", r);
+      return null;
+    }
+    try {
+      const part = Inbox.inbox_digest(JSON.parse(r.out), []);
+      digest.merged.push(...part.merged);
+      digest.open.push(...part.open);
+    } catch {
+      said("gh", { out: "unreadable digest" });
+      return null;
+    }
   }
-  try {
-    return Inbox.inbox_digest(JSON.parse(r.out), repos);
-  } catch {
-    said("gh", { out: "unreadable digest" });
-    return null;
-  }
+  return digest;
 }
 
 // a space's worktrees to clean up: uncommitted changes, or a merged branch

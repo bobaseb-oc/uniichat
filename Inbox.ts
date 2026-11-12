@@ -39,10 +39,12 @@ export type Digest = { repos: string[]; merged: DigestPr[]; open: DigestPr[] };
 // a device's report: when (ms), whose (GitHub login), the review requests,
 // the user's open PRs, how many merged this week and today, Jira's (null:
 // acli missing or signed out), worktrees to clean, notifications, and what
-// failed to be read, the team digest (null: no space on GitHub)
+// failed to be read, the team digest (null: no space on GitHub), the
+// spaces (repos) active there
 export type Inbox = {
   at: number; login: string; reviews: Pr[]; mine: Pr[]; merged: number; today: number;
   tickets: Ticket[] | null; clean: Clean[]; notes: Note[]; errors: string[]; digest?: Digest | null;
+  spaces?: string[]; // the device's active repos, newest first (Device.device_discover)
 };
 
 // the most kept of a list; a field's and a body's most characters
@@ -178,6 +180,27 @@ export function digest_vars(repos: string[], now: Date): Record<string, string> 
   return { merged: where + " is:pr is:merged merged:>=" + day(week), open: where + " is:pr is:open" };
 }
 
+// GitHub's search takes 256 characters a query, and 30 searches a minute:
+// the repos split into searches that fit, the first (newest) MOST_SEARCHES
+const QUERY_MOST = 256;
+export const MOST_SEARCHES = 5;
+export function digest_chunks(repos: string[], now: Date): Record<string, string>[] {
+  const tail = digest_vars([], now).merged.length + 1;
+  const groups: string[][] = [];
+  for (const r of repos) {
+    const last = groups.at(-1);
+    const size = last === undefined ? 0 : last.reduce((n, x) => n + x.length + 6, 0);
+    if (last !== undefined && size + r.length + 6 + tail <= QUERY_MOST) {
+      last.push(r);
+    } else if (groups.length < MOST_SEARCHES) {
+      groups.push([r]);
+    } else {
+      break;
+    }
+  }
+  return groups.map((g) => digest_vars(g, now));
+}
+
 // the digest's answer read
 export function inbox_digest(res: any, repos: string[]): Digest {
   const prs = (s: any): DigestPr[] => ((s?.nodes ?? []) as any[]).filter((n) => Number.isInteger(n?.number)).map((n) => ({
@@ -260,6 +283,7 @@ export function inbox_check(x: any): Inbox | string {
       clean: list(x.clean, (c) => ({ repo: str(c?.repo), path: str(c?.path), branch: c?.branch === null ? null : str(c?.branch), changes: num(c?.changes), merged: bool(c?.merged) })),
       notes: list(x.notes, (n) => ({ kind: one(n?.kind, KINDS), title: str(n?.title), repo: str(n?.repo), url: link(n?.url), at: str(n?.at, 60), unread: bool(n?.unread) })),
       errors: list(x.errors, (e) => str(e)),
+      spaces: x.spaces === undefined ? [] : list(x.spaces, (r) => str(r, 120)),
       digest: x.digest === undefined || x.digest === null ? null : {
         repos: list(x.digest.repos, (r) => str(r)),
         merged: list(x.digest.merged, dpr), open: list(x.digest.open, dpr),

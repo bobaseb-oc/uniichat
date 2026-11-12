@@ -507,8 +507,37 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       Live: this repo's two merged PRs read. E2E: the demo digest drawn; Summarize → the server's "Nothing
       merged" (it holds no device's inbox). Mutants 8/8 (one test added: a device with no GitHub
       space). Suite 294 pass, 3 known; tsc: the same setInterval().unref noise.
-- [ ] C8 (decision needed) Up next (calendar) and meeting transcripts: they need calendar/Drive
-      access Legion doesn't have; a new sign-in is a Red Zone. Asked at the end.
+- [x] C9 (user's ask 2026-11-12) spaces found, not listed: git repos under the roots (UNII_SPACES now
+      lists roots; default /Volumes/dev/git and ~/.claude) and the home repo, 4 folders deep, not in a
+      repo, node_modules, build or hidden folders; a linked worktree's .git file skipped; found anew every
+      30 min. All checked for worktrees (git only where .git/worktrees is); the active ones (git files
+      changed in 14 days) feed the digest (40 at most, upstream remote before origin: forks) and the
+      sidebar (12 shown, the rest in the palette). The digest's repos split into searches that fit
+      GitHub's 256-character queries, 5 at most. Live: 538 repos found in ~4.5 s, 55 active, 23 worktrees
+      to clean. Found: the gh sign-in can't see OnCorps repos (404: its token isn't authorized for the
+      org's SSO), so the digest of OnCorps repos is empty until it is. Mutants 11/11; suite 296 pass, 3
+      known (one run had 7 failsafe.test failures that didn't recur, alone or in the suite: its timers
+      run 1000x fast, a load flake).
+- [ ] C8 RED ZONE, DRAFT for the user's design and sign-off (user chose 2026-11-12: Google sign-in):
+      Up next (calendar) and meeting transcripts. Design:
+      - Sign-in: Google OAuth 2.0 for a desktop app (installed-app flow, PKCE, loopback redirect on
+        127.0.0.1), run on the device by `legion google-login` (as `legion mcp-login`); an OAuth client
+        of OnCorps' Google Cloud project, Internal (oncorps.io accounts only). Scopes read-only and
+        narrow: calendar.events.readonly, drive.readonly (transcripts are Docs in Drive).
+      - Tokens: the device's Keychain only (as Auth.keychain), never a file, the server, a log or a
+        prompt; refreshed on the device; `legion google-logout` revokes at Google and deletes them.
+      - Reads: on the device with the inbox, like gh: today's and tomorrow's events (title, time, Meet
+        link, attendee count, not attendee emails), and the last 14 days' transcript Docs (title, date,
+        id). A transcript's text is fetched only when the user opens it.
+      - Summaries: a transcript summarized (the compactor, through the LiteLLM gateway) only on the
+        user's click, the summary kept with the chat; the full text never kept.
+      - Fail closed: no or expired grant → the pages say "sign in with legion google-login"; any error
+        → nothing shown, never a partial page.
+      Invariants for review: no token leaves the device; scopes read-only; nothing written to Google;
+      nothing sent to a model but on a click; logout revokes.
+      Open (the user's): who registers the OAuth client (IT?); whether drive.readonly (all of Drive)
+      is acceptable or the Meet Recordings folder only (drive.file can't read it); whether meeting
+      text may go to the gateway at all.
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).

@@ -138,3 +138,17 @@ test("the digest: repos from remotes, the searches, PRs read, checked with the r
   expect((Inbox.inbox_check({ ...base, digest: d }) as Inbox.Inbox).digest).toEqual(d);
   expect(typeof Inbox.inbox_check({ ...base, digest: { ...d, merged: [{ ...d.merged[0], url: "javascript:x" }] } })).toBe("string");
 });
+
+// GitHub's search takes 256 characters a query: the digest's repos split
+// into searches that fit, 5 at most (the first repos: the newest)
+test("the digest's searches fit GitHub's query length, 5 at most", () => {
+  const repos = Array.from({ length: 80 }, (_, k) => "OnCorps/some-long-repository-name-" + k);
+  const chunks = Inbox.digest_chunks(repos, new Date(2026, 10, 12));
+  expect(chunks.length).toBe(5);
+  for (const c of chunks) {
+    expect(c.merged.length).toBeLessThanOrEqual(256);
+    expect(c.open.length).toBeLessThanOrEqual(256);
+  }
+  expect(chunks[0].merged.startsWith("repo:OnCorps/some-long-repository-name-0 ")).toBe(true);
+  expect(Inbox.digest_chunks(["o/a", "o/b"], new Date(2026, 10, 12))).toEqual([Inbox.digest_vars(["o/a", "o/b"], new Date(2026, 10, 12))]);
+});

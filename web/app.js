@@ -2476,6 +2476,7 @@ function side_spaces(v) {
   const add = (r) => r !== "" && !repos.includes(r) && repos.push(r);
   v.crew.forEach((c) => (c.repos ?? []).forEach(add));
   (v.inbox?.clean ?? []).forEach((c) => add(c.repo));
+  (v.inbox?.spaces ?? []).forEach(add);
   if (v.status) {
     add(v.status.dir);
   }
@@ -2506,7 +2507,8 @@ var PAGE_ITEMS = [
 function palette(v, q) {
   const agents = v.crew.map((c) => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
   const prs = [...v.inbox?.reviews ?? [], ...v.inbox?.mine ?? []].map((p) => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
-  const all = [...PAGE_ITEMS, ...agents, ...prs];
+  const spaces = side_spaces(v).map((s) => ({ label: s.repo, hint: "space · its inbox", go: { space: s.repo } }));
+  const all = [...PAGE_ITEMS, ...agents, ...prs, ...spaces];
   const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
   if (words.length === 0) {
     return all;
@@ -2611,6 +2613,7 @@ function home_html(v, now) {
   const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
+var SPACES = 12;
 var MARK = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
 function side_html(v, mode, now) {
   const here = (m) => m === mode ? ` class="here"` : "";
@@ -2629,7 +2632,9 @@ function side_html(v, mode, now) {
   const groups = side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc(g.ticket ?? "–")}</div>${g.agents.map((a) => `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
   const count = v.crew.filter((c) => c.parent === "main").length;
   const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
-  const spaces = `<section class="sspaces"><h3>Spaces</h3>${side_spaces(v).map((s) => `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}</section>`;
+  const all = side_spaces(v);
+  const more = all.length > SPACES ? `<p class="meta">+${all.length - SPACES} more (the palette finds them)</p>` : "";
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${all.slice(0, SPACES).map((s) => `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}${more}</section>`;
   const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
   return [search, nav, agents, spaces, foot];
 }
@@ -3688,6 +3693,10 @@ function palette_run(k) {
     window.open(go.open, "_blank", "noopener");
   } else if ("act" in go) {
     act(go.act);
+  } else if ("space" in go) {
+    C.filter = go.space;
+    $("#pfilter").value = go.space;
+    location.hash = "#inbox";
   } else if (go.cmd === "new-agent") {
     new_agent();
   } else {

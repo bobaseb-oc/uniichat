@@ -1314,6 +1314,10 @@ function palette_run(k: number): void {
     window.open(go.open, "_blank", "noopener");
   } else if ("act" in go) {
     act(go.act);
+  } else if ("space" in go) {
+    C.filter = go.space;
+    $<HTMLInputElement>("#pfilter").value = go.space;
+    location.hash = "#inbox";
   } else if (go.cmd === "new-agent") {
     new_agent();
   } else {

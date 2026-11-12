@@ -43,8 +43,9 @@ How it works
   their CI state, Jira tickets, worktrees to clean up), Routines and a
   team Digest, beside a sidebar of agents by ticket and spaces, and a
   palette (⌘K). A device reads the inbox with your own `gh`, `acli` and
-  `git`, read-only, every 5 minutes; set `UNII_SPACES` (comma-separated
-  repo paths) on the device to choose the repos. Review or Fix on an
+  `git`, read-only, every 5 minutes. Its repos (spaces) are found: git
+  repos under `/Volumes/dev/git` and `~/.claude`, and the home repo
+  (`UNII_SPACES`, comma-separated folders, changes the roots). Review or Fix on an
   inbox row starts a native Legion agent per PR (Claude Code workers if
   you tick it); nothing is posted to GitHub or Jira. Routines start an
   agent daily, every N hours, or on each new review request.

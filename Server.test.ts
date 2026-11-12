@@ -318,7 +318,7 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   fs.writeFileSync(dir + "/inbox.ts", INBOX);
   const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
-  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null };
+  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [] };
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 

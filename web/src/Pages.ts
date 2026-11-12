@@ -143,6 +143,9 @@ export function home_html(v: View.View, now: Date): string[] {
 // Sidebar, palette
 // ================
 
+// the most spaces the sidebar lists (the rest: a count)
+export const SPACES = 12;
+
 const MARK: Record<string, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
 
 // the sidebar: search or run (the palette), the pages (the one shown
@@ -162,8 +165,10 @@ export function side_html(v: View.View, mode: View.Mode, now: number): string[] 
     `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
   const count = v.crew.filter((c) => c.parent === "main").length;
   const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
-  const spaces = `<section class="sspaces"><h3>Spaces</h3>${Cockpit.side_spaces(v).map((s) =>
-    `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}</section>`;
+  const all = Cockpit.side_spaces(v);
+  const more = all.length > SPACES ? `<p class="meta">+${all.length - SPACES} more (the palette finds them)</p>` : "";
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${all.slice(0, SPACES).map((s) =>
+    `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}${more}</section>`;
   const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
   return [search, nav, agents, spaces, foot];
 }

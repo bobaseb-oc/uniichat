@@ -255,6 +255,7 @@ export function side_spaces(v: View): Space[] {
   const add = (r: string) => r !== "" && !repos.includes(r) && repos.push(r);
   v.crew.forEach((c) => (c.repos ?? []).forEach(add));
   (v.inbox?.clean ?? []).forEach((c) => add(c.repo));
+  (v.inbox?.spaces ?? []).forEach(add);
   if (v.status) {
     add(v.status.dir);
   }
@@ -272,7 +273,7 @@ export function bar_text(v: View): string {
 
 // a palette item: what it says, a hint, what choosing it does (a link, a
 // page opened, an act)
-export type Go = { href: string } | { open: string } | { act: Act } | { cmd: "new-agent" | "focus" };
+export type Go = { href: string } | { open: string } | { act: Act } | { cmd: "new-agent" | "focus" } | { space: string };
 export type Item = { label: string; hint: string; go: Go };
 
 const PAGE_ITEMS: Item[] = [
@@ -295,7 +296,8 @@ const PAGE_ITEMS: Item[] = [
 export function palette(v: View, q: string): Item[] {
   const agents = v.crew.map((c): Item => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
   const prs = [...(v.inbox?.reviews ?? []), ...(v.inbox?.mine ?? [])].map((p): Item => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
-  const all = [...PAGE_ITEMS, ...agents, ...prs];
+  const spaces = side_spaces(v).map((s): Item => ({ label: s.repo, hint: "space · a repo", go: { space: s.repo } }));
+  const all = [...PAGE_ITEMS, ...agents, ...prs, ...spaces];
   const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
   if (words.length === 0) {
     return all;

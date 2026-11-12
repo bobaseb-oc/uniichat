@@ -125,6 +125,10 @@ test("the sidebar and the palette", async () => {
   expect(side).toContain("AO-1 &lt;fix&gt;");
   expect(side).toContain('href="#crew/A"');
   expect(side).toContain('data-space="web"');
+  v.inbox = inbox({ spaces: Array.from({ length: 20 }, (_, k) => "repo" + k) });
+  const many = Pages.side_html(v, "home", NOW).join("");
+  expect(many.match(/class="sspace"/g)!.length).toBe(Pages.SPACES);
+  expect(many).toContain("+9 more");
   expect(side).toContain('data-go="/account"');
   expect(side).toContain("data-add-machine");
   const items = Cockpit.palette(v, "");

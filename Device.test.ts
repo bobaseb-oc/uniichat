@@ -136,6 +136,9 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
     if (line.includes("worktree list")) {
       return { code: 0, out: "worktree /s\nbranch refs/heads/main\n\nworktree /s/.wt/x\nbranch refs/heads/x\n\nworktree /s/.wt/y\nbranch refs/heads/y\n\nworktree /s/.wt/z\nbranch refs/heads/z\n" };
     }
+    if (line.includes("remote get-url upstream")) {
+      return cmd.includes("/s") ? { code: 0, out: "git@github.com:up/s.git\n" } : { code: 2, out: "error: No such remote 'upstream'" };
+    }
     if (line.includes("remote get-url")) {
       return { code: 0, out: "git@github.com:o/s.git\n" };
     }
@@ -161,7 +164,8 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   expect([inbox.merged, inbox.today]).toEqual([4, 1]);
   expect(inbox.notes.map((n: any) => n.kind)).toEqual(["assign"]);
   expect(inbox.tickets).toBe(null);
-  expect(inbox.digest).toMatchObject({ repos: ["o/s"], merged: [{ number: 9, author: "bo" }], open: [] });
+  expect(inbox.digest).toMatchObject({ repos: ["up/s"], merged: [{ number: 9, author: "bo" }], open: [] }); // a fork's upstream, where the team's PRs are
+  expect(inbox.spaces).toEqual(["s"]);
   expect(inbox.errors).toEqual(["acli: ✗ Error: unauthorized: use 'acli jira auth login' to authenticate"]);
   // x has changes, y is merged and clean, z is clean and not merged (left out)
   expect(inbox.clean).toEqual([
@@ -180,4 +184,36 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   const bare = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, exec, new Date()) as any;
   expect(bare.inbox.digest).toBe(null);
   expect(ran.some((c) => c.join(" ").includes("query digest"))).toBe(false);
+});
+
+// spaces found, not listed: git repos under the roots (UNII_SPACES; by
+// default /Volumes/dev/git and ~/.claude) and the home repo, 4 folders
+// deep at most, not inside a repo, node_modules or a hidden folder; a
+// linked worktree (its .git a file) not a space; newest activity first;
+// active: its git files changed in the last 14 days
+test("spaces are found under the roots, newest first; active ones by their git files", () => {
+  const root = fs.mkdtempSync(os.tmpdir() + "/legion-roots-");
+  const repo = (p: string, days: number) => {
+    fs.mkdirSync(root + "/" + p + "/.git", { recursive: true });
+    fs.writeFileSync(root + "/" + p + "/.git/HEAD", "ref: refs/heads/main\n");
+    const t = new Date(Date.now() - days * 86400e3);
+    fs.utimesSync(root + "/" + p + "/.git/HEAD", t, t);
+  };
+  repo("a", 1);
+  repo("team/b", 0);
+  repo("a/inner", 0);             // inside a repo: not looked for
+  repo("node_modules/x", 0);      // skipped
+  repo("team/.hidden/y", 0);      // skipped
+  repo("old", 30);
+  repo("w/x/y/z/deep", 0);        // 5 deep: past the limit
+  fs.mkdirSync(root + "/wt");
+  fs.writeFileSync(root + "/wt/.git", "gitdir: " + root + "/a/.git/worktrees/wt\n"); // a linked worktree
+  const found = Device.device_discover([root], Date.now());
+  expect(found.map((s) => s.path.slice(root.length + 1))).toEqual(["team/b", "a", "old"]);
+  expect(found.map((s) => Device.device_active(s, Date.now()))).toEqual([true, true, false]);
+  // the home repo always, once, first; a root that is a repo is a space
+  const home = Device.device_discover([root + "/a", root], Date.now(), root + "/old");
+  expect(home.map((s) => s.path.slice(root.length + 1))).toEqual(["old", "team/b", "a"]);
+  expect(Device.device_roots(undefined)).toEqual(["/Volumes/dev/git", os.homedir() + "/.claude"]);
+  expect(Device.device_roots(" ~/x , /y ")).toEqual([os.homedir() + "/x", "/y"]);
 });

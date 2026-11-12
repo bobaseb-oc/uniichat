@@ -219,6 +219,8 @@ test("the palette: pages, commands, agents and inbox PRs; the words typed filter
   expect(Cockpit.palette(v, "inb")[0].label).toBe("Inbox"); // a label starting so first
   expect(Cockpit.palette(v, "plan mode")[0].go).toEqual({ act: { $: "Mode", mode: "plan" } });
   expect(Cockpit.palette(v, "zzz")).toEqual([]);
+  v.inbox = inbox({ spaces: ["bank-recon"] });
+  expect(Cockpit.palette(v, "bank")[0]).toEqual({ label: "bank-recon", hint: "space · a repo", go: { space: "bank-recon" } });
   expect(Cockpit.palette(v, "inbox page").map((i) => i.label)).toEqual(["Inbox"]); // every word, not any
   v.crew.push(agent("T", "working", { title: "Inbox triage" }));
   expect(Cockpit.palette(v, "inbox").map((i) => i.label)).toEqual(["Inbox", "Inbox triage", "Refresh the inbox"]); // starting so first
