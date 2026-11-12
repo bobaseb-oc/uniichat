@@ -99,6 +99,10 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 // the web's two modes, and the agent in focus (location.hash: #chat,
 // #crew, #crew/<name>)
 export type Mode = "chat" | "crew";
+
+// a tile of the Crew grid: an agent Unii started, a dot per agent under
+// it (any depth), them by status
+export type Tile = Crew & { dots: { name: string; status: Status }[]; rollup: string };
 export type Route = { mode: Mode; name: string | null };
 
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
@@ -204,6 +208,7 @@ export type Act =
   | { $: "Approve"; name: string; yes: boolean } // a Claude Code worker asking to start: let it, or not
   | { $: "Stop"; name: string }                 // that agent's work stopped (the Crew view)
   | { $: "Expand"; name: string }               // a manager's workers shown, or folded again
+  | { $: "Tell"; name: string; text: string }   // a message to that agent (a tile's box)
 
 // what a page draws, top to bottom
 export type Row =
@@ -514,6 +519,10 @@ export function view_act(v: View, act: Act): Client[] {
     case "Stop": {
       return [{ $: "stop", name: act.name }];
     }
+    case "Tell": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "tell", name: act.name, text }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -710,9 +719,25 @@ function rollup(crew: Crew[]): string {
 }
 
 // the agents the view has in sight, whose deltas it hears (the server
-// tells their pulses to all): its focus
-export function view_watch(v: View): string[] {
-  return v.page === null ? [] : [v.page.name];
+// tells their pulses to all): its focus, then the tiles shown; at most
+// WATCH, as the server keeps
+const WATCH = 16;
+export function view_watch(v: View, tiles: string[] = []): string[] {
+  return [...new Set([...(v.page === null ? [] : [v.page.name]), ...tiles])].slice(0, WATCH);
+}
+
+// the Crew grid: a tile per agent Unii started, in the tree's order
+export function view_tiles(v: View, now: number): Tile[] {
+  const rows = view_crew(v, now);
+  return rows.flatMap((r, i) => {
+    if (r.depth > 0) {
+      return [];
+    }
+    const end = rows.findIndex((s, j) => j > i && s.depth === 0);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const { depth, text, ...crew } = r;
+    return [{ ...crew, dots: under.map((u) => ({ name: u.name, status: u.status })), rollup: rollup(under) }];
+  });
 }
 
 // the agents that need the person, those asking first, then the failed

@@ -1,3 +1,28 @@
+// Demo.ts
+var STATUSES = ["working", "working", "done", "failed", "waiting", "working", "stopped"];
+function demo_crew(now) {
+  const crew = [];
+  for (let m = 0;m < 8; m++) {
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000 });
+    for (let w = 0;w < 5; w++) {
+      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000 });
+    }
+  }
+  crew.push({ name: "Sub3", parent: "Mgr3", tier: "manager", model: "opus-5.5", status: "waiting", since: now - 30000 });
+  crew.push({ name: "W3-sub", parent: "Sub3", tier: "worker", model: "haiku-5.5", status: "working", since: now - 5000 });
+  crew.push({ name: "Claude1", parent: "main", tier: "claude", model: "claude-code", status: "asking", since: now });
+  return crew;
+}
+function demo_pulses(crew) {
+  return crew.map((c, k) => ({
+    $: "pulse",
+    name: c.name,
+    status: c.status,
+    act: c.status === "working" ? k % 2 === 0 ? "shell: bun test " + c.name + ".test.ts" : "Reading the failing case in " + c.name : "",
+    last: c.status === "done" ? "Done: 12 tests pass." : c.status === "failed" ? "failed: the build broke" : ""
+  }));
+}
+
 // Clip.ts
 var CAP = 30000;
 function clip_end(str, at) {
@@ -905,7 +930,7 @@ function Cap(text) {
   return { $: "Cap", text };
 }
 var CREW = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
-var STATUSES = ["asking", "failed", "working", "waiting", "stopped", "done"];
+var STATUSES2 = ["asking", "failed", "working", "waiting", "stopped", "done"];
 var ALERT_GAP = 20000;
 function view_new() {
   return {
@@ -1095,6 +1120,10 @@ function view_act(v, act) {
     case "Stop": {
       return [{ $: "stop", name: act.name }];
     }
+    case "Tell": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "tell", name: act.name, text }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -1177,7 +1206,7 @@ function view_typing(_v) {
 }
 function view_crew(v, now) {
   const known = new Set(v.crew.map((c) => c.name));
-  const kids = (parent) => v.crew.filter((c) => c.parent === parent || parent === "main" && !known.has(c.parent)).filter((c) => c.name !== parent).sort((a, b) => STATUSES.indexOf(a.status) - STATUSES.indexOf(b.status) || b.since - a.since);
+  const kids = (parent) => v.crew.filter((c) => c.parent === parent || parent === "main" && !known.has(c.parent)).filter((c) => c.name !== parent).sort((a, b) => STATUSES2.indexOf(a.status) - STATUSES2.indexOf(b.status) || b.since - a.since);
   const rows = [];
   const add = (parent, depth) => {
     for (const c of kids(parent)) {
@@ -1237,8 +1266,21 @@ var ROLLUP = ["working", "waiting", "asking", "failed", "stopped", "done"];
 function rollup(crew) {
   return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length]).filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
 }
-function view_watch(v) {
-  return v.page === null ? [] : [v.page.name];
+var WATCH = 16;
+function view_watch(v, tiles = []) {
+  return [...new Set([...v.page === null ? [] : [v.page.name], ...tiles])].slice(0, WATCH);
+}
+function view_tiles(v, now) {
+  const rows = view_crew(v, now);
+  return rows.flatMap((r, i) => {
+    if (r.depth > 0) {
+      return [];
+    }
+    const end = rows.findIndex((s, j) => j > i && s.depth === 0);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const { depth, text, ...crew } = r;
+    return [{ ...crew, dots: under.map((u) => ({ name: u.name, status: u.status })), rollup: rollup(under) }];
+  });
 }
 function view_needs(v) {
   return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
@@ -1614,6 +1656,15 @@ function line_html(v, c) {
   const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
   return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
 }
+function grid_html(v, now) {
+  return view_tiles(v, now).map((t) => {
+    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span><b>${esc(t.name)}</b><span class="meta">${esc(t.tier + " · " + t.model)}</span></a>`;
+    const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
+    const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+  });
+}
 function needs_html(v) {
   return view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
@@ -1774,6 +1825,7 @@ var SCENES = `
   <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
 var v = view_new();
 var BOX = $("textarea");
+var DEMO = new URLSearchParams(location.search).get("demo") === "1" ? demo_crew(Date.now()) : null;
 var BACK = $("#import [name=back]");
 var P = {
   id: "",
@@ -1804,7 +1856,7 @@ function kept(fact) {
 async function boot() {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   const q = new URLSearchParams(location.search);
-  history.replaceState(null, "", location.pathname === "/account" ? "/account" : "/");
+  history.replaceState(null, "", (location.pathname === "/account" ? "/account" : "/") + location.hash);
   if (q.has("terminal")) {
     solo("Your terminal is signed in.", "You can close this tab and go back to it.");
     return;
@@ -1901,7 +1953,7 @@ function chat() {
     }
   };
   BOX.onpaste = (ev) => attach([...ev.clipboardData?.files ?? []]);
-  $("form").onsubmit = (ev) => {
+  $("form.composer").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
   };
@@ -1922,6 +1974,7 @@ function chat() {
   };
   document.onclick = click;
   onhashchange = crew_route;
+  $("#grid").onsubmit = tell;
   document.addEventListener("keydown", crew_keys);
   crew_route();
   visualViewport.onresize = () => draw(true);
@@ -2124,6 +2177,10 @@ function hear(msg) {
   const agents = v.agents.join();
   for (const out of view_hear(v, msg)) {
     link_send(v, out);
+  }
+  if (DEMO !== null && msg.$ === "state") {
+    v.crew = DEMO;
+    demo_pulses(DEMO).forEach((p) => view_hear(v, p));
   }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
@@ -2506,12 +2563,20 @@ function crew_bars() {
   markup($("#mode"), mode_html(mode, view_pill(v)));
   $("#crew").hidden = !P.crew;
   if (!P.crew) {
+    document.body.classList.remove("gridmode");
+    $("#grid").hidden = true;
     watch();
     return;
   }
   markup($("#crew .needs"), needs_html(v));
   markup($("#crew .card"), [focus_html(v)]);
   markup($("#crew .tree"), tree_html(v, Date.now()));
+  const grid = v.page === null;
+  document.body.classList.toggle("gridmode", grid);
+  $("#grid").hidden = !grid;
+  if (grid) {
+    markup($("#grid"), grid_html(v, Date.now()));
+  }
   watch();
   const hash = view_hash("crew", v.page?.name ?? null);
   if (location.hash !== hash) {
@@ -2519,7 +2584,8 @@ function crew_bars() {
   }
 }
 function watch() {
-  const names = view_watch(v);
+  const tiles = $("#grid").hidden ? [] : [...$("#grid").querySelectorAll("form.tell")].filter(seen).map((f) => f.dataset.tell);
+  const names = view_watch(v, tiles);
   const key = names.join(`
 `);
   if (key !== P.watching || v.ws !== P.watched) {
@@ -2527,6 +2593,20 @@ function watch() {
     P.watched = v.ws;
     link_send(v, { $: "watch", names });
   }
+}
+function seen(el) {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < innerHeight;
+}
+function tell(ev) {
+  const form = ev.target.closest("form.tell");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input");
+  act({ $: "Tell", name: form.dataset.tell, text: input.value });
+  input.value = "";
 }
 function crew_keys(ev) {
   const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;

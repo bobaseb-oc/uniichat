@@ -187,6 +187,30 @@ body.crewmode #tabs { display: none; }
 #crew .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
 #crew .x:hover { color: var(--ink); background: var(--hover); }
 #crew .x.yes:hover { color: var(--add); }
+/* the Crew grid: tiles, each with a dot per agent under it; the footer
+   keeps only its toasts (a tile's box tells its agent) */
+body.gridmode #log { display: none; }
+body.gridmode footer > :not(#toast) { display: none; }
+#grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 18px 20px 40px; font: 13.5px/20px var(--sans); }
+#grid a { text-decoration: none; }
+.tile { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--hair); border-radius: 12px; background: var(--lift); }
+.tile .top { display: flex; align-items: center; gap: 6px; }
+.tile .head { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; white-space: nowrap; }
+.tile .meta, .tile .roll { color: var(--mid); overflow: hidden; text-overflow: ellipsis; }
+.tile .line { font: 12px/18px var(--mono); color: var(--soft); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tile.asking { border-color: var(--accent); }
+.tile.failed .st { color: var(--del); }
+.tile .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
+.tile .x:hover { color: var(--ink); background: var(--hover); }
+.dots { display: flex; flex-wrap: wrap; gap: 5px; }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: var(--hair); }
+.dot.working { background: var(--ink); }
+.dot.waiting { background: var(--mid); }
+.dot.asking { background: var(--accent); }
+.dot.failed { background: var(--del); }
+.dot.done { background: var(--add); opacity: .55; }
+.tell input { width: 100%; padding: 5px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px var(--sans); }
+.tell input:focus { outline: 0; border-color: var(--soft); }
 #tabs.crew .x { margin-left: 8px; padding: 0 4px; color: var(--soft); }
 #tabs.crew .x:hover { color: var(--ink); }
 

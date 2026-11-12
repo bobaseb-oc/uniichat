@@ -13,6 +13,7 @@
 // credit is bought through the App Store (APP), and sign-in is by email
 // only (another company's would need Sign in with Apple).
 
+import * as Demo from "../../Demo.ts";
 import * as Import from "../../Import.ts";
 import { theme_css } from "../../Theme.ts";
 import * as View from "../../View.ts";
@@ -66,6 +67,11 @@ const v = View.view_new();
 // the message box
 const BOX = $<HTMLTextAreaElement>("textarea");
 
+// /?demo=1: the demo crew (Demo.ts) instead of the server's, to see the
+// Crew view's layout; its agents' acts reach no agent (the server knows
+// none of them)
+const DEMO = new URLSearchParams(location.search).get("demo") === "1" ? Demo.demo_crew(Date.now()) : null;
+
 // the import's slider: the first day it takes, in days since 1970, from
 // the first new message's (its left end: all) to today's
 const BACK = $<HTMLInputElement>("#import [name=back]");
@@ -113,7 +119,8 @@ function kept(fact: string): string {
 async function boot(): Promise<void> {
   document.head.insertAdjacentHTML("beforeend", `<style>${theme_css()}</style>`);
   const q = new URLSearchParams(location.search);
-  history.replaceState(null, "", location.pathname === "/account" ? "/account" : "/");
+  // the query read, the address keeps only its page and the mode (#crew)
+  history.replaceState(null, "", (location.pathname === "/account" ? "/account" : "/") + location.hash);
   if (q.has("terminal")) {
     solo("Your terminal is signed in.", "You can close this tab and go back to it.");
     return;
@@ -231,7 +238,7 @@ function chat(): void {
     }
   };
   BOX.onpaste = (ev) => attach([...(ev.clipboardData?.files ?? [])]);
-  $("form").onsubmit = (ev) => {
+  $("form.composer").onsubmit = (ev) => {
     ev.preventDefault();
     submit();
   };
@@ -252,6 +259,7 @@ function chat(): void {
   };
   document.onclick = click;
   onhashchange = crew_route;
+  $("#grid").onsubmit = tell;
   document.addEventListener("keydown", crew_keys);
   crew_route();
   // a phone's keyboard up or down: the bottom stays in sight, if at it
@@ -495,6 +503,10 @@ function hear(msg: View.Server): void {
   const agents = v.agents.join();
   for (const out of View.view_hear(v, msg)) {
     View.link_send(v, out);
+  }
+  if (DEMO !== null && msg.$ === "state") {
+    v.crew = DEMO;
+    Demo.demo_pulses(DEMO).forEach((p) => View.view_hear(v, p));
   }
   const now = View.view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
   if (now.length > 0) {
@@ -982,12 +994,20 @@ function crew_bars(): void {
   markup($("#mode"), Html.mode_html(mode, View.view_pill(v)));
   $("#crew").hidden = !P.crew;
   if (!P.crew) {
+    document.body.classList.remove("gridmode");
+    $("#grid").hidden = true;
     watch();
     return;
   }
   markup($("#crew .needs"), Html.needs_html(v));
   markup($("#crew .card"), [Html.focus_html(v)]);
   markup($("#crew .tree"), Html.tree_html(v, Date.now()));
+  const grid = v.page === null;
+  document.body.classList.toggle("gridmode", grid);
+  $("#grid").hidden = !grid;
+  if (grid) {
+    markup($("#grid"), Html.grid_html(v, Date.now()));
+  }
   watch();
   const hash = View.view_hash("crew", v.page?.name ?? null);
   if (location.hash !== hash) {
@@ -998,13 +1018,32 @@ function crew_bars(): void {
 // the server told what's in sight (View.view_watch) when that changes, or
 // the socket did (a new one watches nothing)
 function watch(): void {
-  const names = View.view_watch(v);
+  const tiles = $("#grid").hidden ? [] : [...$("#grid").querySelectorAll<HTMLElement>("form.tell")].filter(seen).map((f) => f.dataset.tell!);
+  const names = View.view_watch(v, tiles);
   const key = names.join("\n");
   if (key !== P.watching || v.ws !== P.watched) {
     P.watching = key;
     P.watched = v.ws;
     View.link_send(v, { $: "watch", names });
   }
+}
+
+// whether an element is on screen, some of it
+function seen(el: HTMLElement): boolean {
+  const box = el.getBoundingClientRect();
+  return box.bottom > 0 && box.top < innerHeight;
+}
+
+// a tile's box sent: its words to its agent
+function tell(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.tell");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input")!;
+  act({ $: "Tell", name: form.dataset.tell!, text: input.value });
+  input.value = "";
 }
 
 // g, then c or m within a second: the Crew, or the chat

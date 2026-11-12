@@ -199,3 +199,46 @@ test("a pulse is kept per agent; the view watches what it shows", () => {
   View.view_act(v, { $: "Goto", name: "A" });
   expect(View.view_watch(v)).toEqual(["A"]);
 });
+
+// The Crew grid (no agent in focus): a tile per agent Unii started, with
+// a dot per agent under it (any depth), its roll-up and its pulse
+const { demo_crew, demo_pulses } = await import("./Demo.ts");
+
+test("the demo crew: 8 managers, 40 workers, a sub-manager, one asking", () => {
+  const crew = demo_crew(1e12);
+  expect(crew.filter((c) => c.tier === "manager" && c.parent === "main")).toHaveLength(8);
+  expect(crew.filter((c) => c.tier === "worker")).toHaveLength(41);
+  expect(crew.filter((c) => c.status === "asking")).toHaveLength(1);
+  expect(new Set(crew.map((c) => c.status)).size).toBe(6);
+});
+
+test("tiles: one per agent Unii started, dots for all under it", () => {
+  const v = View.view_new();
+  const crew = demo_crew(1e12);
+  View.view_hear(v, { $: "state", ...v, crew });
+  demo_pulses(crew).forEach((p) => View.view_hear(v, p));
+  const tiles = View.view_tiles(v, 1e12);
+  expect(tiles.map((t) => t.name)).toEqual(View.view_tree(v, 1e12).filter((r) => r.depth === 0).map((r) => r.name));
+  expect(tiles).toHaveLength(9);
+  const m3 = tiles.find((t) => t.name === "Mgr3")!;
+  expect(m3.dots.map((d) => d.name)).toContain("W3-sub");
+  expect(m3.dots).toHaveLength(7);
+  expect(m3.rollup).toContain("working");
+  expect(tiles.find((t) => t.name === "Claude1")!.dots).toEqual([]);
+});
+
+// the grid shown, the view watches its tiles (with its focus, at most 16)
+test("the view watches the tiles in sight and its focus, at most 16", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: demo_crew(1e12) });
+  expect(View.view_watch(v, ["Mgr0", "Mgr1"])).toEqual(["Mgr0", "Mgr1"]);
+  View.view_act(v, { $: "Goto", name: "W1-1" });
+  expect(View.view_watch(v, ["Mgr1"])).toEqual(["W1-1", "Mgr1"]);
+  expect(View.view_watch(v, Array.from({ length: 30 }, (_, k) => "x" + k))).toHaveLength(16);
+});
+
+test("Tell tells the agent named; empty, nothing", () => {
+  const v = View.view_new();
+  expect(View.view_act(v, { $: "Tell", name: "Mgr1", text: " go on " })).toEqual([{ $: "tell", name: "Mgr1", text: "go on" }]);
+  expect(View.view_act(v, { $: "Tell", name: "Mgr1", text: "  " })).toEqual([]);
+});

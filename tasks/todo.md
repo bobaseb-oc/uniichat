@@ -188,6 +188,17 @@ no cost display; desktop only.
 - [ ] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;
       the terminal's full-screen Crew mode (/crew full, Esc goes back to scrollback); a demo crew
       (8 managers, 40 workers) for layout and tests.
+      - [x] Grid and demo: Demo.ts (8 managers × 5 workers, a sub-manager, a Claude Code worker asking);
+        View.view_tiles, view_watch(v, tiles) (focus + tiles in sight, ≤ 16), act Tell; Html.grid_html;
+        #crew with no focus shows the grid (the footer keeps only toasts; a tile's box tells its agent);
+        /?demo=1#crew draws the demo crew locally. Fix found end to end: boot() cleaned the URL to "/"
+        and dropped #crew, so a link to the Crew opened the chat; it keeps the hash now. Also
+        `$("form")` bound the first form on the page: now `form.composer` (tiles add forms).
+        Proof: View 17/17, Html 12/12; suite 188 pass, 3 baseline fails; tsc on changed files: the same
+        one pre-existing error. End to end on a throwaway server (port 9555, temp UNII_DIR): sign-in by
+        /api/web-link with a Bearer (a cookie-only mint: 401), headless Chrome over CDP on /?demo=1#crew:
+        9 tiles, pill "18 working, 7 need you", g m → #chat, g c → #crew grid, the tree's caret opens a
+        manager; no page errors.
 - [ ] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
       a background process that connects as a device and runs jobs (Machine.run), with no screen.
       It gets the same approvals as the terminal.

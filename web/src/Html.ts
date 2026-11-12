@@ -171,6 +171,19 @@ function line_html(v: View.View, c: View.Crew): string {
   return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
 }
 
+// the Crew grid (View.view_tiles), no agent in focus: per tile its head
+// (mark, name, what it is) and actions, a dot per agent under it (a link
+// to it), its roll-up and activity line, and a box that tells it
+export function grid_html(v: View.View, now: number): string[] {
+  return View.view_tiles(v, now).map((t) => {
+    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span><b>${esc(t.name)}</b><span class="meta">${esc(t.tier + " · " + t.model)}</span></a>`;
+    const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
+    const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+  });
+}
+
 // what needs the person (View.view_needs), each with what it waits on
 // and its buttons
 export function needs_html(v: View.View): string[] {

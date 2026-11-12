@@ -137,3 +137,30 @@ test("a tree row shows its pulse: what it does at work, its last line done", () 
   View.view_hear(v, { $: "pulse", name: "Run", status: "working", act: "", last: "" });
   expect(Html.tree_html(v, 0)[0]).not.toContain('class="line"');
 });
+
+// The Crew grid (Html.grid_html): a tile per agent Unii started, its dots
+// linking to each under it, its roll-up, its pulse, its actions and a box
+// to tell it
+test("the grid: tiles with dots, roll-up, pulse, actions and a tell box", async () => {
+  const { demo_crew, demo_pulses } = await import("./Demo.ts");
+  const v = View.view_new();
+  const crew = demo_crew(1e12);
+  View.view_hear(v, { $: "state", ...v, crew });
+  demo_pulses(crew).forEach((p) => View.view_hear(v, p));
+  const tiles = Html.grid_html(v, 1e12);
+  expect(tiles).toHaveLength(9);
+  const m1 = tiles.find((t) => t.includes('href="#crew/Mgr1"'))!;
+  expect(m1.match(/class="dot /g)).toHaveLength(5);
+  expect(m1).toContain('href="#crew/W1-0"');
+  expect(m1).toContain('data-tell="Mgr1"');
+  expect(m1).toContain(act({ $: "Stop", name: "Mgr1" }));
+  expect(tiles.find((t) => t.includes('href="#crew/Claude1"'))).toContain(act({ $: "Approve", name: "Claude1", yes: true }));
+});
+
+test("a tile's name is escaped in its tell box", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [crew('a"><b', "main", "working")] });
+  const tile = Html.grid_html(v, 0)[0];
+  expect(tile).not.toContain('"><b');
+  expect(tile).toContain('data-tell="a&quot;&gt;&lt;b"');
+});
