@@ -772,6 +772,28 @@ function object_parse(text) {
   }
 }
 
+// Routines.ts
+var NAME = 80;
+var TASK = 4000;
+var HOURS = 168;
+var DAY2 = 86400000;
+function routine_next(r, now) {
+  const base = r.last ?? r.made;
+  if (r.when.$ === "every") {
+    return base + r.when.hours * 3600000;
+  }
+  if (r.when.$ !== "daily") {
+    return null;
+  }
+  const [h, m] = r.when.at.split(":").map(Number);
+  const d = new Date(now);
+  const today = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
+  return today > base ? today : today + DAY2;
+}
+function when_text(w) {
+  return w.$ === "daily" ? "daily at " + w.at : w.$ === "every" ? w.hours === 1 ? "every hour" : "every " + w.hours + " hours" : "on each new review request";
+}
+
 // Names.ts
 var ADJS = `
 red blue green yellow orange purple pink brown black white gray silver golden
@@ -798,17 +820,17 @@ toucan trout tuna turkey turtle walrus wasp whale wolf wombat yak zebra apple
 banana bagel cookie mango melon muffin noodle pancake pepper potato pretzel
 radish taco waffle
 `.split(/\s+/).filter(Boolean);
-var NAME = "(?:" + ADJS.map(name_word).join("|") + ")-?(?:" + NOUNS.map(name_word).join("|") + ")";
+var NAME2 = "(?:" + ADJS.map(name_word).join("|") + ")-?(?:" + NOUNS.map(name_word).join("|") + ")";
 function name_word(word) {
   return word[0].toUpperCase() + word.slice(1);
 }
 
 // Md.ts
-var NAME2 = new RegExp("\\[(" + NAME + ")\\]", "g");
+var NAME3 = new RegExp("\\[(" + NAME2 + ")\\]", "g");
 var SPAN = new RegExp([
   /`([^`\n]+)`/.source,
   /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]*)\)/.source,
-  NAME2.source,
+  NAME3.source,
   /\*\*([^*\n]+)\*\*/.source,
   /(?<![*\w])\*([^*\s][^*\n]*?)\*(?![\w*])/.source,
   /(?<![^\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/.source
@@ -877,7 +899,7 @@ function md_plain(s) {
 `).map(plain_line) }));
 }
 function plain_line(s) {
-  return spans_by(s, NAME2, (m) => Name(m[1]));
+  return spans_by(s, NAME3, (m) => Name(m[1]));
 }
 function md_output(s) {
   const lines = s.replace(/\r/g, "").split(`
@@ -1426,6 +1448,10 @@ function view_act(v, act) {
     }
     case "Archive": {
       return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Routine": {
+      const { $, ...op } = act;
+      return [{ $: "routine", ...op }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -2223,8 +2249,8 @@ function span_html(s) {
 }
 
 // Cockpit.ts
-var DAY2 = 86400000;
-var OLD2 = 60 * DAY2;
+var DAY3 = 86400000;
+var OLD2 = 60 * DAY3;
 function age(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d";
@@ -2400,7 +2426,8 @@ function home_cards(v, now) {
   const live = (c) => c.status === "working" || c.status === "waiting" || c.status === "asking";
   return { working: top.filter(live).map(card), done: top.filter((c) => !live(c)).map(card) };
 }
-function home_apps(v, routines = 0) {
+function home_apps(v) {
+  const routines = (v.routines ?? []).filter((r) => r.on).length;
   const failing = v.inbox?.mine.filter((p) => p.state === "failing").length ?? 0;
   const open2 = view_questions(v).length;
   return {
@@ -2546,14 +2573,14 @@ function card_html(c, archive) {
   return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc(c.name)}</span><span class="meta">${esc(c.status)}</span><span class="age">${esc(c.age)}</span></div>` + `<b class="ht">${esc(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
 }
 var KIND_MARK = { review: "◎", assign: "▣", mention: "@", ci: "✗", security: "⚠", other: "•" };
-function home_html(v, now, routines = 0) {
+function home_html(v, now) {
   const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
   const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(home_greeting(now))}</h2><p class="meta">${esc(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
   const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
   const { working, done } = home_cards(v, now.getTime());
   const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
-  const apps = home_apps(v, routines);
+  const apps = home_apps(v);
   const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
   const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
@@ -2568,7 +2595,7 @@ function side_html(v, mode, now) {
     ["inbox", "Inbox", inbox_badge(v.inbox)],
     ["chat", "Chat", (v.questions ?? []).length],
     ["crew", "Crew", working],
-    ["routines", "Routines", 0],
+    ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length],
     ["digest", "Digest", 0]
   ];
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
@@ -2585,6 +2612,21 @@ function palette_html(items, sel) {
     return [`<p class="meta pnone">Nothing matches.</p>`];
   }
   return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+}
+function routines_html(v, now) {
+  const time = (ms) => new Date(ms).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const rows = (v.routines ?? []).map((r) => {
+    const next = routine_next(r, now);
+    const when = `<span class="meta">${esc(when_text(r.when))} · ${r.tier}${!r.on ? " · off" : next === null ? "" : " · next " + esc(time(next))}${r.last === null ? "" : " · last " + esc(age(now - r.last)) + " ago"}</span>`;
+    const run = r.when.$ === "review" ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "run", n: r.id })}>Run now</button>`;
+    const flip = `<button class="pbtn"${act_html2({ $: "Routine", op: "toggle", n: r.id, on: !r.on })}>${r.on ? "Turn off" : "Turn on"}</button>`;
+    const drop = `<button class="pbtn"${act_html2({ $: "Routine", op: "drop", n: r.id })}>Delete</button>`;
+    const task = r.task === "" ? "" : `<p class="rtask">${esc(r.task)}</p>`;
+    return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
+  });
+  const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
+  const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
+  return [head, ...rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows, form];
 }
 
 // web/src/main.ts
@@ -2778,6 +2820,7 @@ function chat() {
   $("#page").addEventListener("click", page_click);
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
+  $("#page").addEventListener("submit", routine_add);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -3521,6 +3564,10 @@ function page_bars(mode) {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "routines") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), routines_html(v, Date.now()));
   } else if (mode === "home") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -3601,6 +3648,19 @@ function palette_run(k) {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+function routine_add(ev) {
+  const form = ev.target.closest("form.radd");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const f = new FormData(form);
+  const kind = String(f.get("kind"));
+  const when = kind === "daily" ? { $: "daily", at: String(f.get("at")) } : kind === "every" ? { $: "every", hours: Number(f.get("hours")) } : { $: "review" };
+  const tier = f.get("tier") === "manager" ? "manager" : "worker";
+  act({ $: "Routine", op: "add", routine: { name: String(f.get("name")), task: String(f.get("task")), when, tier } });
+  form.reset();
 }
 function inbox_bars() {
   const now = Date.now();

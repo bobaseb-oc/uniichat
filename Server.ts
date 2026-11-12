@@ -46,6 +46,7 @@ import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
 import * as Inbox from "./Inbox.ts";
+import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
 import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
@@ -125,6 +126,7 @@ type Chat = {
   held  : Array<() => void> | null;
   rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
+  tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
 };
 
 // a chat as it moves to another process (Chat.move): its user (an id:
@@ -331,6 +333,8 @@ export namespace Chat {
     chat.eye = Chat.eye(mem, Memory.turn(mem));
     mem.made = (l, i) => Chat.made(chat, l, i);
     mem.troubled = () => Chat.all(chat, Chat.state(chat));
+    chat.tick = setInterval(() => Chat.ticked(chat, Date.now()), Chat.TICKS);
+    chat.tick.unref?.();
     mem.wait.add(() => Chat.progress(chat));
     mem.wait.add(() => Chat.free(chat));
     const work = moved === null ? mem.work : [];
@@ -373,6 +377,7 @@ export namespace Chat {
     }
     Chat.cloud.billing.settle(acct.user);
     if (chat.socks.size === 0) {
+      clearInterval(chat.tick);
       Tools.close(chat.tools);
       Memory.stop(chat.mem);
       Chat.chats.delete(acct.user);
@@ -1122,7 +1127,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1360,6 +1365,9 @@ export namespace Chat {
       case "review": {
         return Chat.review(chat, id, msg);
       }
+      case "routine": {
+        return Chat.routine(chat, id, msg);
+      }
       case "fetch": {
         Chat.all(chat, { $: "fetch" });
         return {};
@@ -1527,6 +1535,100 @@ export namespace Chat {
     }
     chat.inbox = inbox;
     Chat.all(chat, { $: "inbox", inbox });
+    Chat.automate(chat, inbox);
+    return {};
+  }
+
+  // Routines
+  // --------
+  // The user's (Routines.ts), kept with the chat: each starts a native
+  // agent, the user's (its report takes no turn). The tick runs those due
+  // while the chat is open (a view or a device connected); a review
+  // routine, on each inbox, a review of each new review request of the
+  // user's, AUTOS at most at once (the first inbox it sees only seeds it)
+
+  export const TICKS = 60_000;
+  export const AUTOS = 3;
+
+  // a routine run: its agent started, a note, when it ran kept
+  export function run_routine(chat: Chat, r: Routines.Routine, now: number): void {
+    const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, r.task, true, { title: "routine: " + r.name });
+    r.last = now;
+    Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ".");
+  }
+
+  // the routines due now run; how many
+  export function ticked(chat: Chat, now: number): number {
+    const due = chat.mem.routines.filter((r) => Routines.routine_due(r, now));
+    due.forEach((r) => Chat.run_routine(chat, r, now));
+    if (due.length > 0) {
+      Memory.save(chat.mem);
+      Chat.change(chat);
+    }
+    return due.length;
+  }
+
+  // review routines on an inbox: each new review request of the user's
+  export function automate(chat: Chat, inbox: Inbox.Inbox): void {
+    const mine = inbox.reviews.filter((p) => p.you);
+    let changed = false;
+    for (const r of chat.mem.routines.filter((x) => x.on && x.when.$ === "review")) {
+      const seen = r.seen;
+      r.seen = [...new Set([...(seen ?? []), ...mine.map((p) => p.url)])].slice(-200);
+      changed = true;
+      if (seen === undefined) {
+        continue;
+      }
+      for (const p of mine.filter((x) => !seen.includes(x.url)).slice(0, Chat.AUTOS)) {
+        const label = { title: "review " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+        const task = Chat.review_task(p, "review", false) + (r.task === "" ? "" : "\n\nAlso: " + r.task);
+        const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, task, true, label);
+        Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ": " + label.title + ".");
+        r.last = Date.now();
+      }
+    }
+    if (changed) {
+      Memory.save(chat.mem);
+      Chat.change(chat);
+    }
+  }
+
+  // the user's routine acts: add one (checked; at most Routines.MOST),
+  // turn one on or off, drop one, run one now
+  export async function routine(chat: Chat, id: string, msg: any): Promise<Answer> {
+    const list = chat.mem.routines;
+    if (msg.op === "add") {
+      const given = Routines.routine_check(msg.routine);
+      if (typeof given === "string") {
+        return { error: given };
+      }
+      if (list.length >= Routines.MOST) {
+        return { error: "At most " + Routines.MOST + " routines: drop one first." };
+      }
+      chat.mem.routined += 1;
+      list.push({ id: chat.mem.routined, ...given, on: true, last: null, made: Date.now() });
+    } else {
+      const r = list.find((x) => x.id === msg.n);
+      if (r === undefined) {
+        return { error: "No routine " + String(msg.n).slice(0, 20) + "." };
+      }
+      if (msg.op === "toggle") {
+        r.on = msg.on === true;
+      } else if (msg.op === "drop") {
+        chat.mem.routines = list.filter((x) => x !== r);
+      } else if (msg.op === "run" && r.when.$ !== "review") {
+        const refused = await Chat.afford(chat);
+        if (refused !== null) {
+          return refused;
+        }
+        Chat.mark(chat, id, {});
+        Chat.run_routine(chat, r, Date.now());
+      } else {
+        return { error: msg.op === "run" ? "A review routine runs on new review requests." : "No routine act " + String(msg.op).slice(0, 20) + "." };
+      }
+    }
+    Memory.save(chat.mem);
+    Chat.change(chat);
     return {};
   }
 

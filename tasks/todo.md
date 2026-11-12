@@ -482,10 +482,20 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       while a popover or the palette is open), the sidebar's search button, a click on an item. Mutants
       8/8 after 3 tests were tightened (bar counts equal, "any word" and "starts first" untested, a space
       only a worktree has). Suite 284 pass, 3 known; tsc 56 → 56.
-- [ ] C6 routines: a prompt that starts a native agent daily at a time / every N hours / on a new
+- [x] C6 routines: a prompt that starts a native agent daily at a time / every N hours / on a new
       review request (Herdr's inbox automations); kept in view.json, run by the server's tick, listed
       and toggled on #routines and by /routine in the terminal. → verify: Server tests with a fake
       clock, View tests.
+      Proof: Routines.test 6/6 (the check: name, task unless a review one, daily HH:MM, every 1-168 h,
+      tier; when due: daily once past its time and not run since, made after it → tomorrow; every N h
+      after the last run; review never by the clock; the terminal's parse; the views: act, /routines,
+      /routine, the page, the Home count). Server fixture: added, checked, run now, the tick runs it once
+      when due and not again, off, unknown refused, a review routine seeds on its first inbox and then
+      starts one review per new request of the user's (a team's ignored), at most 20, kept in view.json.
+      E2E against the real throwaway server: add (every 4 h), off, on, delete, a bad one refused with
+      the server's reason. They run while the server runs and a view or a device is connected (Chat.free
+      ends an idle chat with no socket, and its tick): said on the page. Mutants 11/11; suite 291 pass,
+      3 known; tsc: one more setInterval().unref (the DOM-lib noise already known); Term.ts builds.
 - [ ] C7 team digest (#digest): merged PRs of the last 7 days in the spaces' repos by author, and open
       ones; a theme line per author from the compactor, cached a day. → verify: tests, e2e.
 - [ ] C8 (decision needed) Up next (calendar) and meeting transcripts: they need calendar/Drive

@@ -294,6 +294,7 @@ function chat(): void {
   $("#page").addEventListener("click", page_click);
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
+  $("#page").addEventListener("submit", routine_add);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -1219,6 +1220,10 @@ function page_bars(mode: View.Mode): boolean {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "routines") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.routines_html(v, Date.now()));
   } else if (mode === "home") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -1311,6 +1316,21 @@ function palette_run(k: number): void {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+
+// the Routines page's form sent: a routine added (the server checks it)
+function routine_add(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.radd");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const f = new FormData(form);
+  const kind = String(f.get("kind"));
+  const when = kind === "daily" ? { $: "daily" as const, at: String(f.get("at")) } : kind === "every" ? { $: "every" as const, hours: Number(f.get("hours")) } : { $: "review" as const };
+  const tier = f.get("tier") === "manager" ? "manager" : "worker";
+  act({ $: "Routine", op: "add", routine: { name: String(f.get("name")), task: String(f.get("task")), when, tier } });
+  form.reset();
 }
 
 // the inbox drawn; entered, its stamps then kept to tell what changed

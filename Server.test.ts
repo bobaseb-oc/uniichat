@@ -369,6 +369,65 @@ test("inbox PRs reviewed or fixed: a native worker each (a manager with a Claude
   expect(out.asked.every((t: string) => t.endsWith(" | user: true"))).toBe(true); // the user's: its report takes no turn
 });
 
+// Routines (Routines.ts): added, checked, at most Routines.MOST; run now,
+// turned off, dropped; the tick starts those due once; a review routine
+// starts a review for each new review request of the user's (the first
+// inbox seen only seeds it); kept with the chat
+const ROUTINE = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+AskAI.ask = (ask, on) => AskAI.tie(on, ask.bill, () => {}, () => {})[0];
+const started = [];
+const start = Tools.start;
+Tools.start = (...args) => { started.push({ tier: args[2].tier, task: args[3], user: args[4], title: args[5]?.title }); return start(...args); };
+const add = (r) => Chat.act(chat, "a" + Math.random(), { $: "routine", op: "add", routine: r }, "");
+const ok = await add({ name: "Sweep", task: "clean the worktrees", when: { $: "every", hours: 1 }, tier: "worker" });
+const bad = await add({ name: "", task: "x", when: { $: "every", hours: 1 } });
+const listed = Chat.state(chat).routines.map((r) => ({ id: r.id, name: r.name, on: r.on }));
+const run = await Chat.act(chat, "r1", { $: "routine", op: "run", n: 1 }, "");
+const ran = started.length;
+const early = Chat.ticked(chat, Date.now() + 30 * 60e3);
+const due = Chat.ticked(chat, Date.now() + 61 * 60e3);
+const again = Chat.ticked(chat, Date.now() + 62 * 60e3);
+const off = await Chat.act(chat, "r2", { $: "routine", op: "toggle", n: 1, on: false }, "");
+const offdue = Chat.ticked(chat, Date.now() + 9 * 3600e3);
+const unknown = await Chat.act(chat, "r3", { $: "routine", op: "run", n: 9 }, "");
+await add({ name: "Reviews", task: "", when: { $: "review" } });
+const pr = (n, you) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", bot: false, updated: "", add: 1, del: 0, files: 1, branch: "b", state: "ready", failing: [], body: "", you });
+const inbox = (reviews) => ({ at: 1, login: "me", reviews, mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] });
+const before = started.length;
+await Chat.act(chat, "i1", { $: "inbox", inbox: inbox([pr(1, true)]) }, "mac");
+const seeded = started.length - before;
+await Chat.act(chat, "i2", { $: "inbox", inbox: inbox([pr(1, true), pr(2, true), pr(3, false)]) }, "mac");
+const reviewed = started.slice(before);
+const drop = await Chat.act(chat, "r4", { $: "routine", op: "drop", n: 1 }, "");
+for (let k = 0; k < 19; k++) await add({ name: "R" + k, task: "t", when: { $: "every", hours: 5 } });
+const full = await add({ name: "one too many", task: "t", when: { $: "every", hours: 5 } });
+const fs = await import("node:fs");
+const saved = JSON.parse(fs.readFileSync(chat.mem.dir + "/view.json", "utf8")).routines.length;
+console.log(JSON.stringify({ ok, bad: "error" in bad, listed, run, ran, first: started[0], early, due, again, off, offdue, unknown: "error" in unknown, seeded, reviewed, drop, full: "error" in full, saved, left: Chat.state(chat).routines.length }));
+process.exit(0);
+`;
+
+test("routines: added and checked, run now, run by the tick once when due, off, dropped; review routines start reviews of new requests; kept", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/routine.ts", ROUTINE);
+  const proc = Bun.spawn([process.execPath, dir + "/routine.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ ok: {}, bad: true, listed: [{ id: 1, name: "Sweep", on: true }], run: {}, ran: 1, early: 0, due: 1, again: 0, off: {}, offdue: 0, unknown: true, seeded: 0, drop: {}, full: true });
+  expect(out.first).toEqual({ tier: "worker", task: "clean the worktrees", user: true, title: "routine: Sweep" });
+  expect(out.reviewed.length).toBe(1);
+  expect(out.reviewed[0]).toMatchObject({ tier: "worker", user: true, title: "review o/r#2" });
+  expect(out.reviewed[0].task).toContain("Review o/r#2");
+  expect(out.saved).toBe(20);
+  expect(out.left).toBe(20);
+});
+
 // A call waiting for the user (auto's reviewer couldn't check it): in the
 // state; the user's yes or no answers it; an unknown one is refused
 const CONSENT = `

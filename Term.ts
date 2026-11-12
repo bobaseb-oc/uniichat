@@ -228,6 +228,10 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/answer <n> <text>", "",                       "answer question n (or with an offered answer's number); Legion takes it up", (t, a) => term_answer(t, View.view_answer(t.v, a))],
       ["/drop <n>",         "",                        "dismiss question n",                             (t, a) => term_answer(t, View.view_drop(t.v, a))],
     ]],
+    ["Routines", [
+      ["/routines",         "",                        "your routines: tasks a Legion agent starts on by the clock or on new review requests", (t) => term_note(t, View.view_routines_note(t.v))],
+      ["/routine <act>",    "",                        "add daily HH:MM | every Nh | on review, then name: task; or run, on, off, drop <n>", (t, a) => term_answer(t, View.view_routine_cmd(t.v, a))],
+    ]],
     ["Account", [
       ...topup,
       ["/account",          "",                        "balance, top-ups, charges, calls",               term_account],

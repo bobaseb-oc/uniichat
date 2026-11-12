@@ -14,6 +14,7 @@ import { Modes, type Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
 import type { Inbox } from "./Inbox.ts";
+import { routine_parse, when_text, type Given, type Routine } from "./Routines.ts";
 import * as Md from "./Md.ts";
 import { LABELS, type Move, Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
@@ -77,6 +78,7 @@ export type State = {
   calls?    : Waiting[];  // calls waiting for the user's yes (auto mode's reviewer couldn't check them)
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
   trouble?  : string | null; // why the last summary failed and asks again (Memory's trouble)
+  routines? : Routine[];     // the user's (Routines.ts)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
@@ -218,6 +220,9 @@ export type Client =
   | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
   | { $: "fetch" } // the inbox read anew by the devices
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
+  | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
+  | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
+  | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
   | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
@@ -234,6 +239,9 @@ export type Link = {
   hear : (msg: Server) => void;
   lost : (up: boolean) => Promise<boolean>;
 };
+
+// a routine act (the web's Routines page, the terminal's /routine)
+export type RoutineOp = { op: "add"; routine: Given } | { op: "toggle"; n: number; on: boolean } | { op: "drop" | "run"; n: number };
 
 // what a person does
 export type Act =
@@ -256,6 +264,7 @@ export type Act =
   | { $: "Review"; prs: string[]; how: "review" | "fix"; claude?: boolean } // PRs of the inbox, each to a Legion agent (claude: a Claude Code worker under a manager)
   | { $: "Fetch" }                              // the inbox read anew (its Refresh)
   | { $: "Archive"; names: string[] }           // agents out of the crew (Home's Archive, Archive all)
+  | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
 
 // what a page draws, top to bottom
 export type Row =
@@ -608,6 +617,10 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Archive": {
       return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Routine": {
+      const { $, ...op } = act;
+      return [{ $: "routine", ...op }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -1022,6 +1035,36 @@ export function view_questions_note(v: View): string {
     return [q.id + ". " + first, ...more.map((l) => pad + l), ...(q.options === undefined ? [] : [pad + "answers: " + q.options.join(" | ")])].join("\n");
   };
   return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
+}
+
+// the terminal's /routines: each with its number, when, tier, on or off
+export function view_routines_note(v: View): string {
+  const rs = v.routines ?? [];
+  if (rs.length === 0) {
+    return "No routines. Add one: /routine add daily 09:00 Name: task (or every 4h, or on review).";
+  }
+  return ["Your routines:", ...rs.map((r) => r.id + ". " + r.name + " · " + when_text(r.when) + " · " + r.tier + " · " + (r.on ? "on" : "off")),
+    "/routine run|on|off|drop <n>; /routine add daily 09:00 | every 4h | on review, then name: task."].join("\n");
+}
+
+// /routine's argument: add <when> <name>: <task>, or run|on|off|drop <n>
+export function view_routine_cmd(v: View, arg: string): Act | string {
+  const [verb, ...rest] = arg.trim().split(/\s+/);
+  if (verb === "add") {
+    const given = routine_parse(arg.trim().slice(3));
+    return typeof given === "string" ? given : { $: "Routine", op: "add", routine: given };
+  }
+  const ops: Record<string, (n: number) => Act> = {
+    run  : (n) => ({ $: "Routine", op: "run", n }),
+    drop : (n) => ({ $: "Routine", op: "drop", n }),
+    on   : (n) => ({ $: "Routine", op: "toggle", n, on: true }),
+    off  : (n) => ({ $: "Routine", op: "toggle", n, on: false }),
+  };
+  const r = (v.routines ?? []).find((x) => String(x.id) === rest[0]);
+  if (ops[verb ?? ""] === undefined) {
+    return "Use /routine add, run, on, off or drop: /routines lists them.";
+  }
+  return r === undefined ? "No routine " + (rest[0] ?? "") + ": /routines lists them." : ops[verb!](r.id);
 }
 
 // /answer's argument, "<n> <text>", as an Answer: a text that is just the

@@ -9,6 +9,7 @@
 
 import * as Cockpit from "../../Cockpit.ts";
 import type { Inbox } from "../../Inbox.ts";
+import * as Routines from "../../Routines.ts";
 import type * as View from "../../View.ts";
 import { esc } from "./Html.ts";
 
@@ -123,7 +124,7 @@ const KIND_MARK: Record<string, string> = { review: "◎", assign: "▣", mentio
 
 // Home: the head (date, greeting, who needs the user; New agent, Focus),
 // the stats, Unii's agents working then done, the apps, the activity
-export function home_html(v: View.View, now: Date, routines = 0): string[] {
+export function home_html(v: View.View, now: Date): string[] {
   const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
   const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(Cockpit.home_greeting(now))}</h2><p class="meta">${esc(Cockpit.home_line(v))}</p>`
     + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
@@ -132,7 +133,7 @@ export function home_html(v: View.View, now: Date, routines = 0): string[] {
   const group = (title: string, cards: Cockpit.Card[], archive: boolean) => cards.length === 0 ? "" :
     `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
-  const apps = Cockpit.home_apps(v, routines);
+  const apps = Cockpit.home_apps(v);
   const app = (href: string, name: string, line: string) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
   const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>`
     + `<section><h3>Activity</h3>${Cockpit.home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
@@ -153,7 +154,7 @@ export function side_html(v: View.View, mode: View.Mode, now: number): string[] 
   const working = v.crew.filter((c) => c.status === "working").length;
   const pages = [
     ["home", "Home", 0], ["inbox", "Inbox", Cockpit.inbox_badge(v.inbox)], ["chat", "Chat", (v.questions ?? []).length],
-    ["crew", "Crew", working], ["routines", "Routines", 0], ["digest", "Digest", 0],
+    ["crew", "Crew", working], ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length], ["digest", "Digest", 0],
   ] as const;
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
   const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
@@ -173,4 +174,30 @@ export function palette_html(items: Cockpit.Item[], sel: number): string[] {
     return [`<p class="meta pnone">Nothing matches.</p>`];
   }
   return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+}
+
+// Routines
+// ========
+
+// the routines: each its name, when, the next run (or "on review
+// requests"), the last, its tier; Run now, On/Off, Delete; then the form
+// to add one (main.ts reads it: form.radd)
+export function routines_html(v: View.View, now: number): string[] {
+  const time = (ms: number) => new Date(ms).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const rows = (v.routines ?? []).map((r) => {
+    const next = Routines.routine_next(r, now);
+    const when = `<span class="meta">${esc(Routines.when_text(r.when))} · ${r.tier}${!r.on ? " · off" : next === null ? "" : " · next " + esc(time(next))}${r.last === null ? "" : " · last " + esc(Cockpit.age(now - r.last)) + " ago"}</span>`;
+    const run = r.when.$ === "review" ? "" : `<button class="pbtn"${act_html({ $: "Routine", op: "run", n: r.id })}>Run now</button>`;
+    const flip = `<button class="pbtn"${act_html({ $: "Routine", op: "toggle", n: r.id, on: !r.on })}>${r.on ? "Turn off" : "Turn on"}</button>`;
+    const drop = `<button class="pbtn"${act_html({ $: "Routine", op: "drop", n: r.id })}>Delete</button>`;
+    const task = r.task === "" ? "" : `<p class="rtask">${esc(r.task)}</p>`;
+    return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
+  });
+  const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
+  const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${Routines.NAME}" required>`
+    + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="every">every</option><option value="review">on each new review request</option></select>`
+    + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${Routines.HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>`
+    + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>`
+    + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${Routines.TASK}"></textarea><button class="pbtn">Add</button></form>`;
+  return [head, ...(rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows), form];
 }

@@ -648,3 +648,14 @@ body.focus .hcols { grid-template-columns: 1fr; }
 #palette .pi .meta { color: var(--mid); font-size: 12px; }
 #palette .pnone { padding: 10px 14px; color: var(--mid); }
 #machine { max-width: 460px; }
+
+/* Routines: each a card (off: faded), then the form to add one */
+.routine { margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 10px; }
+.routine.off { opacity: .55; }
+.routine .rh { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.routine .rtask { margin: 4px 0 0; white-space: pre-wrap; color: var(--mid); }
+.routine .acts, .radd .rwhen { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.radd { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding: 12px; border: 1px dashed var(--frame); border-radius: 10px; }
+.radd :is(input, select, textarea) { padding: 5px 8px; border: 1px solid var(--hair); border-radius: 6px; background: var(--lift); color: inherit; font: inherit; }
+.radd input[name="hours"] { width: 5em; }
+.radd .pbtn { align-self: flex-start; }

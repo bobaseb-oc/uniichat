@@ -209,7 +209,8 @@ export function home_cards(v: View, now: number): { working: Card[]; done: Card[
 }
 
 // the apps' lines: the inbox's (PRs failing), the questions', the routines'
-export function home_apps(v: View, routines = 0): { inbox: string; questions: string; routines: string } {
+export function home_apps(v: View): { inbox: string; questions: string; routines: string } {
+  const routines = (v.routines ?? []).filter((r) => r.on).length;
   const failing = v.inbox?.mine.filter((p) => p.state === "failing").length ?? 0;
   const open = view_questions(v).length;
   return {
