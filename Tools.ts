@@ -169,8 +169,9 @@ single chat that never ends. Unii gave you a task: see it done, mostly by
 workers. Plan it and split it into parts that can run on their own; spawn
 starts one worker per part, in parallel (use a cheaper model for simple
 parts; as: "claude" runs Claude Code itself on a device, in a repo there,
-once the user approves it: for coding work), tell sends one more to a
-worker, stop cuts one. A worker knows
+once the user approves it: a worker for coding work that needs its tools,
+one per coding task, and state the reason in each such spawn), tell sends
+one more to a worker, stop cuts one. A worker knows
 only its task and the latest lines of your chat, so say all it needs: the
 goal, the files, the constraints, how to check its work. Do no
 hands-on work yourself: workers do the hands-on steps, you split the work
