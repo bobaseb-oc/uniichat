@@ -38,6 +38,16 @@ How it works
   Permission modes are plan (read-only), auto (a cheap-model reviewer
   checks each change; anything it can't decide comes to you) and full.
   Shift+Tab cycles them.
+- **A cockpit.** The web has Home (who needs you, stats, agents with an
+  estimated cost, activity), an Inbox (review requests, your PRs and
+  their CI state, Jira tickets, worktrees to clean up), Routines and a
+  team Digest, beside a sidebar of agents by ticket and spaces, and a
+  palette (⌘K). A device reads the inbox with your own `gh`, `acli` and
+  `git`, read-only, every 5 minutes; set `UNII_SPACES` (comma-separated
+  repo paths) on the device to choose the repos. Review or Fix on an
+  inbox row starts a native Legion agent per PR (Claude Code workers if
+  you tick it); nothing is posted to GitHub or Jira. Routines start an
+  agent daily, every N hours, or on each new review request.
 - **Every window is a view.** The server owns the chat. A browser tab
   or `legion` in a terminal shows it live, and any of them can send a
   message, stop the work or change the model.
@@ -108,6 +118,12 @@ What is known not to work, or not checked yet:
 - **The gateway's budget stops the compactor.** Over budget, summaries
   stop. Turns now go on after 60 s with lines unsummarized, but the
   tree only catches up once the budget is back.
+- **Cockpit limits.** Jira tickets need `acli jira auth login` on the
+  device. Agent cost on Home is an estimate at list price, not the
+  gateway's bill; the 7-day spend sums the daily cost caches present.
+  Routines run only while a view or a device is connected. There is no
+  calendar or meeting transcripts page yet: both need access Legion
+  doesn't have.
 - **Not checked live yet:** recall over the imported history, a turn
   with the gateway down (the 60 s go-ahead and the shown reason), the
   auto-mode reviewer on the real gateway, sub-agents getting their own
