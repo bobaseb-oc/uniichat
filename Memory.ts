@@ -1151,7 +1151,7 @@ ${Memory.cut(line)}| ← LIMIT`;
     };
     const levels = Memory.levels(mem);
     const menu = ["VIEW", "ROOT", ...levels.map((l) => "LVL" + l)].map((name) => `<a href="#${name}">${name}</a>`);
-    yield `<!doctype html><meta charset="utf-8"><title>UniiChat memory</title>
+    yield `<!doctype html><meta charset="utf-8"><title>Legion memory</title>
 <style>
 body { font: 13px/1.4 ui-monospace, monospace; margin: 2em; } nav a { margin-right: 1em; }
 section { display: none; } section:target { display: block; }

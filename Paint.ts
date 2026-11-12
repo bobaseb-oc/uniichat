@@ -430,9 +430,9 @@ export function rule_text(text: string, w: number): Line {
   return [Run("─".repeat(Math.max(0, w - text_width(tag) - 1)) + tag + "─", DIM)];
 }
 
-// the last line, w wide: a tab for UniiChat and each agent at work, the
+// the last line, w wide: a tab for Legion and each agent at work, the
 // shown bold; with agents, the key that moves along them, if it fits
-// the crew panel: UniiChat (the orchestrator) on top, each agent under
+// the crew panel: Legion (the orchestrator) on top, each agent under
 // who started it (View.view_crew), the page shown marked ▸ and bold, a
 // failed one red, done and stopped ones dim; `most` lines at most, the
 // rest counted; each line cut to w

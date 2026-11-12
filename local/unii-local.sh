@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# unii-local
-# ==========
-# UniiChat from this source, on the LiteLLM proxy ($LITELLM_API_BASE,
+# legion (local/legion; unii-local.sh, the old name, is this file)
+# ======
+# Legion from this source, on the LiteLLM proxy ($LITELLM_API_BASE,
 # $LITELLM_API_KEY): the server's key and Claude API origin are set for
 # the server process only. Term.ts opens loopback servers only. Web
 # search goes through a SearXNG in Docker on 127.0.0.1 (pinned image),
 # when Docker runs; without it the chat runs with no search.
 #
-#   unii              start the server if it is not running, open the chat
-#   unii serve        run the server in the foreground
-#   unii start|stop   start (background) or stop the server and SearXNG
-#   unii web          open the site in your browser, signed in as your terminal
-#   unii device       this computer runs the agents' jobs with no terminal open
+#   legion              start the server if it is not running, open the chat
+#   legion serve        run the server in the foreground
+#   legion start|stop   start (background) or stop the server and SearXNG
+#   legion web          open the site in your browser, signed in as your terminal
+#   legion device       this computer runs the agents' jobs with no terminal open
 #                     (foreground; e.g. `unii device &` for the background)
-#   unii log          follow the server's log (sign-in links print there)
-#   unii knowledge    rebuild ~/.unii-prime/knowledge.json (OKF, graphify guides,
+#   legion log          follow the server's log (sign-in links print there)
+#   legion knowledge    rebuild ~/.unii-prime/knowledge.json (OKF, graphify guides,
 #                     repo digests and cards; local/prime/knowledge.ts)
-#   unii mcp-login S  sign in to the MCP server S with OAuth (e.g. atlassian);
+#   legion mcp-login S  sign in to the MCP server S with OAuth (e.g. atlassian);
 #                     the grant goes to the Keychain only
-#   unii mcp-logout S delete that grant
-#   unii <args>       anything else goes to Term.ts (e.g. login, version)
+#   legion mcp-logout S delete that grant
+#   legion <args>       anything else goes to Term.ts (e.g. login, version)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -45,7 +45,7 @@ chmod 700 "$DIR"
 # to 127.0.0.1 only. Sets SEARCH once it answers
 searxng_start() {
   if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
-    echo "unii: Docker is not running; web search is off" >&2
+    echo "legion: Docker is not running; web search is off" >&2
     return 0
   fi
   if [[ ! -f "$SEARX_DIR/settings.yml" ]]; then
@@ -63,7 +63,7 @@ searxng_start() {
     fi
     sleep 0.5
   done
-  echo "unii: SearXNG did not answer; web search is off (docker logs $SEARX_NAME)" >&2
+  echo "legion: SearXNG did not answer; web search is off (docker logs $SEARX_NAME)" >&2
 }
 
 # the server: its key and origin from LiteLLM, Opus 5.5 by default, Haiku
@@ -87,7 +87,7 @@ server_exec() {
 # Claude Code's logs staged anew (local/prime/logs.ts), redacted, so the
 # chat's import, asked at its start, finds what was said since the last
 logs_make() {
-  bun "$ROOT/local/prime/logs.ts" || echo "unii: Claude Code logs not staged" >&2
+  bun "$ROOT/local/prime/logs.ts" || echo "legion: Claude Code logs not staged" >&2
 }
 
 # the terminal: its /import reads only the redacted copy of Claude Code's
@@ -101,16 +101,16 @@ term_exec() {
 # from ~/.claude.json as its server opens)
 mcp_make() {
   if [[ ! -d "$ROOT/local/tools/node_modules" ]]; then
-    echo "unii: browser tools are not installed: npm ci --prefix $ROOT/local/tools" >&2
+    echo "legion: browser tools are not installed: npm ci --prefix $ROOT/local/tools" >&2
   fi
-  bun "$ROOT/local/mcp.ts" "$DIR/mcp.json" >&2 || echo "unii: no MCP servers" >&2
+  bun "$ROOT/local/mcp.ts" "$DIR/mcp.json" >&2 || echo "legion: no MCP servers" >&2
 }
 
 # the skills index the rules import (local/skills.ts): what Claude Code
 # has installed and enabled now, so a plugin installed there shows here
 # at the next start
 skills_make() {
-  bun "$ROOT/local/skills.ts" "$DIR/skills.md" >&2 || echo "unii: no skills index" >&2
+  bun "$ROOT/local/skills.ts" "$DIR/skills.md" >&2 || echo "legion: no skills index" >&2
 }
 
 server_up() {
@@ -128,12 +128,12 @@ server_start() {
   echo "$!" >"$PID"
   for _ in $(seq 1 50); do
     if server_up; then
-      echo "unii: server on $URL, search ${SEARCH:-off} (log: $LOG)" >&2
+      echo "legion: server on $URL, search ${SEARCH:-off} (log: $LOG)" >&2
       return 0
     fi
     sleep 0.2
   done
-  echo "unii: server did not start; see $LOG" >&2
+  echo "legion: server did not start; see $LOG" >&2
   return 1
 }
 
@@ -141,12 +141,12 @@ server_stop() {
   if [[ -f "$PID" ]] && kill -0 "$(cat "$PID")" 2>/dev/null; then
     kill "$(cat "$PID")"
     rm -f "$PID"
-    echo "unii: server stopped" >&2
+    echo "legion: server stopped" >&2
   else
-    echo "unii: no server started by this script is running" >&2
+    echo "legion: no server started by this script is running" >&2
   fi
   if command -v docker >/dev/null && docker stop "$SEARX_NAME" >/dev/null 2>&1; then
-    echo "unii: SearXNG stopped" >&2
+    echo "legion: SearXNG stopped" >&2
   fi
 }
 
@@ -157,7 +157,7 @@ case "${1:-}" in
   web)   server_start && term_exec web "$URL" ;;
   device) server_start && term_exec device "$URL" ;;
   log)   exec tail -f "$LOG" ;;
-  knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "unii: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
+  knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "legion: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;
   mcp-logout) mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" --logout ;;
   "")    server_start && logs_make && UNII_IMPORT_ASK=1 term_exec "$URL" ;;

@@ -2,7 +2,7 @@
 // ======
 // This computer as a device: it runs the server's jobs here
 // (Machine.run) and answers their output. The terminal (Term.ts) is one,
-// and `unii device` is one with no screen, so the agents' shells work
+// and `legion device` is one with no screen, so the agents' shells work
 // while no terminal is open. Both keep the same rules (Rules): computer
 // use only where allowed (UNII_COMPUTER=1), an output too large for a
 // socket message refused by its size, a job the server no longer lists
@@ -55,7 +55,7 @@ export async function device_run(jobs: Map<string, Run>, id: string, job: Job, r
   send({ $: "out", job: id, out: size > most ? big : out });
 }
 
-// `unii device`: connects to the server at url as this device (auth: its
+// `legion device`: connects to the server at url as this device (auth: its
 // session's header; query: its name, work dir, whether it does computer
 // use) and runs its jobs, with no screen; what goes wrong, to log. A
 // lost socket opens again, unless lost() says not (signed out)

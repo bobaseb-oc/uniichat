@@ -236,13 +236,13 @@ export namespace Auth {
   export async function token(name: string, store: Store, o: Opts = {}): Promise<string> {
     const raw = await store.get(name);
     if (raw === null) {
-      throw new Error("not signed in: unii mcp-login " + name);
+      throw new Error("not signed in: legion mcp-login " + name);
     }
     let g: Grant;
     try {
       g = JSON.parse(raw);
     } catch {
-      throw new Error("sign in again: unii mcp-login " + name + " (its grant is unreadable)");
+      throw new Error("sign in again: legion mcp-login " + name + " (its grant is unreadable)");
     }
     if (g.expires_at - MARGIN > Date.now()) {
       return g.access_token;
@@ -256,7 +256,7 @@ export namespace Auth {
   }
 
   export async function refresh(name: string, g: Grant, store: Store, o: Opts): Promise<string> {
-    const again = "sign in again: unii mcp-login " + name;
+    const again = "sign in again: legion mcp-login " + name;
     if (!g.refresh_token) {
       throw new Error(again + " (the token expired, and there is no refresh token)");
     }

@@ -189,7 +189,7 @@ test("token: kept until near expiry, then refreshed with the refresh token rotat
 });
 
 test("token fails closed: none stored, refresh refused, expired with no refresh token; no token in any error (I1, I8)", async () => {
-  expect(String(await Auth.token("web", memory(), T).catch((e) => e.message))).toBe("not signed in: unii mcp-login web");
+  expect(String(await Auth.token("web", memory(), T).catch((e) => e.message))).toBe("not signed in: legion mcp-login web");
   for (const opts of [{ refreshFails: true }, { noRefresh: true }]) {
     const f = fake(opts);
     const store = memory();
@@ -198,7 +198,7 @@ test("token fails closed: none stored, refresh refused, expired with no refresh 
     await store.set("web", JSON.stringify({ ...g, expires_at: Date.now() - 1 }));
     const why = String(await Auth.token("web", store, T).then(() => "no error", (e) => e.message));
     f.stop();
-    expect(why).toStartWith("sign in again: unii mcp-login web");
+    expect(why).toStartWith("sign in again: legion mcp-login web");
     for (const secret of [...ACCESS, ...REFRESH]) {
       expect(why).not.toContain(secret);
     }
@@ -212,7 +212,7 @@ test("an oauth server gets its bearer token on every request; without one it is 
   const server = { name: "web", url: f.resource, oauth: true };
   const none = await Mcp.list(Mcp.pool([server], { auth: (n) => Auth.token(n, store, T), log: (l) => log.push(l) }), new AbortController().signal);
   expect(none).toEqual([]);
-  expect(log).toEqual(["mcp: web skipped: not signed in: unii mcp-login web"]);
+  expect(log).toEqual(["mcp: web skipped: not signed in: legion mcp-login web"]);
   expect(f.seen.mcpAuth.length).toBe(0);
   await Auth.login("web", f.resource, store, { ...T, open: browser(f).open });
   const pool = Mcp.pool([server], { auth: (n) => Auth.token(n, store, T), log: (l) => log.push(l) });

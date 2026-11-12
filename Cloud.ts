@@ -8,7 +8,7 @@
 // on /auth?t=<ticket>, where a browser gets a cookie. A terminal posts a token
 // it made and waits (/api/wait) while its link's page asks for the code it
 // shows (in no link). An emailed link works until it expires (mail apps open it
-// first); other tickets once. `unii web`: a signed-in terminal (its Bearer
+// first); other tickets once. `legion web`: a signed-in terminal (its Bearer
 // token, never a cookie) gets a one-minute, one-use link for its own account.
 // Tokens are kept as hashes. With phones on (UNII_PHONE=1), the iOS app's
 // links open it (AASA), its phones get each turn's last message (APNs).
@@ -27,7 +27,7 @@ import { Disk } from "./Disk.ts";
 export type User = { id: string; name: string };
 
 // a sign-in begun: an email or "@" and a GitHub login; the hash of the
-// session a terminal waits for; or (`unii web`) the account a signed-in
+// session a terminal waits for; or (`legion web`) the account a signed-in
 // terminal opens the site as (who "": not a mailed link, uncounted)
 type Ticket = { who: string; session: string | null; user?: User };
 
@@ -435,7 +435,7 @@ export namespace Cloud {
     return null;
   }
 
-  // `unii web`: a terminal signed in asks for a link that opens the site
+  // `legion web`: a terminal signed in asks for a link that opens the site
   // signed in as it. Only its Authorization header counts, never a
   // cookie: a browser can't mint one for itself, nor a cross-site
   // request ride its cookie (it can't set the header without CORS,
@@ -448,13 +448,13 @@ export namespace Cloud {
     const sql = "select id, name from sessions where hash = ?";
     const user = bearer === "" ? null : cloud.db.query(sql).get(Cloud.hash(bearer)) as User | null;
     if (user === null) {
-      return Response.json({ error: "Sign in first: unii login" }, { status: 401 });
+      return Response.json({ error: "Sign in first: legion login" }, { status: 401 });
     }
     const t = Cloud.ticket(cloud, { who: "", session: null, user: { id: user.id, name: user.name } }, WEB);
     return Response.json({ url: config.SITE + "/auth?t=" + t });
   }
 
-  // a `unii web` ticket, used up as it's read (one browser, once), gives
+  // a `legion web` ticket, used up as it's read (one browser, once), gives
   // a session to the account that minted it: no email, no billing lookup
   export function web_auth(cloud: Cloud, t: string): Response {
     const user = Cloud.ticket_read(cloud, t, true)?.user;
@@ -506,7 +506,7 @@ export namespace Cloud {
     const safe = (s: string) => s.replace(/[<>&"]/g, "");
     const note = err === "" ? "" : `<p class="err">${err}</p>`;
     const body = `<h1>Finish signing in</h1><p>Enter the code shown in your terminal to sign in to <b>${safe(who)}</b>.</p>${note}<form method="post" action="/auth"><input type="hidden" name="t" value="${t}"><input type="hidden" name="github" value="${safe(github)}"><input name="code" inputmode="numeric" autocomplete="off" autofocus aria-label="code"><button type="submit">Confirm</button></form>`;
-    const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · UniiChat</title><link rel="stylesheet" href="/legal.css"></head><body><main>${body}</main></body></html>`;
+    const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Legion</title><link rel="stylesheet" href="/legal.css"></head><body><main>${body}</main></body></html>`;
     return new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
@@ -517,9 +517,9 @@ export namespace Cloud {
     }
     const ignore = terminal ? "This link signs a unii terminal into your account. If you didn't just start one, ignore this email." : "If you didn't ask for it, ignore this email.";
     const { consent, ...reply } = cloud.billing.mail;
-    const text = ["Sign in to UniiChat:", link, consent, ignore].filter((p) => p !== "").join("\n\n");
-    const from = "UniiChat <noreply@" + new URL(config.SITE).hostname + ">";
-    const mail = { from, ...reply, to, subject: "Sign in to UniiChat", text };
+    const text = ["Sign in to Legion:", link, consent, ignore].filter((p) => p !== "").join("\n\n");
+    const from = "Legion <noreply@" + new URL(config.SITE).hostname + ">";
+    const mail = { from, ...reply, to, subject: "Sign in to Legion", text };
     const err = await cloud.post(mail);
     if (err !== null) {
       throw new Error(err);

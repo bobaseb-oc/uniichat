@@ -53,7 +53,7 @@ test("the crew lists each agent under its starter, failed first, then at work, w
 });
 
 // a person types to the agent whose page is shown: the message is told
-// to it, never sent to UniiChat
+// to it, never sent to Legion
 test("typing on an agent's page tells that agent", () => {
   const v = View.view_new();
   View.view_act(v, { $: "Goto", name: "Mgr" });
@@ -64,9 +64,9 @@ test("typing on an agent's page tells that agent", () => {
   expect(View.view_act(v, { $: "Send", text: "hi" })[0].$).toBe("say");
 });
 
-// with a crew, Tab cycles UniiChat then every agent as the crew lists
+// with a crew, Tab cycles Legion then every agent as the crew lists
 // them, done ones too
-test("tabs follow the crew: UniiChat, then its agents in crew order", () => {
+test("tabs follow the crew: Legion, then its agents in crew order", () => {
   const v = View.view_new();
   View.view_hear(v, { $: "state", ...v, agents: ["Wkr"], crew: [crew("Done", "main", "worker", "done", 1), crew("Mgr", "main", "manager", "waiting", 2), crew("Wkr", "Mgr", "worker", "working", 3)] });
   expect(View.view_tabs(v).map((t) => t.name)).toEqual([null, "Mgr", "Wkr", "Done"]);
@@ -86,7 +86,7 @@ test("alerts: an agent that fails, a turn that ends; not on connect, not twice",
   expect(View.view_alerts(v, 1000)).toEqual([{ key: "Mgr failed", title: "Mgr failed", body: "manager · sonnet-5.5: open it to see why.", name: "Mgr" }]);
   expect(View.view_alerts(v, 2000)).toEqual([]);
   hear(false, [crew("Mgr", "main", "manager", "failed")]);
-  expect(View.view_alerts(v, 3000)).toEqual([{ key: "turn", title: "UniiChat answered", body: "Its turn ended: your move.", name: null }]);
+  expect(View.view_alerts(v, 3000)).toEqual([{ key: "turn", title: "Legion answered", body: "Its turn ended: your move.", name: null }]);
   hear(true, []);
   View.view_alerts(v, 4000);
   hear(false, []);

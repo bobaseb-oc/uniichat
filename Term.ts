@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Term
 // ====
-// `unii`: a terminal view of the agent (Server.ts) and, while open, a
+// `legion` (`unii` too): a terminal view of the agent (Server.ts) and, while open, a
 // device its tools reach (DEVICE). It feeds a View the server's messages
 // and the person's acts, and prints what it says (Paint.ts, Screen.ts)
 // into the terminal's own scrollback. Every act of the site is a command
@@ -11,12 +11,12 @@
 //
 // One executable per platform (upstream releases it; this build runs
 // from its source, asks no one for updates and sends no telemetry).
-// `unii serve` runs the server it carries. The server:
+// `legion serve` runs the server it carries. The server:
 // the url given, else $UNII_URL, else http://127.0.0.1:8788 (this build;
 // upstream's is uniichat.com); each server's session is a file of its own
 // (TOKEN).
 //
-// Usage: USAGE (`unii help` prints it).
+// Usage: USAGE (`legion help` prints it).
 
 import * as child from "node:child_process";
 import * as fs from "node:fs";
@@ -36,7 +36,7 @@ import * as View from "./View.ts";
 // =====
 
 // the terminal: jobs running here; ended: input's; pending: commands at
-// work; last: UniiChat's message printed last (-1: none); wait: parts up
+// work; last: Legion's message printed last (-1: none); wait: parts up
 // to it not printed (term_settle); out: lines to print; wipe: first;
 // due: a paint; settle: the page's print at a new size; imgs: for the
 // next message; flow: how much of each message streaming is printed
@@ -100,22 +100,22 @@ const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
 // any, by default the hosted one): a job it is sent runs here
 const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
 if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
-  console.error("unii: " + SERVER + " refused: this build opens servers on this computer only (" + LOOPBACK.join(", ") + ")");
+  console.error("legion: " + SERVER + " refused: this build opens servers on this computer only (" + LOOPBACK.join(", ") + ")");
   process.exit(1);
 }
 
-const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http://127.0.0.1:8788)
-       unii login [url]     sign in
-       unii web [url]       open the site in your browser, signed in as this terminal
-       unii device [url]    this computer runs the agents' jobs, with no screen
+const USAGE = `Usage: legion [url]         the chat (url: $UNII_URL, else http://127.0.0.1:8788)
+       legion login [url]   sign in
+       legion web [url]     open the site in your browser, signed in as this terminal
+       legion device [url]  this computer runs the agents' jobs, with no screen
                             (as a terminal does; the newest one open runs them)
-       unii update [url]    disabled in this build (it ran curl | sh)
-       unii version         this unii's version
-       unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
+       legion update [url]  disabled in this build (it ran curl | sh)
+       legion version       this legion's version
+       legion serve [port]  your own Legion server, at http://127.0.0.1:8788
                             (another port: set UNII_SITE to its address too),
                             on your ANTHROPIC_API_KEY and OPENAI_API_KEY;
-                            chat with it: unii http://127.0.0.1:8788
-       unii help            this
+                            chat with it: legion http://127.0.0.1:8788
+       legion help          this
 UNII_WORK: where the agent works on this computer (default
 ~/.unii/work). UNII_COMPUTER=1: it may use the screen. UNII_HOME: where
 it keeps its sign-in (default ~/.unii).
@@ -180,10 +180,10 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
   const topup: Cmd[] = v.bills ? [["/topup <usd>", "", "add Bend Credits, paid in the browser", term_topup]] : [];
   return [
     ["Chat", [
-      ["",                  "Enter",                   "send; on an empty input, interrupt UniiChat",    term_enter],
-      ["",                  "Esc",                     "interrupt UniiChat's turn; agents go on",        (t) => term_act(t, { $: "Send", text: "" })],
+      ["",                  "Enter",                   "send; on an empty input, interrupt Legion",    term_enter],
+      ["",                  "Esc",                     "interrupt Legion's turn; agents go on",        (t) => term_act(t, { $: "Send", text: "" })],
       ["",                  "Ctrl+C, Ctrl+D",          "clear; on an empty input, interrupt, quit",      term_clear],
-      ["/goal <message>",   "",                        "send a message as the goal: at each turn's end, UniiChat asks itself if it is met, and goes on till it is", (t, a) => term_act(t, { $: "Send", text: "/goal " + a })],
+      ["/goal <message>",   "",                        "send a message as the goal: at each turn's end, Legion asks itself if it is met, and goes on till it is", (t, a) => term_act(t, { $: "Send", text: "/goal " + a })],
       ["/halt",             "",                        "drop the goal; the turn running ends as it would", (t) => term_act(t, { $: "Send", text: "/halt" })],
       ["/image <path>",     "",                        "attach an image to the next message",            term_image],
       ["/open #id",         "",                        "open block #id, as it shows, and keep it open",  (t, a) => term_block(t, a, true)],
@@ -210,7 +210,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/tab [name]",       "",                        "the tabs; with a name, that one",               term_tab],
       ["/agent <task>",     "",                        "start an agent on a task; its report waits in the chat, starting no turn", (t, a) => term_act(t, { $: "Send", text: "/agent " + a })],
       ["/stop [name]",      "",                        "stop all work, agents too; or that agent and those under it", term_stop],
-      ["/crew [full]",      "",                        "show or hide the crew: UniiChat and every agent under its starter; full: the whole screen (Esc goes back)", term_crew],
+      ["/crew [full]",      "",                        "show or hide the crew: Legion and every agent under its starter; full: the whole screen (Esc goes back)", term_crew],
       ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
       ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
       ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
@@ -288,7 +288,7 @@ function term_connect(t: Term): void {
 async function term_lost(t: Term, up: boolean): Promise<boolean> {
   term_draw(t);
   if (!up && !await term_signed(t.url)) {
-    term_note(t, "This terminal is signed out: run unii again to sign in.");
+    term_note(t, "This terminal is signed out: run legion again to sign in.");
     process.exitCode = 1;
     term_quit(t);
     return false;
@@ -482,7 +482,7 @@ function term_enter(t: Term): void {
 }
 
 // Ctrl+C or Ctrl+D: clears the input; on an empty one, Ctrl+C interrupts
-// UniiChat's turn (never quits: that kills the jobs here), Ctrl+D quits
+// Legion's turn (never quits: that kills the jobs here), Ctrl+D quits
 function term_clear(t: Term, key: string): void {
   if (t.scr.ed.text !== "") {
     Screen.ed_take(t.scr.ed);
@@ -692,7 +692,7 @@ function term_fold(t: Term): void {
   }
 }
 
-// shows an agent's chat, by the start of its name, or UniiChat's; no
+// shows an agent's chat, by the start of its name, or Legion's; no
 // name lists the tabs
 function term_tab(t: Term, arg: string): void {
   const main = arg.toLowerCase() === View.MAIN.toLowerCase();
@@ -1172,7 +1172,7 @@ async function login_run(url: string): Promise<void> {
     const done = await fetch(url + "/api/wait", wait).catch(() => null);
     const ans  = await done?.json().catch(() => ({})) ?? {};
     if (done?.status === 410) {
-      login_fail("the link expired: run unii again");
+      login_fail("the link expired: run legion again");
     }
     if (done?.ok && ans.ok) {
       break;
@@ -1218,7 +1218,7 @@ function login_line(): Promise<string> {
 }
 
 function login_fail(why: string): never {
-  console.error("unii: " + why);
+  console.error("legion: " + why);
   process.exit(1);
 }
 
@@ -1228,7 +1228,7 @@ function login_fail(why: string): never {
 // this build never installs by `curl | sh` (the hosted installer): it
 // changes only as its source does
 function update_run(url: string): void {
-  console.error("unii update is disabled in this build; pull its source instead (not " + url + "/install.sh)");
+  console.error("legion update is disabled in this build; pull its source instead (not " + url + "/install.sh)");
   process.exitCode = 1;
 }
 
@@ -1253,24 +1253,24 @@ async function term_signed(url: string): Promise<boolean> {
   return res === null || res.status !== 401;
 }
 
-// `unii device`: this computer runs the server's jobs with no screen
+// `legion device`: this computer runs the server's jobs with no screen
 // (Device.ts), signed in as this terminal is; signed out, it stops
 async function device_run(url: string): Promise<void> {
   if (!await term_signed(url)) {
-    login_fail("sign in first: unii login");
+    login_fail("sign in first: legion login");
   }
   const lost = async (up: boolean) => {
     if (!up && !await term_signed(url)) {
-      login_fail("signed out: unii login, then unii device again");
+      login_fail("signed out: legion login, then legion device again");
     }
-    console.error("unii device: offline, trying again");
+    console.error("legion device: offline, trying again");
     return true;
   };
-  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("unii device: " + line), lost);
-  console.log("unii device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
+  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("legion device: " + line), lost);
+  console.log("legion device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
 }
 
-// `unii web`: a one-use link (a minute) that signs a browser in as this
+// `legion web`: a one-use link (a minute) that signs a browser in as this
 // terminal, printed and opened (`open` may be refused, e.g. in a sandbox)
 async function web_run(url: string): Promise<void> {
   if (!await term_signed(url)) {
@@ -1295,7 +1295,7 @@ if (HELP || ODD !== undefined) {
   }
   console.log(USAGE);
 } else if (ASKVER) {
-  console.log("unii " + VERSION);
+  console.log("legion " + VERSION);
 } else if (UPDATE) {
   update_run(SERVER);
 } else if (SERVE) {

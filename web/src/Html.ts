@@ -346,7 +346,7 @@ function spans_html(spans: Md.Span[]): string {
 function span_html(s: Md.Span): string {
   switch (s.$) {
     case "Text": { // the name, in the brand's font
-      return esc(s.x).replaceAll("UniiChat", `<span class="brand">UniiChat</span>`);
+      return esc(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
     }
     case "Code": {
       return `<code>${esc(s.x)}</code>`;

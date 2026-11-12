@@ -82,7 +82,7 @@ export type Pulse = { $: "pulse"; name: string; status: Status; act: string; las
 export type Status = "asking" | "working" | "waiting" | "failed" | "stopped" | "done";
 
 // a desktop alert (view_alerts): its key (debounced by), what it says,
-// the agent to show on a click (null: UniiChat)
+// the agent to show on a click (null: Legion)
 export type Alert = { key: string; title: string; body: string; name: string | null };
 
 // what the last alerts were worked out from: whether a turn ran, each
@@ -108,7 +108,7 @@ export type Route = { mode: Mode; name: string | null };
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
 // ("id+n") and messages known; open: the blocks opened (true) or shut by
 // hand; minds: the thoughts after each message; pages: the agents' asked
-// for; page: the one shown (null: UniiChat's); the Link's: this view's
+// for; page: the one shown (null: Legion's); the Link's: this view's
 // id, acts not answered, socket (up: it showed the chat)
 export type View = State & {
   parts : Part[];
@@ -203,7 +203,7 @@ export type Act =
   | { $: "Open"; id: number; n: number }        // a click on a block
   | { $: "Shut"; id: number; n: number }        // a click on an open block's bar
   | { $: "Fold"; on: boolean }                  // fold all, unfold all
-  | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
+  | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: Legion)
   | { $: "Dismiss"; name: string }              // a done agent out of the crew
   | { $: "Approve"; name: string; yes: boolean } // a Claude Code worker asking to start: let it, or not
   | { $: "Stop"; name: string }                 // that agent's work stopped (the Crew view)
@@ -237,9 +237,9 @@ export type Day = { date: string; what: string; usd: number };
 // Constants
 // =========
 
-export const MAIN = "UniiChat";
+export const MAIN = "Legion";
 
-// UniiChat's turn, as a stop names it among the agents at work
+// Legion's turn, as a stop names it among the agents at work
 export const TURN = "Unii's turn";
 
 // the messages' version, in a view's query; one more for each change an
@@ -261,7 +261,7 @@ export const MOVE  = 4001;
 // ~0.15 MB). A bigger one closes its socket (Server.ts)
 export const FRAME = 2 ** 22;
 
-export const HINT = "Message UniiChat";
+export const HINT = "Message Legion";
 
 // the disclosure both views show (EU AI Act art. 50, California SB 243,
 // New York GBL art. 47, Anthropic's usage policy)
@@ -607,7 +607,7 @@ export function progress_need(p: Progress, credits: number | null): number {
 
 // the chat, each agent at work, and the page shown while its agent is
 // done (so it can be left: the tabs were the way back, and hid)
-// UniiChat, then the agents: in crew order (View.view_crew) if the
+// Legion, then the agents: in crew order (View.view_crew) if the
 // server tells the crew, else those at work; the page shown too
 export function view_tabs(v: View): Tab[] {
   const at    = v.page === null ? null : v.page.name;
@@ -633,7 +633,7 @@ export function view_named(v: View, arg: string): string {
   return names.find((a) => a.toLowerCase().startsWith(arg.toLowerCase())) ?? arg;
 }
 
-// typing goes to UniiChat, or on an agent's page to that agent
+// typing goes to Legion, or on an agent's page to that agent
 export function view_typing(_v: View): boolean {
   return true;
 }

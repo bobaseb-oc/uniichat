@@ -187,7 +187,7 @@ const ROLLED     = "\n\nYour call for this message rolled over, its context too 
 const GOAL       = "You check a goal. Below is a chat between a user and Unii, an AI agent: its older messages as summary lines (id+n|text), then its latest messages whole, then the goal the user set with /goal. Answer yes if the chat shows the goal fully satisfied now, else no. Write that one word, nothing else.";
 const GOAL_ASK   = "\nThe goal:\n\n";
 const GOAL_NO    = "The goal isn't satisfied yet: keep working.";
-const FULL       = "UniiChat's disk is full; try again soon.";
+const FULL       = "Legion's disk is full; try again soon.";
 // an import running: its batch's file in the chat's dir (Chat.keep)
 const BATCH      = "/import.json";
 // under SPARE free, the disk takes no more (Chat.post)
@@ -264,7 +264,7 @@ const WEB: Record<string, string> = {
 // the email, and SIGNED. The hello's node is written with it, so no
 // compactor call summarizes the three (with an email of up to 254 bytes,
 // a node of at most 512 bytes) and a new account owes nothing.
-const HELLO_LINE = "unii: hello: UniiChat, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; the user's terminal install; asks their email.";
+const HELLO_LINE = "unii: hello: Legion, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; the user's terminal install; asks their email.";
 const SIGNED     = "You're in! What should we start with?";
 
 // Chat
@@ -1054,7 +1054,7 @@ export namespace Chat {
     return [...(chat.busy ? [TURN] : []), ...Tools.working(chat.tools).map((a) => a.name)];
   }
 
-  // UniiChat's turn only, with the spawns and tells it waits on (for the
+  // Legion's turn only, with the spawns and tells it waits on (for the
   // view: Tools.view, on chat.halt); agents go on. why: the note the turn's
   // end logs (Chat.turn), so after the reply the stop cut; null: none
   export function interrupt(chat: Chat, why: string | null): void {
@@ -1817,7 +1817,7 @@ export namespace Main {
           Main.opened(ws.data.user.id, 1);
           Main.event("a socket of user " + ws.data.user.id, () => {
             if (ws.data.wire !== String(WIRE)) {
-              ws.send(JSON.stringify({ $: "error", text: "This page or unii is older than the server: reload or reopen it (`unii update` for the latest)." }));
+              ws.send(JSON.stringify({ $: "error", text: "This page or unii is older than the server: reload or reopen it (`legion update` for the latest)." }));
               return;
             }
             const chat = Chat.open(ws.data.user);

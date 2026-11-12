@@ -79,7 +79,7 @@ test("the mode switch: the one shown marked, the pill on Crew", () => {
 test("the focus card: the agent in focus with its actions, or Unii's chat", () => {
   const v = View.view_new();
   View.view_hear(v, { $: "state", ...v, crew: [crew("Run", "main", "working")] });
-  expect(Html.focus_html(v)).toContain("UniiChat");
+  expect(Html.focus_html(v)).toContain("Legion");
   View.view_act(v, { $: "Goto", name: "Run" });
   const card = Html.focus_html(v);
   expect(card).toContain("<b>Run</b>");

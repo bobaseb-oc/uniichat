@@ -1,6 +1,6 @@
 // Device test
 // ===========
-// `bun test Device.test.ts`. A device (Device.ts: `unii device`, the
+// `bun test Device.test.ts`. A device (Device.ts: `legion device`, the
 // terminal's jobs too) against a fake server: it signs in by its Bearer
 // and names itself; a job runs once and its output goes back; a computer
 // job is refused where computer use is off; an output too large is

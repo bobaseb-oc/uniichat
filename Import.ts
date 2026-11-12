@@ -86,7 +86,7 @@ export const OLD = "Nothing new: these chats are in Unii's memory already.";
 const NOT_EXPORT = "Not a Claude or ChatGPT export.";
 
 // what a message sent while an import runs does (Memory.settle)
-export const MIDWAY = "Meanwhile, UniiChat can answer with a partial tree.";
+export const MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 
 // an import's end, as it went
 export const DONE = "Your past chats are in Unii's memory: ask about them any time.";

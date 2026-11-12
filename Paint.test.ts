@@ -1,7 +1,7 @@
 // Paint test
 // ==========
 // `bun test Paint.test.ts`. The terminal's crew panel (Paint.crew_lines):
-// UniiChat on top, each agent under its starter, the page shown marked,
+// Legion on top, each agent under its starter, the page shown marked,
 // a failed one red, no line past the width, rows past the most counted.
 
 import { expect, test } from "bun:test";
@@ -11,13 +11,13 @@ import * as View from "./View.ts";
 const text = (l: Paint.Line) => l.map((r) => r.x).join("");
 const crew = (name: string, parent: string, status: View.Status): View.Crew => ({ name, parent, tier: parent === "main" ? "manager" : "worker", model: "sonnet-5.5", status, since: 0 });
 
-test("the crew panel: UniiChat, its agents under their starters, the page shown bold, a failed one red", () => {
+test("the crew panel: Legion, its agents under their starters, the page shown bold, a failed one red", () => {
   const v = View.view_new();
   View.view_hear(v, { $: "state", ...v, busy: true, pick: { vendor: "claude-api", model: "opus-5.5", effort: "high", speed: "slow" }, crew: [crew("Mgr", "main", "waiting"), crew("Wkr", "Mgr", "failed")] });
   View.view_act(v, { $: "Goto", name: "Mgr" });
   const lines = Paint.crew_lines(v, 60, 120000, 8);
   expect(lines.map(text)).toEqual([
-    expect.stringMatching(/^ {2}◆ UniiChat · orchestrator · opus-5\.5 · working/),
+    expect.stringMatching(/^ {2}◆ Legion · orchestrator · opus-5\.5 · working/),
     expect.stringMatching(/^▸   ◐ Mgr · manager · sonnet-5\.5/),
     expect.stringMatching(/^ {6}✗ Wkr · worker · sonnet-5\.5/),
   ]);

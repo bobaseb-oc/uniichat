@@ -1,12 +1,12 @@
-UniiChat
-========
+Legion
+======
 
 [▶ Watch the announcement video](https://x.com/VictorTaelin/status/2108200878553588091)
 
 **This repo is vibe-coded.** AI agents wrote nearly all of it, and AI
 agents reviewed it. Read it, run it and fork it as such: expect bugs.
 
-UniiChat is an AI agent with one chat that never ends. There is no "new
+Legion is an AI agent with one chat that never ends. There is no "new
 chat" button: you talk to the same agent for days, weeks, years, and it
 remembers. The hosted version is at https://uniichat.com. This is its
 source, to run your own server on your own API keys.
@@ -26,10 +26,10 @@ How it works
   (the compactor) as messages arrive. The view changes only at its end,
   so each call reads most of its input from the vendor's prompt cache.
 - **Every window is a view.** The server owns the chat. A browser tab, or
-  `unii` in a terminal, shows it live; any of them can send a message,
+  `legion` in a terminal, shows it live; any of them can send a message,
   stop the work, or change the model.
 - **Agents and tools.** The agent runs a shell, reads and edits files,
-  and can drive a Mac's screen, on any computer where `unii` is open
+  and can drive a Mac's screen, on any computer where `legion` is open
   (each is a device it can name). It can spawn subagents, which work in
   the background and report back as messages.
 - **Import.** Bring your past Claude and ChatGPT chats (Claude Code and
@@ -62,7 +62,7 @@ Other commands:
     bun run test                     # the tests, each file on its own
     bun run web                      # rebuilds web/app.js from web/src
     bun build --compile Term.ts --outfile unii
-                                     # one `unii` executable; `unii serve`
+                                     # one `legion` executable; `legion serve`
                                      # runs the server it carries
 
 Your chats live in ~/.unii/users/<id>, one JSON line per message
@@ -109,22 +109,22 @@ A self-hosted server is free: it bills no one, shows no prices, and calls
 only the model vendors. Billing.ts is the one place a hosted server
 plugs in its billing (uniichat.com sells credits; this repo has none).
 
-The `unii` terminal
+The `legion` terminal
 -------------------
 
 `web/install.sh` (served at /install.sh) runs the official installer,
-which installs the released `unii` executable. `unii` alone opens
-uniichat.com; `unii <url>` opens any server. Run with
+which installs the released `legion` executable. `legion` alone opens
+uniichat.com; `legion <url>` opens any server. Run with
 `UNII_COMPUTER=1` on a Mac, the agent may use its screen (it compiles
 Computer.swift with swiftc; macOS asks for Screen Recording and
 Accessibility).
 
-Telemetry: once a day the `unii` terminal asks bend-lang.com's /check
+Telemetry: once a day the `legion` terminal asks bend-lang.com's /check
 for the latest version (Term.ts update_check), sending its version, OS
 and CPU type, no account and no id; it also says whether this computer
-has ever self-hosted (set for good the first time it runs `unii serve`
+has ever self-hosted (set for good the first time it runs `legion serve`
 or opens a server other than uniichat.com). It is the one call a
-self-hosted UniiChat makes to us. `UNII_NO_TELEMETRY=1` turns it off.
+self-hosted Legion makes to us. `UNII_NO_TELEMETRY=1` turns it off.
 
 License
 -------

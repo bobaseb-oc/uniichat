@@ -1,4 +1,4 @@
-// UniiChat (the site)
+// Legion (the site)
 // ===================
 // The page around View.ts's chat: the server's messages go to
 // View.view_hear, a click's `data-act` (Html.ts) to View.view_act, and
@@ -39,8 +39,8 @@ const DESK = matchMedia("(hover: hover)");
 
 // what a guest is told after the hello but its ask (View.ask): the ask
 // again (a link expired), the link sent
-// a terminal signed in already needs no email: `unii web` signs this in
-const TERMINAL = "Signed in from a terminal? Run `unii web` there and this page opens signed in.";
+// a terminal signed in already needs no email: `legion web` signs this in
+const TERMINAL = "Signed in from a terminal? Run `legion web` there and this page opens signed in.";
 const EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 // the line under a guest's box, where the server bills: signing in is
 // the consent (Billing.ts CONSENT says it in full); its links open a tab,
@@ -59,7 +59,7 @@ const PAID = new BroadcastChannel("unii.paid");
 // the intro's scenes: two lines, then the logo above the name
 const SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
-  <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
+  <div class="scene"><i class="mark"></i><h1>Legion</h1></div>`;
 
 // the chat
 const v = View.view_new();
@@ -126,13 +126,13 @@ async function boot(): Promise<void> {
     return;
   }
   if (q.has("deleted")) {
-    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to UniiChat</a>`);
+    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to Legion</a>`);
     return;
   }
   if (q.get("paid") === "tab") {
     PAID.postMessage(true);
     close();
-    solo("Payment received.", "Close this tab: your import starts in the UniiChat tab you came from.");
+    solo("Payment received.", "Close this tab: your import starts in the Legion tab you came from.");
     return;
   }
   const me = await boot_me();
@@ -175,7 +175,7 @@ function solo(title: string, sub: string): void {
 
 // Guest
 // =====
-// UniiChat's hello, ending in its ask for an email; the answers come from
+// Legion's hello, ending in its ask for an email; the answers come from
 // here, by no AI: an email gets the sign-in link, "@name" goes to
 // GitHub, anything else gets the server's why. All in v.live (unlogged).
 
@@ -398,7 +398,7 @@ async function mic(): Promise<void> {
   }
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
   if (stream === null) {
-    toast("UniiChat can't use the microphone.");
+    toast("Legion can't use the microphone.");
     return;
   }
   const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));

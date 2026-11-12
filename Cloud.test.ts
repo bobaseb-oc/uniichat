@@ -89,7 +89,7 @@ test("an emailed link survives its preview", async () => {
   expect(await open()).toContain("=");
 });
 
-// `unii web`: a terminal's Bearer session mints a ticket for its own
+// `legion web`: a terminal's Bearer session mints a ticket for its own
 // account, good once for 60 s, which /auth swaps for a browser cookie.
 // The cookie alone can't mint one (a page can't widen its own sign-in,
 // nor a cross-site request ride it), nor can anyone signed out; the

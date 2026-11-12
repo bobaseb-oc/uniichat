@@ -250,3 +250,10 @@ no cost display; desktop only.
   CSS and its 3 tests removed (escaping and approve/deny are covered by the tree's tests). Proof: real
   clicks over CDP with the demo crew, Chat ↔ Crew 4 times, each hit the header link; footer 112 px in Chat;
   Html.test.ts 10/10; full suite below.
+- 2026-11-12 rename (user: "Legion"; scope: name + command, keep data): "UniiChat" → "Legion" wherever it is
+  shown (web, terminal, mail, greeting, README, tests); the command is `legion` (local/legion, a symlink
+  to unii-local.sh; `unii` still works), and every "run unii …" a person is told says legion. Kept as
+  they were: ~/.unii, UNII_* settings, the cookie, localStorage keys, the OAuth client name (MCP grants),
+  the "unii" message kind, server log prefixes, ios/ (phones off), and the AI's own name "Unii" in its
+  prompt and memories (asked separately). Proof: no "UniiChat" left outside ios/ and history; suite 194
+  pass, the 3 known fails; `local/legion version` / `help` print legion, aligned.

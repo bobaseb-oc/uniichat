@@ -67,7 +67,7 @@ var PRICE = { base: 187, byte: 735, depth: 628 };
 var PART = 2 ** 20;
 var OLD = "Nothing new: these chats are in Unii's memory already.";
 var NOT_EXPORT = "Not a Claude or ChatGPT export.";
-var MIDWAY = "Meanwhile, UniiChat can answer with a partial tree.";
+var MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 var DONE = "Your past chats are in Unii's memory: ask about them any time.";
 var DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" });
 var COUNT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 0 });
@@ -900,7 +900,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var MAIN = "UniiChat";
+var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
 var PING = 1e4;
@@ -908,7 +908,7 @@ var RETRY = 1000;
 var TICK = "+";
 var MOVE = 4001;
 var FRAME = 2 ** 22;
-var HINT = "Message UniiChat";
+var HINT = "Message Legion";
 var AI = "Unii is an AI, not a person, and can make mistakes.";
 var NOTICE = 3 * 60 * 60 * 1000;
 var WAIT = "compressing…";
@@ -1818,7 +1818,7 @@ function spans_html(spans) {
 function span_html(s) {
   switch (s.$) {
     case "Text": {
-      return esc(s.x).replaceAll("UniiChat", `<span class="brand">UniiChat</span>`);
+      return esc(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
     }
     case "Code": {
       return `<code>${esc(s.x)}</code>`;
@@ -1841,7 +1841,7 @@ function span_html(s) {
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
 var DESK = matchMedia("(hover: hover)");
-var TERMINAL = "Signed in from a terminal? Run `unii web` there and this page opens signed in.";
+var TERMINAL = "Signed in from a terminal? Run `legion web` there and this page opens signed in.";
 var EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 var GUEST_AI = `By signing in, you accept the <a href="/terms.html" target="_blank">terms</a> and <a href="/privacy.html" target="_blank">privacy policy</a>, and that Anthropic's and OpenAI's models answer you.`;
 var SENT = (email) => `Thanks! I sent a link to ${email}. Open it, and we'll go on from here.`;
@@ -1850,7 +1850,7 @@ var PAYING = "Waiting for your payment in the new tab…";
 var PAID = new BroadcastChannel("unii.paid");
 var SCENES = `
   <div class="scene"><p>Your entire life.</p><p>One single chat.</p></div>
-  <div class="scene"><i class="mark"></i><h1>UniiChat</h1></div>`;
+  <div class="scene"><i class="mark"></i><h1>Legion</h1></div>`;
 var v = view_new();
 var BOX = $("textarea");
 var DEMO = new URLSearchParams(location.search).get("demo") === "1" ? demo_crew(Date.now()) : null;
@@ -1890,13 +1890,13 @@ async function boot() {
     return;
   }
   if (q.has("deleted")) {
-    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to UniiChat</a>`);
+    solo("Your account was deleted.", `Your chat and Unii's memory are erased. <a href="/">Back to Legion</a>`);
     return;
   }
   if (q.get("paid") === "tab") {
     PAID.postMessage(true);
     close();
-    solo("Payment received.", "Close this tab: your import starts in the UniiChat tab you came from.");
+    solo("Payment received.", "Close this tab: your import starts in the Legion tab you came from.");
     return;
   }
   const me = await boot_me();
@@ -2116,7 +2116,7 @@ async function mic() {
   }
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
   if (stream === null) {
-    toast("UniiChat can't use the microphone.");
+    toast("Legion can't use the microphone.");
     return;
   }
   const mimeType = ["audio/webm", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported(type));
