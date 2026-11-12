@@ -12,6 +12,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import * as Cost from "./Cost.ts";
+import * as Inbox from "./Inbox.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as View from "./View.ts";
 
@@ -20,8 +21,9 @@ import * as View from "./View.ts";
 export type Run = { abort: AbortController; away: AbortController; name: string };
 
 // where jobs work (the device's work dir; its home repo, Unii's own),
-// whether it does computer use, what runs a job (Machine.run; a test's)
-export type Rules = { work: string; home?: string; computer: boolean; run?: typeof Machine.run };
+// whether it does computer use, what runs a job (Machine.run; a test's),
+// the repos the cockpit shows (its spaces: UNII_SPACES; none: the home repo)
+export type Rules = { work: string; home?: string; computer: boolean; run?: typeof Machine.run; spaces?: string[] };
 
 export const NO_COMPUTER = "This device does no computer use (UNII_COMPUTER=1 lets it).";
 
@@ -77,6 +79,93 @@ export function device_status(rules: Rules, now: number): View.Client {
   return { $: "status", dir: path.basename(dir) || "~", branch, spend: spend.spend, stale: spend.stale };
 }
 
+// how often a device reads its inbox (ms), and the most a command it runs
+// for it may take
+export const INBOX_EVERY = 5 * 60_000;
+const INBOX_WAIT = 30_000;
+
+// a command run for the inbox: its exit code and its output (stdout, else
+// stderr); a test's fake
+export type Exec = (cmd: string[]) => Promise<{ code: number; out: string }>;
+
+// a command run here, read-only, never longer than INBOX_WAIT; missing: 127
+export const exec: Exec = async (cmd) => {
+  try {
+    const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: INBOX_WAIT });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code, out: code === 0 ? out : err.trim() || out };
+  } catch (err: any) {
+    return { code: 127, out: String(err?.message ?? err) };
+  }
+};
+
+// a path with ~ for home, whole
+function home(dir: string): string {
+  return dir.startsWith("~/") ? os.homedir() + dir.slice(1) : dir;
+}
+
+// the repos the inbox reads worktrees in
+export function device_spaces(rules: Rules): string[] {
+  const spaces = rules.spaces ?? (process.env.UNII_SPACES ?? "").split(",").map((s: string) => s.trim()).filter((s: string) => s !== "");
+  return (spaces.length > 0 ? spaces : rules.home ? [rules.home] : []).map(home);
+}
+
+// this device's inbox (Inbox.ts) read with the user's own CLIs, read-only:
+// gh (PRs, notifications), acli (Jira), git (each space's worktrees with
+// changes, or merged); what fails is said in errors, the rest kept
+export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<View.Client> {
+  const errors: string[] = [];
+  const said = (tool: string, r: { out: string }) => errors.push(tool + ": " + (r.out.trim().split("\n")[0] || "failed").slice(0, 200));
+  const json = (r: { code: number; out: string }, tool: string): any => {
+    if (r.code !== 0) {
+      said(tool, r);
+      return null;
+    }
+    try {
+      return JSON.parse(r.out);
+    } catch {
+      said(tool, { out: "unreadable output" });
+      return null;
+    }
+  };
+  const vars = Object.entries(Inbox.inbox_vars(now)).flatMap(([k, v]) => ["-f", k + "=" + v]);
+  const jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+  const [gql, notes, jira, clean] = await Promise.all([
+    run(["gh", "api", "graphql", "-f", "query=" + Inbox.QUERY, ...vars]),
+    run(["gh", "api", "notifications?participating=true&per_page=30"]),
+    run(["acli", "jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50"]),
+    Promise.all(device_spaces(rules).map((s) => device_clean(s, run))).then((x) => x.flat()),
+  ]);
+  const gh = Inbox.inbox_github(json(gql, "gh") ?? {});
+  if (gh.error !== undefined) {
+    errors.push("gh: " + gh.error.slice(0, 200));
+  }
+  const tickets = json(jira, "acli");
+  const inbox: Inbox.Inbox = {
+    at: now.getTime(), login: gh.login, reviews: gh.reviews, mine: gh.mine, merged: gh.merged, today: gh.today,
+    tickets: tickets === null ? null : Inbox.inbox_tickets(tickets), clean, notes: Inbox.inbox_notes(json(notes, "gh") ?? []), errors,
+  };
+  return { $: "inbox", inbox };
+}
+
+// a space's worktrees to clean up: uncommitted changes, or a merged branch
+async function device_clean(space: string, run: Exec): Promise<Inbox.Clean[]> {
+  const list = await run(["git", "-C", space, "worktree", "list", "--porcelain"]);
+  const trees = list.code === 0 ? Inbox.inbox_worktrees(list.out) : [];
+  if (trees.length === 0) {
+    return [];
+  }
+  const base = await run(["git", "-C", space, "rev-parse", "--abbrev-ref", "origin/HEAD"]);
+  const merged = base.code !== 0 ? [] : (await run(["git", "-C", space, "branch", "--merged", base.out.trim(), "--format=%(refname:short)"])).out.split("\n").map((b) => b.trim());
+  const repo = path.basename(space);
+  const rows = await Promise.all(trees.map(async (t) => {
+    const st = await run(["git", "-C", t.path, "status", "--porcelain"]);
+    const changes = st.code === 0 ? st.out.split("\n").filter((l) => l.trim() !== "").length : 0;
+    return { repo, path: t.path, branch: t.branch, changes, merged: t.branch !== null && merged.includes(t.branch) };
+  }));
+  return rows.filter((r) => r.changes > 0 || r.merged);
+}
+
 // `legion device`: connects to the server at url as this device (auth: its
 // session's header; query: its name, work dir, whether it does computer
 // use) and runs its jobs, with no screen; what goes wrong, to log. A
@@ -95,11 +184,17 @@ export function device_open(url: string, auth: Record<string, string>, query: st
       if (msg.$ === "jobs" || msg.$ === "job") {
         device_jobs(v, jobs, msg, rules, send);
       }
+      if (msg.$ === "fetch") {
+        void inbox();
+      }
     },
     lost,
   });
   const report = () => send(device_status(rules, Date.now()));
+  const inbox = async () => send(await device_inbox(rules, exec, new Date()));
   report();
+  void inbox();
   setInterval(report, STATUS_EVERY).unref();
+  setInterval(inbox, INBOX_EVERY).unref();
   return v;
 }

@@ -289,6 +289,35 @@ test("a device's status is kept and told in the state; only a device's, its fiel
   expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac });
 });
 
+// A device's inbox (Device.device_inbox): only a device's, checked
+// (Inbox.inbox_check), kept and told every view; a view's "fetch" asks
+// every socket (the devices) to read it anew
+const INBOX = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+const web = await Chat.act(chat, "i0", { $: "inbox", inbox }, "");
+const ok = await Chat.act(chat, "i1", { $: "inbox", inbox: { ...inbox, extra: 1 } }, "mac");
+const bad = await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, merged: "many" } }, "mac");
+const fetch = await Chat.act(chat, "i3", { $: "fetch" }, "");
+console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
+process.exit(0);
+`;
+
+test("a device's inbox is checked, kept and told every view; a view's fetch asks the devices", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/inbox.ts", INBOX);
+  const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+  expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
+});
+
 // A call waiting for the user (auto's reviewer couldn't check it): in the
 // state; the user's yes or no answers it; an unknown one is refused
 const CONSENT = `

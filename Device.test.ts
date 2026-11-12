@@ -112,3 +112,59 @@ test("a device reports the folder Unii works in and its branch", () => {
   const none = Device.device_status({ work: os.tmpdir(), computer: false }, Date.now()) as any;
   expect(none).toMatchObject({ dir: "main", branch: null });
 });
+
+// a device's inbox (Device.device_inbox): gh's PRs and notifications,
+// acli's tickets, its spaces' worktrees, read by the commands it runs
+// (here a fake's); one that fails is said in errors, the rest kept
+test("a device reads its inbox with gh, acli and git; what fails is said, not thrown", async () => {
+  const pr = { number: 3, title: "T", url: "https://github.com/o/r/pull/3", isDraft: false, updatedAt: "", additions: 1, deletions: 0, changedFiles: 1, body: "", headRefName: "b",
+    repository: { nameWithOwner: "o/r" }, author: { __typename: "User", login: "me" }, reviewDecision: null, mergeable: "MERGEABLE", reviewRequests: { nodes: [] }, commits: { nodes: [] } };
+  const ran: string[][] = [];
+  const exec: Device.Exec = async (cmd) => {
+    ran.push(cmd);
+    const line = cmd.join(" ");
+    if (line.startsWith("gh api graphql")) {
+      return { code: 0, out: JSON.stringify({ data: { viewer: { login: "me" }, reviews: { nodes: [] }, mine: { nodes: [pr] }, merged: { issueCount: 4 }, today: { issueCount: 1 } } }) };
+    }
+    if (line.startsWith("gh api notifications")) {
+      return { code: 0, out: JSON.stringify([{ reason: "assign", unread: true, updated_at: "", repository: { full_name: "o/r" }, subject: { title: "N", url: "" } }]) };
+    }
+    if (line.startsWith("acli")) {
+      return { code: 1, out: "✗ Error: unauthorized: use 'acli jira auth login' to authenticate" };
+    }
+    if (line.includes("worktree list")) {
+      return { code: 0, out: "worktree /s\nbranch refs/heads/main\n\nworktree /s/.wt/x\nbranch refs/heads/x\n\nworktree /s/.wt/y\nbranch refs/heads/y\n\nworktree /s/.wt/z\nbranch refs/heads/z\n" };
+    }
+    if (line.includes("rev-parse")) {
+      return { code: 0, out: "origin/main\n" };
+    }
+    if (line.includes("branch --merged")) {
+      return { code: 0, out: "main\ny\n" };
+    }
+    if (line.includes("status --porcelain")) {
+      return { code: 0, out: cmd.includes("/s/.wt/x") ? " M a\n?? b\n" : "" };
+    }
+    return { code: 1, out: "" };
+  };
+  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: ["/s"] }, exec, new Date(2026, 10, 12)) as any;
+  expect(msg.$).toBe("inbox");
+  const inbox = msg.inbox;
+  expect(inbox.login).toBe("me");
+  expect(inbox.mine.map((p: any) => p.number)).toEqual([3]);
+  expect([inbox.merged, inbox.today]).toEqual([4, 1]);
+  expect(inbox.notes.map((n: any) => n.kind)).toEqual(["assign"]);
+  expect(inbox.tickets).toBe(null);
+  expect(inbox.errors).toEqual(["acli: ✗ Error: unauthorized: use 'acli jira auth login' to authenticate"]);
+  // x has changes, y is merged and clean, z is clean and not merged (left out)
+  expect(inbox.clean).toEqual([
+    { repo: "s", path: "/s/.wt/x", branch: "x", changes: 2, merged: false },
+    { repo: "s", path: "/s/.wt/y", branch: "y", changes: 0, merged: true },
+  ]);
+  // what it ran reads only: no write, no push
+  expect(ran.every((c) => ["gh", "acli", "git"].includes(c[0]))).toBe(true);
+  expect(ran.some((c) => c.filter((a) => !a.startsWith("query=")).join(" ").match(/\b(push|commit|create|edit|delete|POST)\b/))).toBe(false);
+  // gh missing: said, the rest still read
+  const none = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, async (cmd) => (cmd[0] === "gh" ? { code: 127, out: "not found" } : exec(cmd)), new Date()) as any;
+  expect(none.inbox.errors.some((e: string) => e.startsWith("gh: "))).toBe(true);
+  expect(none.inbox.mine).toEqual([]);
+});

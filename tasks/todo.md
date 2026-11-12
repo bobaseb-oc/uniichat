@@ -409,6 +409,56 @@ unchanged (they end at the first line not built).
   state field and troubled broadcast (one line each); a chat moved to another process doesn't relay its
   summaries' trouble. By hand still: a live turn with the gateway down shows the reason, then goes at 60 s.
 
+## Cockpit: Herdr parity (branch feat/cockpit; user's ask 2026-11-12: "parity all the way through")
+Intent: Legion's web gets Herdr's cockpit (screen recording 2026-11-11, frames in /tmp/claude-501/herdr-frames):
+a home digest, a GitHub/Jira inbox with pick-and-act, a sidebar of agents by ticket and spaces, a
+command palette, routines, a team digest. Agents it starts are native Legion subagents; a Claude Code
+worker only when the user ticks it (then a manager starts one, as today).
+Constraints: the device reads GitHub/Jira/git with the user's own CLIs (gh, acli, git), read-only, like
+its status report; no new sign-in or token code (Red Zone); the server only checks, caps and keeps a
+device's report; nothing is posted to GitHub/Jira by Legion (File issue opens GitHub's own page).
+Success: each page renders from the demo crew + a fixture inbox, unit-tested and checked end to end in
+headless Chrome; every act tested on the server; mutants caught; suite stays at the 3 known fails.
+- [x] C1 inbox data: Inbox.ts (pure: the gh GraphQL query; PRs' state from checks/review/mergeable:
+      failing, blocked, ready, conflicts, draft, pending; review requests split you / team; Jira rows
+      from acli JSON; worktrees to clean up from `git worktree list --porcelain` + status counts +
+      merged branches; GitHub notifications as activity/alerts); the device runs them every 5 min and
+      on the server's ask, async with timeouts; "inbox" act checked and capped by the server, kept,
+      in the state. → verify: Inbox.test (fixtures), Server act test, Device test with a fake run.
+      Proof: Inbox.test 8/8 (states, you/team/bot, body cut, GraphQL read + errors, search vars, acli
+      both shapes + links, worktree porcelain, notification kinds/links, the check: caps, cuts,
+      https-only links, bad kinds/counts refused, extra fields dropped); Device.test (fake gh/acli/git:
+      merged + dirty worktrees kept, clean unmerged left out, acli signed out said, gh missing said, only
+      read commands run); Server fixture (device-only, checked, kept, sent as its own message; fetch to
+      every socket). Live run: 17 reviews, 27 PRs, 42 merged this week, states right; acli signed out.
+      Mutants 11/11 killed (one test added for a review asked of another user). Suite 253 pass, 3
+      known fails; tsc: only Bun/process type noise added. Sent as its own "inbox" message (on change,
+      and on join), not in every state: ~60 KB.
+- [ ] C2 inbox page (#inbox): sections Alerts / Reviews / Your PRs / Tickets / To clean up, folding,
+      counts, filter, j/k/space/tab/enter, a details card (PR body, checks), "N changed since you
+      looked", refresh, open, File issue (GitHub's new-issue page). → verify: Html/View tests, e2e.
+- [ ] C3 pick and act: pick rows (v, "pick all review requests"), a panel with Review / Fix / Open /
+      Drop picks; Review and Fix start one native worker per PR (labelled repo#n, its repo), or with
+      "Claude Code" ticked a manager told to use a Claude Code worker; plan mode still gates them.
+      → verify: Server act tests (spawns, labels, caps, unknown PR refused), View tests.
+- [ ] C4 home (#home): greeting, "N need you · M working", stat cards (agents, reviews for you, your
+      PRs to fix, merged this week, agent spend today / 7 days), Working and Done cards (repo,
+      ticket, PR, est. cost, age; Go to agent, Archive, Archive all), Apps (Inbox, Questions, Routines),
+      Activity. Per-agent cost: an estimate at list price (Price.ts) from each request's usage, shown
+      "≈"; billing untouched. 7-day spend: the cost cache's daily files. → verify: tests, e2e.
+- [ ] C5 sidebar, palette, bar: a left column (search or run, page icons with badges, agents grouped
+      by ticket key, spaces with their worktrees, Settings, Add machine), Ctrl+P / ⌘⇧P palette
+      (pages, agents, PRs, commands, New agent), focus mode, bottom bar need you · working · ready ·
+      done. → verify: tests, e2e with real clicks on the demo crew in every mode.
+- [ ] C6 routines: a prompt that starts a native agent daily at a time / every N hours / on a new
+      review request (Herdr's inbox automations); kept in view.json, run by the server's tick, listed
+      and toggled on #routines and by /routine in the terminal. → verify: Server tests with a fake
+      clock, View tests.
+- [ ] C7 team digest (#digest): merged PRs of the last 7 days in the spaces' repos by author, and open
+      ones; a theme line per author from the compactor, cached a day. → verify: tests, e2e.
+- [ ] C8 (decision needed) Up next (calendar) and meeting transcripts: they need calendar/Drive
+      access Legion doesn't have; a new sign-in is a Red Zone. Asked at the end.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

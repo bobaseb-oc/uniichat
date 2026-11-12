@@ -45,6 +45,7 @@ import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.
 import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
+import * as Inbox from "./Inbox.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
 import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
@@ -97,6 +98,7 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // the logging held meanwhile (null: none); wallet: what pays its calls
 type Chat = {
   status?: DeviceStatus; // the latest device's report, for the web's status line
+  inbox?: Inbox.Inbox;   // the latest device's inbox (Device.device_inbox), checked
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -1155,6 +1157,9 @@ export namespace Chat {
     const { tab, host, computer, work, home } = sock.data;
     chat.socks.add(sock);
     Chat.send(sock, Chat.state(chat));
+    if (chat.inbox !== undefined) {
+      Chat.send(sock, { $: "inbox", inbox: chat.inbox });
+    }
     Chat.show(chat, sock);
     Chat.send(sock, { $: "live", live: chat.live });
     if (host === null) {
@@ -1349,6 +1354,13 @@ export namespace Chat {
       case "status": {
         return Chat.reported(chat, device, msg);
       }
+      case "inbox": {
+        return Chat.inboxed(chat, device, msg.inbox);
+      }
+      case "fetch": {
+        Chat.all(chat, { $: "fetch" });
+        return {};
+      }
       case "consent": {
         return Tools.consent(chat.tools, Number(msg.n), msg.yes === true) ? {} : { error: "No call " + msg.n + " waits for you." };
       }
@@ -1499,6 +1511,18 @@ export namespace Chat {
       chat.status = status;
       Chat.change(chat);
     }
+    return {};
+  }
+
+  // a device's inbox (Device.device_inbox), only a device's, checked
+  // (Inbox.inbox_check: what a view is shown); kept, told every view
+  export function inboxed(chat: Chat, device: string, raw: unknown): Answer {
+    const inbox = device === "" ? "Only a device reports its inbox." : Inbox.inbox_check(raw);
+    if (typeof inbox === "string") {
+      return { error: inbox };
+    }
+    chat.inbox = inbox;
+    Chat.all(chat, { $: "inbox", inbox });
     return {};
   }
 

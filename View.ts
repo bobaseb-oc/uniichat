@@ -13,6 +13,7 @@ import type { Kind, Vendor } from "./AskAI.ts";
 import { Modes, type Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
+import type { Inbox } from "./Inbox.ts";
 import * as Md from "./Md.ts";
 import { LABELS, type Move, Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
@@ -147,6 +148,7 @@ export type View = State & {
   pulses : Map<string, Pulse>;
   heard : Heard | null;
   alerted : Map<string, number>;
+  inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -172,7 +174,9 @@ export type Server =
   | { $: "note"; text: string }
   | ({ $: "ack"; id: string } & Answer)
   | { $: "jobs"; ids: string[] }
-  | { $: "job"; id: string; job: unknown };
+  | { $: "job"; id: string; job: unknown }
+  | { $: "inbox"; inbox: Inbox | null } // the cockpit's inbox, a device's latest report (Inbox.ts)
+  | { $: "fetch" };                       // to devices: read the inbox now
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -207,6 +211,8 @@ export type Client =
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
   | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
+  | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
+  | { $: "fetch" } // the inbox read anew by the devices
   | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
@@ -381,6 +387,7 @@ export function view_new(): View {
     pulses    : new Map(),
     heard     : null,
     alerted   : new Map(),
+    inbox     : null,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -401,9 +408,14 @@ export function view_hear(v: View, msg: Server): Client[] {
       v.turn  = msg.turn;
       return v.fold === null ? [] : [{ $: "root" }];
     }
+    case "inbox": {
+      v.inbox = msg.inbox;
+      return [];
+    }
     case "zoom":
     case "jobs":
-    case "job": {
+    case "job":
+    case "fetch": {
       return [];
     }
     case "root": {
