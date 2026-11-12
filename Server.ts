@@ -1117,7 +1117,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1340,6 +1340,9 @@ export namespace Chat {
         Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
         return {};
       }
+      case "answer": {
+        return Chat.reply(chat, id, Number(msg.q), msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
+      }
       case "bang": {
         return Chat.bang(chat, id, String(msg.command ?? "").trim(), device);
       }
@@ -1433,6 +1436,33 @@ export namespace Chat {
     } finally {
       await body.fh.close();
     }
+  }
+
+  // the person's answer to an open question (Tools.question): logged as
+  // their message quoting it, which Unii answers in a turn (refused as a
+  // post is, short of credit); no text dismisses it, a note, no turn
+  export async function reply(chat: Chat, id: string, n: number, text: string): Promise<Answer> {
+    const q = chat.mem.questions.find((x) => x.id === n);
+    if (q === undefined) {
+      return { error: "No open question " + n + "." };
+    }
+    const refused = text === "" ? null : await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    chat.mem.questions = chat.mem.questions.filter((x) => x !== q);
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    if (text === "") {
+      Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      return {};
+    }
+    await Chat.writing(chat, async () => {
+      const at = chat.mem.count;
+      Chat.push(chat, null, "user", "Answer to your question " + n + " (" + q.text + "):\n" + text, [], false, id);
+      Chat.take(chat, { id: at, end: chat.mem.count });
+    });
+    return {};
   }
 
   // the person's !command: a shell job, as Unii's own (in the home repo,

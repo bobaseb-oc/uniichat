@@ -37,7 +37,7 @@ import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
-import type { Crew, Live, Pulse, Status, Todo } from "./View.ts";
+import type { Crew, Live, Pulse, Question, Status, Todo } from "./View.ts";
 
 export type { Live };
 
@@ -355,6 +355,15 @@ function boss(main: boolean): Spec[] {
 const TODO = spec("todo", "Set your checklist, the whole list each time, in order: the user sees it with your work, and what you are doing. Use it for a task of 3 or more steps: write the steps first, mark one doing as you start it and done as soon as it is, add steps you find. items: each a step's text and its status (pending, the default; doing; done); none clears it.", {
   items: { type: "array", items: { type: "object", properties: { text: STR, status: { type: "string", enum: ["pending", "doing", "done"] } }, required: ["text"] } },
 }, ["items"]);
+// the orchestrator's questions for the user, kept in a backlog the user
+// answers in due course (Tools.question); at most ASKS open, each at most
+// ASK_TEXT, with at most ASK_OPTIONS answers offered
+const ASKS = 20;
+const ASK_TEXT = 2000;
+const ASK_OPTIONS = 6;
+const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: anything you need their decision or input on, one question each, said in full (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
+  question: STR, options: { type: "array", items: STR }, close: INT,
+}, []);
 const BOSS = boss(true);
 const MANAGES = boss(false);
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
@@ -497,7 +506,7 @@ export namespace Tools {
 
   export function list(tools: Tools, who: string): Spec[] {
     if (who === "main") {
-      return [...OWN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
+      return [...OWN, ASK, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
     const role = tools.agents.get(who)?.role;
     if (role?.$ === "hands") {
@@ -528,6 +537,9 @@ export namespace Tools {
         }
         const imgs = n === 1 && at === 0 ? Memory.images(to.mem, to.id) : [];
         return { text: Memory.zoom(to.mem, to.id, n, at), fail: false, imgs };
+      }
+      case "ask": {
+        return Tools.question(tools, who, args);
       }
       case "todo": {
         return Tools.todo(tools, who, args.items);
@@ -958,6 +970,40 @@ export namespace Tools {
     }
     tools.hooks.change();
     return { text: name + ": " + [agent.title ?? "(no title)", (agent.repos ?? []).join(", ")].filter((x) => x !== "").join(" · "), fail: false };
+  }
+
+  // the orchestrator's question filed for the user (or one withdrawn:
+  // close), kept with the chat, its number never reused; cleaned and
+  // capped (ASKS open: no more till some are answered)
+  export function question(tools: Tools, who: string, args: any): Out {
+    const mem = tools.mem;
+    if (who !== "main") {
+      return { text: "Only Unii asks the user: ask Unii, in your report or a reply.", fail: true };
+    }
+    if (args.close !== undefined) {
+      const n = mem.questions.length;
+      mem.questions = mem.questions.filter((q) => q.id !== Number(args.close));
+      if (mem.questions.length === n) {
+        return { text: "No open question " + args.close + ".", fail: true };
+      }
+      Memory.save(mem);
+      tools.hooks.change();
+      return { text: "Withdrew question " + args.close + ".", fail: false };
+    }
+    const text = String(args.question ?? "").trim().slice(0, ASK_TEXT);
+    if (text === "") {
+      return { text: "Give the question, or close: a question's number.", fail: true };
+    }
+    if (mem.questions.length >= ASKS) {
+      return { text: ASKS + " questions are open: wait for answers, or close some.", fail: true };
+    }
+    const line = (x: unknown) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, TODO_TEXT);
+    const options = Array.isArray(args.options) ? [...new Set(args.options.map(line).filter((x: string) => x !== ""))].slice(0, ASK_OPTIONS) as string[] : [];
+    const q: Question = { id: (mem.asked += 1), text, ...(options.length === 0 ? {} : { options }), at: mem.count, date: new Date().toISOString() };
+    mem.questions.push(q);
+    Memory.save(mem);
+    tools.hooks.change();
+    return { text: "Filed as question " + q.id + "; the user's answer will reach you as a message.", fail: false };
   }
 
   // an agent's own checklist set whole, cleaned: each item one line, at

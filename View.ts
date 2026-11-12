@@ -69,12 +69,18 @@ export type State = {
   bills     : boolean;
   credits   : number | null;
   importing : Progress | null;
+  questions?: Question[]; // the orchestrator's, open (Tools.question)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
 export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+// a question the orchestrator asked the user (Tools.question), open till
+// answered or dismissed: its number, its text, answers it offers, the
+// chat message count when asked, when
+export type Question = { id: number; text: string; options?: string[]; at: number; date: string };
+
 // an item of an agent's checklist (Tools.todo): what, and how far
 export type Todo = { text: string; status: "pending" | "doing" | "done" };
 // an agent's pulse (Tools.pulse), told every view as it streams: how it
@@ -183,7 +189,8 @@ export type Client =
   | { $: "dismiss"; name: string } // a done agent out of the crew
   | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
   | { $: "guess"; body: Body } // an import's cost
-  | { $: "bang"; command: string }; // the person's !command, run with the shell on a device
+  | { $: "bang"; command: string } // the person's !command, run with the shell on a device
+  | { $: "answer"; q: number; text?: string }; // open question q's answer; no text: dismissed (not "id": an act's own)
 
 // an act not answered: with its id, the socket it went by, what its
 // answer does, what a message said (shown while offline: view_tail)

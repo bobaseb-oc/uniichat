@@ -486,3 +486,45 @@ test("agents' trees past OPEN close, the idle one used longest ago first; one us
   held.splice(0).forEach((ok) => ok());
   Memory.stop(mem);
 }));
+
+// the orchestrator's questions for the user (ask): kept open with the chat
+// (view.json, so a reload keeps them), capped; close withdraws one; only
+// the orchestrator asks (managers ask it)
+test("ask: the orchestrator files questions, kept across a reload; close withdraws one; agents can't ask", () => faked(async () => {
+  const dir = DIR + "/ask";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const ask = (who: string, args: object) => Tools.call(tools, who, "ask", args, new AbortController().signal, "x");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("ask");
+  const one = await ask("main", { question: "  Which repo holds the\nrecon configs? ", options: [" bank-recon ", "pimco", "", "pimco"] });
+  expect(one).toEqual({ text: "Filed as question 1; the user's answer will reach you as a message.", fail: false });
+  await ask("main", { question: "Ship on Friday?" });
+  expect(mem.questions.map((q) => [q.id, q.text, q.options])).toEqual([[1, "Which repo holds the\nrecon configs?", ["bank-recon", "pimco"]], [2, "Ship on Friday?", undefined]]);
+  expect(mem.questions[0]!.at).toBe(mem.count);
+  expect((await ask("main", { question: "  " })).fail).toBe(true);
+  expect((await ask("main", { close: 1 })).fail).toBe(false);
+  expect(mem.questions.map((q) => q.id)).toEqual([2]);
+  expect((await ask("main", { close: 9 })).fail).toBe(true);
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("ask");
+  expect((await ask(name, { question: "mine?" })).fail).toBe(true);
+  // at most 20 open: past them, refused (none is dropped unseen)
+  for (let k = 0; k < 19; k++) {
+    await ask("main", { question: "q" + k + "x".repeat(3000) });
+  }
+  expect(mem.questions).toHaveLength(20);
+  expect(mem.questions.at(-1)!.text).toHaveLength(2000);
+  expect((await ask("main", { question: "one more" })).fail).toBe(true);
+  // ids go on after a reload, never reused
+  await ask("main", { close: 21 });
+  Tools.close(tools);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect(again.questions).toHaveLength(19);
+  const later = served(again, []);
+  await Tools.call(later, "main", "ask", { question: "and then?" }, new AbortController().signal, "y");
+  expect(again.questions.at(-1)!.id).toBe(22);
+  Tools.close(later);
+  Memory.stop(again);
+}));

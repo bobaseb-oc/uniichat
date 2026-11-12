@@ -262,6 +262,57 @@ console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty,
 process.exit(0);
 `;
 
+// The question backlog: the orchestrator's open questions in the state;
+// an answer is the user's message quoting the question, and a turn; no
+// text dismisses it (a note, no turn); an unknown one is refused
+const ANSWER = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+const { Memory } = await import(${JSON.stringify(import.meta.dir + "/Memory.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const asks = [];
+AskAI.ask = (ask, on) => {
+  const [call] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  asks.push(ask);
+  call.send = () => {};
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 200 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const go = new AbortController().signal;
+await Tools.call(chat.tools, "main", "ask", { question: "Ship on Friday?" }, go, "q1");
+await Tools.call(chat.tools, "main", "ask", { question: "Rename the repo?" }, go, "q2");
+const listed = Chat.state(chat).questions.map((q) => q.id);
+const unknown = await Chat.act(chat, "a0", { $: "answer", q: 9, text: "x" }, "");
+const answered = await Chat.act(chat, "a1", { $: "answer", q: 1, text: " Yes, ship it " }, "");
+await until(() => asks.length === 1);
+const msgs = () => Array.from({ length: chat.mem.count }, (_, i) => Memory.message(chat.mem, i));
+const said = msgs().filter((m) => m.kind === "user" && m.text.includes("question")).map((m) => m.text);
+const dismissed = await Chat.act(chat, "a2", { $: "answer", q: 2 }, "");
+await Bun.sleep(100);
+const notes = msgs().filter((m) => m.kind === "note").map((m) => m.text);
+console.log(JSON.stringify({ listed, unknown, answered, said, dismissed, notes, asks: asks.length, left: Chat.state(chat).questions }));
+process.exit(0);
+`;
+
+test("an answer from the question backlog is a message quoting it, and a turn; no text dismisses it", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/answer.ts", ANSWER);
+  const proc = Bun.spawn([process.execPath, dir + "/answer.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({
+    listed: [1, 2], unknown: { error: "No open question 9." }, answered: {},
+    said: ["Answer to your question 1 (Ship on Friday?):\nYes, ship it"], dismissed: {},
+    notes: ["The user dismissed your question 2 (Rename the repo?)."], asks: 1, left: [],
+  });
+});
+
 test("!command runs as a shell job on the device it came from; its output is a note, no turn", async () => {
   const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
   fs.writeFileSync(dir + "/bang.ts", BANG);

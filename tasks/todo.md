@@ -303,6 +303,29 @@ sees Claude Code tool names and input shapes); the `claude` worker is real Claud
       "1/3: the step". Demo workers carry one. Proof: Tools/Html/Paint tests; 9/9 mutants killed; suite
       218 pass, 3 known fails; tsc: nothing new; headless render of the focus card checked.
 
+## Questions backlog (feat/crew-ui)
+Intent: the orchestrator's questions for the user collect in a backlog the user can answer in due course,
+without scrolling the chat. Decided with the user 2026-11-12: a new `ask` tool (orchestrator only;
+managers ask it); an answer box per question, the answer sent to the orchestrator as a message quoting
+it; shown in a web side pane beside Chat, in the Crew "needs you" lane, and in the terminal
+(/questions, a count in the status line).
+- [x] Q1 server: Memory keeps the open questions (view.json, beside goal); `ask` (question, options;
+      close: id withdraws one) for main only, capped; state carries them; an "answer" act (id, text)
+      logs a user message quoting the question and starts a turn, or with no text dismisses it (a
+      note, no turn). → verify: agents.test (ask, caps, persisted across a reload), Server fixture
+      (answer: message + turn; dismiss: note; unknown id refused), mutants.
+      Proof: agents.test (ask: main only, cleaned, capped at 20 open, refused past them, close, ids
+      never reused across a reload) + Server fixture (state lists them; answer = the user's message
+      quoting it + a turn; dismiss = a note, no turn; unknown refused); 8/8 mutants killed; suite 221
+      pass, 3 known fails. tsc caught two real bugs the tests didn't (lessons.md): a second
+      `Chat.answer` replacing the socket handler (now Chat.reply), and the act's `id` field clashing
+      with the act's own (now `q`). Prompt: the orchestrator files waiting questions with ask.
+- [ ] Q2 web: a side pane in Chat (count badge, each question with its options as quick answers and
+      an answer box, dismiss), and the questions first in the Crew "needs you" lane.
+      → verify: View/Html tests, headless render.
+- [ ] Q3 terminal: /questions lists them; /answer <n> <text>, /dismiss-q <n>; "N questions" in the
+      status line. → verify: View/Paint tests.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
