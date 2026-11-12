@@ -176,7 +176,8 @@ function line_html(v: View.View, c: View.Crew): string {
 export function grid_html(v: View.View, now: number): string[] {
   return View.view_tiles(v, now).map((t) => {
     const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
-    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span>${who_html(t, false)}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const todo = View.view_todo(t);
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc(todo)}</span>`}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
     const repos = repos_html(t);
     const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
     const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
@@ -222,7 +223,8 @@ export function focus_html(v: View.View): string {
   if (c === undefined) {
     return `<div class="focus"><b>${esc(name)}</b></div>`;
   }
-  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo!.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
 
 // Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,

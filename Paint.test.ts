@@ -69,3 +69,12 @@ test("/crew full shows the title, the name and the repos", () => {
   const lines = Paint.crew_full(v, 90, 20, "FireAnt", 0).map(text);
   expect(lines.find((l) => l.startsWith("▸ "))).toContain("Fix login tests (FireAnt) [auth-api]");
 });
+
+test("/crew full shows how far an agent's checklist is, and the step it is on", () => {
+  const v = View.view_new();
+  const todo: View.Todo[] = [{ text: "Read", status: "done" }, { text: "Fix the race", status: "doing" }, { text: "Run", status: "pending" }];
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("FireAnt", "main", "working"), todo }, crew("PlainOwl", "main", "working")] });
+  const lines = Paint.crew_full(v, 120, 20, "FireAnt", 0).map(text);
+  expect(lines.find((l) => l.includes("FireAnt"))).toContain("1/3: Fix the race");
+  expect(lines.find((l) => l.includes("PlainOwl"))).not.toContain("/");
+});

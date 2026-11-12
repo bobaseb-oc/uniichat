@@ -11,6 +11,7 @@ var GOALS = [
   ["Cut the 2.10 release", ["bank-recon", "infra"]]
 ];
 var PARTS = ["Reproduce it", "Write the failing test", "Fix it", "Review the diff"];
+var STEPS = ["Read the failing test", "Find the race", "Fix it", "Run the suite"];
 function demo_crew(now) {
   const crew = [];
   for (let m = 0;m < 8; m++) {
@@ -18,7 +19,8 @@ function demo_crew(now) {
     crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
     for (let w = 0;w < 5; w++) {
       const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
-      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part });
+      const todo = w === 0 ? { todo: STEPS.map((text, k) => ({ text, status: k < m % STEPS.length ? "done" : k === m % STEPS.length ? "doing" : "pending" })) } : {};
+      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part, ...todo });
     }
   }
   crew.push({ name: "Sub3", parent: "Mgr3", tier: "manager", model: "opus-5.5", status: "waiting", since: now - 30000 });
@@ -1237,6 +1239,15 @@ function view_crew(v, now) {
   add("main", 0);
   return rows;
 }
+function view_todo(c, step = false) {
+  const list = c.todo ?? [];
+  if (list.length === 0) {
+    return "";
+  }
+  const done = list.filter((x) => x.status === "done").length + "/" + list.length;
+  const doing = list.find((x) => x.status === "doing")?.text;
+  return step && doing !== undefined ? done + ": " + doing : done;
+}
 function view_label(c) {
   const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";
   return (c.title === undefined ? c.name : c.title + " (" + c.name + ")") + repos;
@@ -1707,7 +1718,8 @@ function line_html(v, c) {
 function grid_html(v, now) {
   return view_tiles(v, now).map((t) => {
     const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
-    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const todo = view_todo(t);
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc(todo)}</span>`}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
     const repos = repos_html(t);
     const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
     const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
@@ -1742,7 +1754,8 @@ function focus_html(v) {
   if (c === undefined) {
     return `<div class="focus"><b>${esc(name)}</b></div>`;
   }
-  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
 function mode_html(mode, pill) {
   const here = (m) => m === mode ? ` class="here"` : "";

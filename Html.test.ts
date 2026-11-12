@@ -173,3 +173,19 @@ test("labels: title first, repo chips, the name under it", () => {
   expect(Html.needs_html(v)[0]).toContain("<b>Fix login</b>");
   expect(Html.needs_html(v)[0]).toContain("FireAnt");
 });
+
+// an agent's checklist (Tools.todo): the focus card lists it, each item
+// marked by its status and escaped; a tile says how far (done/all); none:
+// nothing
+test("todo: the focus card lists the checklist, a tile says done/all", () => {
+  const v = View.view_new();
+  const todo: View.Todo[] = [{ text: "Read <the> test", status: "done" }, { text: "Fix it", status: "doing" }, { text: "Run all", status: "pending" }];
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("FireAnt", "main", "working"), todo }, crew("PlainOwl", "main", "working")] });
+  View.view_act(v, { $: "Goto", name: "FireAnt" });
+  expect(Html.focus_html(v)).toContain('<ol class="todo"><li class="done">Read &lt;the&gt; test</li><li class="doing">Fix it</li><li class="pending">Run all</li></ol>');
+  const tile = Html.grid_html(v, 0).find((t) => t.includes("FireAnt"))!;
+  expect(tile).toContain('<span class="todo">1/3</span>');
+  View.view_act(v, { $: "Goto", name: "PlainOwl" });
+  expect(Html.focus_html(v)).not.toContain("todo");
+  expect(Html.grid_html(v, 0).find((t) => t.includes("PlainOwl"))!).not.toContain("todo");
+});

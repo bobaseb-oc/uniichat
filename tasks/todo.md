@@ -297,8 +297,11 @@ sees Claude Code tool names and input shapes); the `claude` worker is real Claud
       Server.test.ts fixture (fake devices: no device, the only one, the sender's over another, empty
       command, the note's text, no turn); 5/5 mutants killed; suite 215 pass, 3 known fails; web/app.js
       rebuilt (+5 lines). By hand still: `!git status` in a live TUI and in the web chat.
-- [ ] T2 todo: a per-agent checklist tool (set the whole list), kept on the agent, sent in the crew and
-      pulse, drawn in the focus card and /crew full. → verify: Tools/View/Html/Paint tests.
+- [x] T2 todo: a per-agent checklist tool (set the whole list, as TodoWrite) for managers and workers (not
+      the orchestrator: no hands-on work), cleaned (one line, 120 chars, 20 items, unknown status
+      pending), in the crew; the web focus card lists it, a tile says done/all, /crew full says
+      "1/3: the step". Demo workers carry one. Proof: Tools/Html/Paint tests; 9/9 mutants killed; suite
+      218 pass, 3 known fails; tsc: nothing new; headless render of the focus card checked.
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).

@@ -37,7 +37,7 @@ import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
-import type { Crew, Live, Pulse, Status } from "./View.ts";
+import type { Crew, Live, Pulse, Status, Todo } from "./View.ts";
 
 export type { Live };
 
@@ -78,6 +78,7 @@ export type Agent = {
   task?   : string;  // a Claude Code worker's task, as it was given
   title?  : string;  // its goal, as the person sees it (Tools.label)
   repos?  : string[]; // the repos its work touches (Tools.label)
+  todo?   : Todo[];  // its checklist, as it set it last (Tools.todo)
   abort?  : AbortController; // a Claude Code worker's job's stop
 };
 
@@ -93,6 +94,10 @@ export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string 
 export type Label = { title?: string; repos?: string[] };
 const TITLE = 80;
 const REPOS = 8;
+
+// a checklist's most items, and an item's most characters (Tools.todo)
+const TODOS = 20;
+const TODO_TEXT = 120;
 const REPO  = 60;
 
 // a chat's tools as they move to another process (Tools.give): the
@@ -343,6 +348,11 @@ function boss(main: boolean): Spec[] {
     spec("stop", "Stop " + (main ? "agents" : "workers of yours") + " at work, by name, at once, and the workers under them: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped one can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
   ];
 }
+// the checklist of managers and workers (not Unii's: it does no hands-on
+// work), as Claude Code's TodoWrite
+const TODO = spec("todo", "Set your checklist, the whole list each time, in order: the user sees it with your work, and what you are doing. Use it for a task of 3 or more steps: write the steps first, mark one doing as you start it and done as soon as it is, add steps you find. items: each a step's text and its status (pending, the default; doing; done); none clears it.", {
+  items: { type: "array", items: { type: "object", properties: { text: STR, status: { type: "string", enum: ["pending", "doing", "done"] } }, required: ["text"] } },
+}, ["items"]);
 const BOSS = boss(true);
 const MANAGES = boss(false);
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
@@ -494,7 +504,7 @@ export namespace Tools {
     if (role?.$ === "cli") {
       return [];
     }
-    return [...OWN, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
+    return [...OWN, TODO, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
   // id: a job's, if it starts one
@@ -516,6 +526,9 @@ export namespace Tools {
         }
         const imgs = n === 1 && at === 0 ? Memory.images(to.mem, to.id) : [];
         return { text: Memory.zoom(to.mem, to.id, n, at), fail: false, imgs };
+      }
+      case "todo": {
+        return Tools.todo(tools, who, args.items);
       }
       case "label": {
         return Tools.label(tools, who, args.name === undefined ? who : String(args.name), args.title, args.repos);
@@ -738,7 +751,7 @@ export namespace Tools {
       const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
       const status = Tools.status(tools, a);
       const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
-      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }) };
+      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }), ...(a.todo === undefined ? {} : { todo: a.todo }) };
       return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0, ...label };
     });
   }
@@ -940,6 +953,24 @@ export namespace Tools {
     }
     tools.hooks.change();
     return { text: name + ": " + [agent.title ?? "(no title)", (agent.repos ?? []).join(", ")].filter((x) => x !== "").join(" · "), fail: false };
+  }
+
+  // an agent's own checklist set whole, cleaned: each item one line, at
+  // most TODO_TEXT, at most TODOS, a status not known pending; none, unset
+  export function todo(tools: Tools, who: string, items: unknown): Out {
+    const agent = tools.agents.get(who);
+    if (agent === undefined || !Array.isArray(items)) {
+      return { text: agent === undefined ? "No checklist here." : "items: give a list of {text, status}.", fail: true };
+    }
+    const known = ["pending", "doing", "done"];
+    const list = items
+      .map((x: any): Todo => ({ text: String(x?.text ?? "").replace(/\s+/g, " ").trim().slice(0, TODO_TEXT), status: known.includes(x?.status) ? x.status : "pending" }))
+      .filter((x) => x.text !== "")
+      .slice(0, TODOS);
+    agent.todo = list.length === 0 ? undefined : list;
+    tools.hooks.change();
+    const box = { pending: "[ ]", doing: "[>]", done: "[x]" };
+    return { text: list.length === 0 ? "Checklist cleared." : list.map((x) => box[x.status] + " " + x.text).join("\n"), fail: false };
   }
 
   // labels by task (spawn's titles and repos, in order), cleaned: a title

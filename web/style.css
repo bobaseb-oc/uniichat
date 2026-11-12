@@ -185,6 +185,11 @@ body.crewmode #tabs { display: none; }
 /* a tile's repos: a row of their own under its title */
 .tile .repos { display: flex; flex-wrap: wrap; gap: 4px; }
 .tile .repos .repo { margin-left: 0; }
+/* an agent's checklist (Tools.todo): how far on a tile, the list in focus */
+.tile .todo { flex: none; margin-left: 6px; color: var(--mid); font: 11.5px/18px var(--mono); }
+.focus ol.todo { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
+.focus ol.todo li.done { color: var(--mid); text-decoration: line-through; }
+.focus ol.todo li.doing { font-weight: 600; }
 /* the focus's lane (Html.lane_html): a mark per event at its time */
 #crew .lane { position: relative; height: 18px; margin: -4px 0 12px; border-radius: 9px; background: var(--block); }
 #crew .mk { position: absolute; top: 3px; width: 6px; height: 12px; margin-left: -3px; padding: 0; border-radius: 3px; background: var(--mid); }

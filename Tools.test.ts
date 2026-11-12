@@ -211,3 +211,29 @@ test("label: itself or an agent under it, trimmed and capped, in the crew", asyn
   expect(Tools.list(tools, "Wkr").some((s: any) => s.name === "label")).toBe(true);
   expect(Tools.list(tools, "main").some((s: any) => s.name === "label")).toBe(true);
 });
+
+// todo: an agent's own checklist, the whole list set each call (as Claude
+// Code's TodoWrite), cleaned and capped, in the crew; the orchestrator has
+// none (it does no hands-on work)
+test("todo: an agent sets its own checklist, cleaned and capped, in the crew; main has no todo tool", async () => {
+  const tools = Tools.serve({} as any, { change: () => {} } as any);
+  const sub = (name: string, parent: string, tier: string) => ({ name, parent, role: { $: "sub", tier, effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false }) as any;
+  tools.agents.set("Wkr", sub("Wkr", "main", "worker"));
+  const todo = (who: string, args: object) => Tools.call(tools, who, "todo", args, new AbortController().signal, "x");
+  expect(Tools.list(tools, "Wkr").map((t) => t.name)).toContain("todo");
+  expect(Tools.list(tools, "main").map((t) => t.name)).not.toContain("todo");
+  const set = await todo("Wkr", { items: [{ text: " Read the\nfailing test ", status: "done" }, { text: "Fix the race", status: "doing" }, { text: "Run the suite" }, { text: "  " }] });
+  expect(set).toEqual({ text: "[x] Read the failing test\n[>] Fix the race\n[ ] Run the suite", fail: false });
+  expect(Tools.crew(tools).find((c) => c.name === "Wkr")!.todo).toEqual([
+    { text: "Read the failing test", status: "done" }, { text: "Fix the race", status: "doing" }, { text: "Run the suite", status: "pending" },
+  ]);
+  await todo("Wkr", { items: Array.from({ length: 40 }, (_, k) => ({ text: k + "y".repeat(300), status: "bogus" })) });
+  const long = Tools.crew(tools).find((c) => c.name === "Wkr")!.todo!;
+  expect(long).toHaveLength(20);
+  expect(long[0]!.text).toHaveLength(120);
+  expect(long[0]!.status).toBe("pending");
+  expect((await todo("Wkr", { items: "nope" })).fail).toBe(true);
+  // an empty list clears it
+  expect((await todo("Wkr", { items: [] })).fail).toBe(false);
+  expect(Tools.crew(tools).find((c) => c.name === "Wkr")!.todo).toBeUndefined();
+});

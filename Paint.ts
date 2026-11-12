@@ -470,7 +470,8 @@ export function crew_full(v: View.View, w: number, h: number, sel: string | null
     const pulse = v.pulses.get(r.name);
     const act = pulse === undefined ? "" : pulse.act || pulse.last;
     const what = r.kids > 0 && !r.open ? "▸ " + r.rollup : r.tier + " · " + r.model;
-    const text = "  ".repeat(r.depth) + View.CREW[r.status] + " " + View.view_label(r) + " · " + what + (act === "" ? "" : " · " + act);
+    const todo = View.view_todo(r, true);
+    const text = "  ".repeat(r.depth) + View.CREW[r.status] + " " + View.view_label(r) + (todo === "" ? "" : " · " + todo) + " · " + what + (act === "" ? "" : " · " + act);
     const ink = r.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
     return [Run(here ? "▸ " : "  ", { ...INK, b: true }), Run(text_cut(text, w - 2), here ? { ...ink, b: true } : ink)];
   });

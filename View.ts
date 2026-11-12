@@ -74,7 +74,9 @@ export type State = {
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[] };
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+// an item of an agent's checklist (Tools.todo): what, and how far
+export type Todo = { text: string; status: "pending" | "doing" | "done" };
 // an agent's pulse (Tools.pulse), told every view as it streams: how it
 // is, what it does now, its report's last line
 export type Pulse = { $: "pulse"; name: string; status: Status; act: string; last: string };
@@ -665,6 +667,18 @@ export function view_crew(v: View, now: number): CrewRow[] {
   };
   add("main", 0);
   return rows;
+}
+
+// how far an agent's checklist is (Tools.todo): done/all, and with step
+// the item it is doing, as "1/3: Fix the race"; no checklist: ""
+export function view_todo(c: Crew, step = false): string {
+  const list = c.todo ?? [];
+  if (list.length === 0) {
+    return "";
+  }
+  const done = list.filter((x) => x.status === "done").length + "/" + list.length;
+  const doing = list.find((x) => x.status === "doing")?.text;
+  return step && doing !== undefined ? done + ": " + doing : done;
 }
 
 // an agent as a line of text says it: its title (its goal) and name, or

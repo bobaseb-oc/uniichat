@@ -6,7 +6,7 @@
 // The site draws it on its own at /?demo=1#crew (main.ts: nothing goes
 // to the server).
 
-import type { Crew, Pulse, Status } from "./View.ts";
+import type { Crew, Pulse, Status, Todo } from "./View.ts";
 
 const STATUSES: Status[] = ["working", "working", "done", "failed", "waiting", "working", "stopped"];
 
@@ -22,6 +22,7 @@ const GOALS: Array<[string, string[]]> = [
   ["Cut the 2.10 release", ["bank-recon", "infra"]],
 ];
 const PARTS = ["Reproduce it", "Write the failing test", "Fix it", "Review the diff"];
+const STEPS = ["Read the failing test", "Find the race", "Fix it", "Run the suite"];
 
 // the crew as of now (ms since 1970): names Mgr0..7, W<m>-<w>, Sub3,
 // Claude1
@@ -32,7 +33,9 @@ export function demo_crew(now: number): Crew[] {
     crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
     for (let w = 0; w < 5; w++) {
       const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
-      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part });
+      // the first worker of each manager keeps a checklist, m steps done
+      const todo = w === 0 ? { todo: STEPS.map((text, k): Todo => ({ text, status: k < m % STEPS.length ? "done" : k === m % STEPS.length ? "doing" : "pending" })) } : {};
+      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part, ...todo });
     }
   }
   crew.push({ name: "Sub3", parent: "Mgr3", tier: "manager", model: "opus-5.5", status: "waiting", since: now - 30000 });
