@@ -1,0 +1,41 @@
+tasks/todo.md
+  s_35bcf61515e0b4::t_42252b69a1d5f5 335-354
+  s_35bcf61515e0b4::t_0d6b41dc737de4 355-364
+Modes.test.ts
+  s_35bcf61515e0b4::t_a8397b39f194c6 1-95
+agents.test.ts
+  s_35bcf61515e0b4::t_1d1dcd2211a371 531-557
+prompt.txt
+  s_35bcf61515e0b4::t_b383148e9ab54f 47-49
+Modes.ts
+  s_35bcf61515e0b4::t_088b3db0784e89 1-225
+  s_35bcf61515e0b4::t_b696c766431cfd 226-236
+Memory.ts
+  s_35bcf61515e0b4::t_ad60edd9b129f4 60,109-111,113,119-121,142-143,226,235-236,273
+Server.test.ts
+  s_35bcf61515e0b4::t_4ef50e2cb81a77 265-329
+Server.ts
+  s_35bcf61515e0b4::t_df8cb99917b207 45,1121,1344-1349,1467-1473,1475,1478-1517
+Tools.test.ts
+  s_35bcf61515e0b4::t_f0e43174838ae9 259-290
+Tools.ts
+  s_35bcf61515e0b4::t_d0ab1af5d0f4a1 37,368-369,427-428,513,525-537,540-545,564-566,1001-1020
+View.ts
+  s_35bcf61515e0b4::t_98122faeb23716 13,74-75,196-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9aa44b435ab3e2cf584c705feda916ce8058b8d6",
+  "prompts": {},
+  "sessions": {
+    "s_35bcf61515e0b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa6247a5-9a71-464b-bcf1-3a5c62a4e955",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
