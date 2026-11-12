@@ -388,6 +388,27 @@ to a device (it knows the mode and has the models); the device's hooks still run
       osascript box appeared here (user confirmed).
 
 
+## A turn no longer hangs on summaries (feat/settle-deadline; user's ask 2026-11-12)
+Seen: "compressing earlier messages…" for good. The compactor's calls (patient: they ask again every
+60 s, forever) failed at the LiteLLM gateway (HTTP 429 "Budget has been exceeded", 502s, 300 s
+silences), and a turn waits (Memory.settle) on every summary before it, with no limit and no reason shown.
+Intent: a turn waits on summaries at most SETTLE, then goes with the lines not built shown as
+"(not summarized yet: zoom it)" (prompt.txt already says so), and the wait says the compactor's last error.
+Constraints: no change while summaries build fine; held-for-credit still answers at once; compaction views
+unchanged (they end at the first line not built).
+- [x] D1 settle's deadline: Memory.settle resolves null after SETTLE (60 s); Memory.view lists a line not
+  built as WAIT, not dropped. Tests first (failsafe.test.ts: vendor down, settle null by the deadline, the
+  view holds every message, WAIT lines) → verify: they fail, then pass; full suite.
+- [x] D3 the reason shown: End keeps the vendor's words (why); a patient call tells them (Ask.again) before
+  asking again; Memory keeps mem.trouble (cleared by a summary answered), Server sends it in the state, the
+  wait reads "compressing earlier messages… (compactor: <why>)". Tests first (failsafe, View) → verify:
+  they fail, then pass; mutants; full suite.
+- Proof (2026-11-12): both tests failed first, then pass (failsafe 9/9, View); 6/6 mutants caught (no
+  deadline, view drops unbuilt, no again, never cleared, no vendor why, view hides trouble); full suite 244
+  pass, only the known logs fails; tsc 85 errors before and after (Bun typings). Not under test: Server's
+  state field and troubled broadcast (one line each); a chat moved to another process doesn't relay its
+  summaries' trouble. By hand still: a live turn with the gateway down shows the reason, then goes at 60 s.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

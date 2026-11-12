@@ -19,6 +19,17 @@ test("a turn's wait names its model", () => {
   expect(tail(v)).toEqual([]);
 });
 
+// summaries that don't come say why: the compactor's last words, on one line
+test("a wait on summaries names the compactor's trouble", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, wait: View.SUMMARIES, trouble: "HTTP 429: Budget has been exceeded!" });
+  expect(tail(v)).toEqual(["compressing earlier messages… (compactor: HTTP 429: Budget has been exceeded!)"]);
+  View.view_hear(v, { $: "state", ...v, wait: View.SUMMARIES, trouble: null });
+  expect(tail(v)).toEqual(["compressing earlier messages…"]);
+  View.view_hear(v, { $: "state", ...v, wait: "claude-opus-5-5", trouble: "HTTP 502" });
+  expect(tail(v)).toEqual(["waiting for claude-opus-5-5…"]);
+});
+
 // /agent starts an agent on the task (both clients share view_act); with
 // no task it says how, and sends nothing
 test("/agent <task> asks to spawn an agent; no task, a note", () => {

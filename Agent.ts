@@ -187,6 +187,9 @@ export namespace Agent {
       if (step.stop === "down" || step.stop === "lost" || step.stop === "fail") {
         end.text ||= step.stop === "down" ? BUSY : step.why;
         end.stop = step.stop;
+        if (step.stop === "down") {
+          end.why = step.why;
+        }
         return;
       }
       items.push({ $: "Turn", out: step.out });
