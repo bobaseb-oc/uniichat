@@ -9,6 +9,8 @@ import * as fs from "node:fs";
 process.env.UNII_DIR = fs.mkdtempSync("/tmp/cloud-test-");
 process.env.UNII_SITE = "http://127.0.0.1";
 const { Cloud } = await import("./Cloud.ts");
+// the site, as the first test file to load Config set it (one process)
+const config = await import("./Config.ts");
 
 // accounts in a dir made anew; the last test's goes after all
 function cloud_new() {
@@ -85,4 +87,62 @@ test("an emailed link survives its preview", async () => {
   const open = async () => (await Cloud.http(cloud, new Request("http://127.0.0.1/auth?t=" + t)))?.headers.get("set-cookie") ?? "";
   expect(await open()).toContain("=");
   expect(await open()).toContain("=");
+});
+
+// `unii web`: a terminal's Bearer session mints a ticket for its own
+// account, good once for 60 s, which /auth swaps for a browser cookie.
+// The cookie alone can't mint one (a page can't widen its own sign-in,
+// nor a cross-site request ride it), nor can anyone signed out; the
+// session it makes is the minting user's, never another's.
+test("/api/web-link: Bearer only, once, briefly, for the same user", async () => {
+  const cloud = cloud_new();
+  const me = Cloud.session(cloud, { id: "u1", name: "me@x.com" });
+  Cloud.session(cloud, { id: "u2", name: "other@x.com" });
+  const mint = (headers: Record<string, string>) => Cloud.http(cloud, new Request("http://127.0.0.1/api/web-link", { method: "POST", headers }));
+  expect((await mint({}))?.status).toBe(401);
+  expect((await mint({ authorization: "Bearer " + Cloud.random() }))?.status).toBe(401);
+  expect((await mint({ cookie: "unii=" + me }))?.status).toBe(401);
+  expect((await Cloud.http(cloud, new Request("http://127.0.0.1/api/web-link", { headers: { authorization: "Bearer " + me } })))?.status).toBe(405);
+  const res = await mint({ authorization: "Bearer " + me });
+  expect(res?.status).toBe(200);
+  const { url } = (await res?.json()) as { url: string };
+  expect(url).toStartWith(config.SITE + "/auth?t=");
+  const open = () => Cloud.http(cloud, new Request(url));
+  const first = await open();
+  expect(first?.status).toBe(302);
+  expect(first?.headers.get("location")).toBe(config.SITE + "/");
+  const cookie = first?.headers.get("set-cookie") ?? "";
+  const token = /^unii=([^;]+)/.exec(cookie)?.[1] ?? "";
+  expect(token).not.toBe("");
+  expect(token).not.toBe(me);
+  const browser = Cloud.who(cloud, new Request("http://127.0.0.1/", { headers: { cookie: "unii=" + token } }));
+  expect(browser).toEqual({ id: "u1", name: "me@x.com" });
+  // used up
+  const again = await open();
+  expect(again?.headers.get("set-cookie") ?? "").toBe("");
+  expect(again?.headers.get("location")).toContain("expired=1");
+  // expired
+  const late = (await (await mint({ authorization: "Bearer " + me }))?.json()) as { url: string };
+  cloud.db.query("update tickets set expires = ?").run(Date.now() - 1);
+  const stale = await Cloud.http(cloud, new Request(late.url));
+  expect(stale?.headers.get("set-cookie") ?? "").toBe("");
+  // it lasts no more than a minute, and isn't counted as a mailed link
+  for (let k = 0; k < 3; k++) {
+    await mint({ authorization: "Bearer " + me });
+  }
+  const row = cloud.db.query("select expires from tickets order by expires desc").get() as { expires: number };
+  expect(row.expires - Date.now()).toBeLessThanOrEqual(60000);
+  expect(Cloud.link_ask(cloud, "me@x.com", "9.9.9.9")).toBeNull();
+});
+
+// a web ticket never reaches the code-confirm path, so it can't sign a
+// terminal in either
+test("a web ticket can't confirm a terminal", async () => {
+  const cloud = cloud_new();
+  const me = Cloud.session(cloud, { id: "u1", name: "me@x.com" });
+  const res = await Cloud.http(cloud, new Request("http://127.0.0.1/api/web-link", { method: "POST", headers: { authorization: "Bearer " + me } }));
+  const t = new URL(((await res?.json()) as { url: string }).url).searchParams.get("t") ?? "";
+  const post = new Request("http://127.0.0.1/auth", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t, code: "000000" }).toString() });
+  const out = await Cloud.confirm(cloud, post);
+  expect(out.headers.get("location")).toContain("expired=1");
 });

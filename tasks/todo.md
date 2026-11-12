@@ -143,10 +143,16 @@ Intent: the web is much more dynamic. Toggle Chat | Crew; Crew lets you watch an
 Before that: no email sign-in locally, and no phone features (phones aren't allowed at OnCorps).
 Decided with the user: watch and steer both; about 5-10 managers with an unknown number of workers;
 no cost display; desktop only.
-- [ ] A. `unii web` (RED ZONE: sign-in; a draft for the user's review, not merged without them).
+- [x] A. `unii web` (RED ZONE: sign-in; a draft for the user's review, not merged without them).
       The terminal's Bearer token mints a 60 s, single-use ticket bound to its user id. /auth?t= uses
       it up and sets the cookie for that same account. The cookie can't mint one, nor can someone
       signed out. Proof: Cloud tests, incl. negative cases (cookie, no auth, reuse, expiry).
+      Done as a draft, AWAITING USER REVIEW (Red Zone). Cloud.web_link / Cloud.web_auth, Term.ts `web`,
+      launcher `web)`, web hint. Proof: Cloud.test.ts 7/7; 6 mutants (cookie accepted, reusable ticket,
+      15-min ttl, counted as a mailed link, web ticket via billing path, GET allowed) each 6 pass 1 fail,
+      unmutated 7/7 first (the "counted" mutant survived at first: test tightened to 3 open tickets).
+      Full suite 166 pass, the 3 baseline fails. tsc on changed files 71 → 72, the one new is the same
+      no-@types/node noise (process.platform). app.js rebuild: HEAD reproducible, +3 lines.
 - [ ] B. Phone features hidden behind a setting (UNII_PHONE, default off): no APNs pushes,
       no AASA, no phone-pairing UI. The code stays, so it's easy to undo.
 - [ ] C1. Web Crew view: a Chat|Crew toggle (#chat, #crew, #crew/<name>, keys g c / g m); a tree

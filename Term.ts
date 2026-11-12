@@ -83,8 +83,9 @@ const HELP   = ARGS.some((a) => ["help", "--help", "-h"].includes(a));
 const ASKVER = ARGS.includes("version");
 const UPDATE = ARGS.includes("update");
 const SERVE  = ARGS.includes("serve");
+const WEBIN  = ARGS.includes("web");
 const PORT   = SERVE ? ARGS.find((a) => /^\d+$/.test(a)) : undefined;
-const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve"];
+const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "web"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
@@ -102,6 +103,7 @@ if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
 
 const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http://127.0.0.1:8788)
        unii login [url]     sign in
+       unii web [url]       open the site in your browser, signed in as this terminal
        unii update [url]    disabled in this build (it ran curl | sh)
        unii version         this unii's version
        unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
@@ -1213,6 +1215,23 @@ async function term_signed(url: string): Promise<boolean> {
   return res === null || res.status !== 401;
 }
 
+// `unii web`: a one-use link (a minute) that signs a browser in as this
+// terminal, printed and opened (`open` may be refused, e.g. in a sandbox)
+async function web_run(url: string): Promise<void> {
+  if (!await term_signed(url)) {
+    await login_run(url);
+  }
+  const res = await fetch(url + "/api/web-link", { method: "POST", headers: term_auth() }).catch(() => null);
+  const body = (await res?.json().catch(() => ({})) ?? {}) as { url?: string; error?: string };
+  if (res === null || !res.ok || body.url === undefined) {
+    login_fail(body.error ?? (res === null ? "no server at " + url + ": start it with unii" : "the server refused (" + res.status + ")"));
+  }
+  console.log("Open this within a minute (it works once):\n  " + body.url);
+  if (process.platform === "darwin") {
+    child.spawnSync("open", [body.url as string], { stdio: "ignore" });
+  }
+}
+
 fs.mkdirSync(TOKEN.slice(0, -"/token".length), { recursive: true, mode: 0o700 });
 
 if (HELP || ODD !== undefined) {
@@ -1228,6 +1247,8 @@ if (HELP || ODD !== undefined) {
   await (await import("./Server.ts")).serve(Number(PORT ?? 8788), null);
 } else if (LOGIN) {
   await login_run(SERVER);
+} else if (WEBIN) {
+  await web_run(SERVER);
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);

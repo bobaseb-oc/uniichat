@@ -38,6 +38,8 @@ const DESK = matchMedia("(hover: hover)");
 
 // what a guest is told after the hello but its ask (View.ask): the ask
 // again (a link expired), the link sent
+// a terminal signed in already needs no email: `unii web` signs this in
+const TERMINAL = "Signed in from a terminal? Run `unii web` there and this page opens signed in.";
 const EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 // the line under a guest's box, where the server bills: signing in is
 // the consent (Billing.ts CONSENT says it in full); its links open a tab,
@@ -182,7 +184,7 @@ async function guest(expired: boolean): Promise<void> {
   BOX.placeholder = "Enter your email" + (ask ? " or @github" : "");
   // read from its start: on a phone it is taller than the screen
   P.end = false;
-  guest_say(hello + "\n\n" + (expired ? EXPIRED : View.email_ask(ask)));
+  guest_say(hello + "\n\n" + TERMINAL + "\n\n" + (expired ? EXPIRED : View.email_ask(ask)));
 }
 
 async function guest_send(text: string): Promise<void> {

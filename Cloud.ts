@@ -8,7 +8,9 @@
 // on /auth?t=<ticket>, where a browser gets a cookie. A terminal posts a token
 // it made and waits (/api/wait) while its link's page asks for the code it
 // shows (in no link). An emailed link works until it expires (mail apps open it
-// first); other tickets once. Tokens are kept as hashes. The iOS app's links
+// first); other tickets once. `unii web`: a signed-in terminal (its Bearer
+// token, never a cookie) gets a one-minute, one-use link for its own account.
+// Tokens are kept as hashes. The iOS app's links
 // open it (AASA), its phones get each turn's last message (APNs).
 
 import type { Database } from "bun:sqlite";
@@ -25,8 +27,9 @@ import { Disk } from "./Disk.ts";
 export type User = { id: string; name: string };
 
 // a sign-in begun: an email or "@" and a GitHub login; the hash of the
-// session a terminal waits for
-type Ticket = { who: string; session: string | null };
+// session a terminal waits for; or (`unii web`) the account a signed-in
+// terminal opens the site as (who "": not a mailed link, uncounted)
+type Ticket = { who: string; session: string | null; user?: User };
 
 // a user's account, in the accounts
 export type Account = { cloud: Cloud; user: string };
@@ -57,6 +60,7 @@ const KEEP = "; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000" + (config.SITE
 const ACTS = 7 * 864e5;
 
 const LINK    = 15 * 60 * 1000;
+const WEB     = 60 * 1000;
 const WAIT    = 5 * 60 * 1000;
 
 // sign-in links by address at once (no one mails a victim links; a ticket used
@@ -345,6 +349,9 @@ export namespace Cloud {
         await Cloud.mail(cloud, who, link, session !== null);
         return Response.json({ ok: true, who, ...code });
       }
+      case "/api/web-link": {
+        return Cloud.web_link(cloud, req);
+      }
       case "/auth": {
         const t = url.searchParams.get("t") ?? "";
         if (req.method === "POST") {
@@ -353,6 +360,9 @@ export namespace Cloud {
         const link = Cloud.ticket_read(cloud, t, false);
         if (link === null) {
           return Cloud.expired();
+        }
+        if (link.user !== undefined) {
+          return Cloud.web_auth(cloud, t);
         }
         if (link.session !== null) {
           return Cloud.page_confirm(t, link.who, url.searchParams.get("code") ?? "", "");
@@ -419,6 +429,36 @@ export namespace Cloud {
       }
     }
     return null;
+  }
+
+  // `unii web`: a terminal signed in asks for a link that opens the site
+  // signed in as it. Only its Authorization header counts, never a
+  // cookie: a browser can't mint one for itself, nor a cross-site
+  // request ride its cookie (it can't set the header without CORS,
+  // which this server never grants). Loopback is no proof of anything.
+  export function web_link(cloud: Cloud, req: Request): Response {
+    if (req.method !== "POST") {
+      return new Response(null, { status: 405 });
+    }
+    const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
+    const sql = "select id, name from sessions where hash = ?";
+    const user = bearer === "" ? null : cloud.db.query(sql).get(Cloud.hash(bearer)) as User | null;
+    if (user === null) {
+      return Response.json({ error: "Sign in first: unii login" }, { status: 401 });
+    }
+    const t = Cloud.ticket(cloud, { who: "", session: null, user: { id: user.id, name: user.name } }, WEB);
+    return Response.json({ url: config.SITE + "/auth?t=" + t });
+  }
+
+  // a `unii web` ticket, used up as it's read (one browser, once), gives
+  // a session to the account that minted it: no email, no billing lookup
+  export function web_auth(cloud: Cloud, t: string): Response {
+    const user = Cloud.ticket_read(cloud, t, true)?.user;
+    if (user === undefined) {
+      return Cloud.expired();
+    }
+    const cookie = COOKIE + "=" + Cloud.session(cloud, user) + KEEP;
+    return new Response(null, { status: 302, headers: { location: config.SITE + "/", "set-cookie": cookie } });
   }
 
   // the answer that signs a browser out

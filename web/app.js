@@ -1641,6 +1641,7 @@ function span_html(s) {
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
 var DESK = matchMedia("(hover: hover)");
+var TERMINAL = "Signed in from a terminal? Run `unii web` there and this page opens signed in.";
 var EXPIRED = "That sign-in link expired. What's your email? I'll send you a new one.";
 var GUEST_AI = `By signing in, you accept the <a href="/terms.html" target="_blank">terms</a> and <a href="/privacy.html" target="_blank">privacy policy</a>, and that Anthropic's and OpenAI's models answer you.`;
 var SENT = (email) => `Thanks! I sent a link to ${email}. Open it, and we'll go on from here.`;
@@ -1738,6 +1739,8 @@ async function guest(expired) {
   BOX.placeholder = "Enter your email" + (ask ? " or @github" : "");
   P.end = false;
   guest_say(hello + `
+
+` + TERMINAL + `
 
 ` + (expired ? EXPIRED : email_ask(ask)));
 }
