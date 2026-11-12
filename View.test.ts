@@ -28,6 +28,15 @@ test("/agent <task> asks to spawn an agent; no task, a note", () => {
   expect(v.notes.at(-1)).toBe("/agent needs a task: /agent <task>.");
 });
 
+test("!command asks to run it on a device, from the chat or an agent's page; a bare ! is a note", () => {
+  const v = View.view_new();
+  expect(View.view_act(v, { $: "Send", text: "  !git status -s " })).toEqual([{ $: "bang", command: "git status -s" }]);
+  expect(View.view_act(v, { $: "Send", text: "!" })).toEqual([]);
+  expect(v.notes.at(-1)).toBe("! needs a command: !<command>, run with the shell on a device.");
+  View.view_act(v, { $: "Goto", name: "Mgr" });
+  expect(View.view_act(v, { $: "Send", text: "!ls" })).toEqual([{ $: "bang", command: "ls" }]);
+});
+
 const crew = (name: string, parent: string, tier: View.Crew["tier"], status: View.Crew["status"], since = 0): View.Crew => ({ name, parent, tier, model: tier === "manager" ? "sonnet-5.5" : "haiku-5.5", status, since });
 
 // the crew: each agent under who started it, the ones failed first, then

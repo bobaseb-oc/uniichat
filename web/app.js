@@ -1067,6 +1067,11 @@ function view_act(v, act) {
       if (!view_typing(v)) {
         return [];
       }
+      if (text.startsWith("!")) {
+        const command = text.slice(1).trim();
+        v.notes.push(...command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []);
+        return command === "" ? [] : [{ $: "bang", command }];
+      }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
       }

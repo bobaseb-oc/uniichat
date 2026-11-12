@@ -1340,6 +1340,9 @@ export namespace Chat {
         Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
         return {};
       }
+      case "bang": {
+        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device);
+      }
       case "tell": {
         // the person's message to an agent, as Unii's tell; refused as a
         // post is, short of credit
@@ -1430,6 +1433,27 @@ export namespace Chat {
     } finally {
       await body.fh.close();
     }
+  }
+
+  // the person's !command: a shell job, as Unii's own (in the home repo,
+  // gated by Claude Code's hooks there: Hooks.ts), on the device it came
+  // from, else the only one open; its command and output a note the AI
+  // reads, starting no turn. Answered at once; the note comes when it ends
+  export function bang(chat: Chat, id: string, command: string, from: string): Answer {
+    if (command === "") {
+      return { error: "No command." };
+    }
+    const open = Tools.opened(chat.tools).map(([name]) => name);
+    const device = open.includes(from) ? from : open.length === 1 ? open[0]! : null;
+    if (device === null) {
+      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): type the !command in the terminal of the one to run it on." };
+    }
+    Chat.mark(chat, id, {});
+    const job = { name: "shell", input: { command }, cwd: "main" };
+    Tools.job(chat.tools, device, job, new AbortController().signal, "bang-" + id).then((out) => {
+      Chat.note(chat, "The user ran on " + device + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
+    });
+    return {};
   }
 
   // an act's record, a line of its own (Memory.ts)

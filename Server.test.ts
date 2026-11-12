@@ -233,6 +233,47 @@ console.log(JSON.stringify({
 process.exit(0);
 `;
 
+// A person's !command: a shell job on the device it came from (else the
+// only one open), its command and output a note the AI reads, no turn
+const BANG = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+let asks = 0;
+AskAI.ask = () => { asks += 1; throw new Error("no turn expected"); };
+const none = await Chat.act(chat, "b0", { $: "bang", command: "ls" }, "");
+const jobs = { mac: [], pc: [] };
+const link = (k) => ({ send: (x) => { if (x.$ === "job") jobs[k].push(x); }, live: () => true, computer: false, work: "~/w" });
+Tools.attach(chat.tools, "t1", "mac", "u1", link("mac"));
+const two = await Chat.act(chat, "b1", { $: "bang", command: "ls" }, "");
+Tools.attach(chat.tools, "t2", "pc", "u1", link("pc"));
+const empty = await Chat.act(chat, "b2", { $: "bang", command: "  " }, "pc");
+const ran = await Chat.act(chat, "b3", { $: "bang", command: "echo hi" }, "pc");
+const job = jobs.pc.at(-1);
+Tools.done(chat.tools, "pc", job.id, { text: "hi\\n(exit 0 in 0.0 s)", fail: false });
+for (let k = 0; k < 100 && !chat.mem.count; k++) await Bun.sleep(10);
+const { Memory } = await import(${JSON.stringify(import.meta.dir + "/Memory.ts")});
+const last = Memory.message(chat.mem, chat.mem.count - 1);
+console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty, ran, job: job && { name: job.job.name, input: job.job.input, cwd: job.job.cwd }, mac: jobs.mac.length, kind: last?.kind, text: last?.text, asks }));
+process.exit(0);
+`;
+
+test("!command runs as a shell job on the device it came from; its output is a note, no turn", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/bang.ts", BANG);
+  const proc = Bun.spawn([process.execPath, dir + "/bang.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({
+    none: { error: "No device is open: run legion (or legion device) on one." }, two: false, empty: true, ran: {},
+    job: { name: "shell", input: { command: "echo hi" }, cwd: "main" }, mac: 1, kind: "note",
+    text: "The user ran on pc:\n$ echo hi\nhi\n(exit 0 in 0.0 s)", asks: 0,
+  });
+});
+
 test("an agent's events go only to views on its page; a view's tell and dismiss reach it", async () => {
   const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
   fs.writeFileSync(dir + "/watch.ts", WATCH);

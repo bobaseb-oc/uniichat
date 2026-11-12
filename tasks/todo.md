@@ -288,13 +288,17 @@ sees Claude Code tool names and input shapes); the `claude` worker is real Claud
       count, case, glob filter, no match, bad regex; via Machine.run) + Hooks mapping to Glob/Grep; 7/7
       mutants killed (the "not routed" one after adding the run test); suite 213 pass, 3 known fails;
       tsc: only missing bun/node type errors. Found: rg's -g lets hidden files back in, so `!.*` goes last.
+- [x] B1+B2 `!cmd` in the TUI and on the web, one path: View.view_act turns a Send of "!cmd" (any page)
+      into a "bang" act; the server (Chat.bang) runs it as main's shell job on the device it came from
+      (a terminal), else the only one open, else says which are; its command and output come back as a
+      note the AI reads, no turn. Changed from the plan: it goes through the hook gate like any shell
+      job (a job flag to skip hooks would be a bypass anything that sends jobs could set); the user's
+      own destructive commands run in a plain terminal. Proof: View.test.ts and an in-process
+      Server.test.ts fixture (fake devices: no device, the only one, the sender's over another, empty
+      command, the note's text, no turn); 5/5 mutants killed; suite 215 pass, 3 known fails; web/app.js
+      rebuilt (+5 lines). By hand still: `!git status` in a live TUI and in the web chat.
 - [ ] T2 todo: a per-agent checklist tool (set the whole list), kept on the agent, sent in the crew and
       pulse, drawn in the focus card and /crew full. → verify: Tools/View/Html/Paint tests.
-- [ ] B1 `!cmd` in the TUI: runs Machine.shell in main's dir (no hooks: the user typed it, as in Claude
-      Code), its command and output go to the chat as an entry the orchestrator sees. → verify: Term/View
-      test + PTY smoke.
-- [ ] B2 `!cmd` on the web: sent as a user shell job to the chat's device (an open TUI or `legion device`);
-      "no device" when none. → verify: Server/Device tests + headless click.
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).

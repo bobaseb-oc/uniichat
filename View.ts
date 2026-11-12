@@ -180,7 +180,8 @@ export type Client =
   | { $: "tell"; name: string; text: string } // a message to the agent whose page is shown
   | { $: "dismiss"; name: string } // a done agent out of the crew
   | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
-  | { $: "guess"; body: Body }; // an import's cost
+  | { $: "guess"; body: Body } // an import's cost
+  | { $: "bang"; command: string }; // the person's !command, run with the shell on a device
 
 // an act not answered: with its id, the socket it went by, what its
 // answer does, what a message said (shown while offline: view_tail)
@@ -451,6 +452,13 @@ export function view_act(v: View, act: Act): Client[] {
       const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (!view_typing(v)) {
         return [];
+      }
+      // !command: run with the shell on a device, its output a note the
+      // AI reads (as Claude Code's), from any page
+      if (text.startsWith("!")) {
+        const command = text.slice(1).trim();
+        v.notes.push(...(command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []));
+        return command === "" ? [] : [{ $: "bang", command }];
       }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
