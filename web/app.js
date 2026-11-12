@@ -1640,17 +1640,6 @@ function pick_html(fold, on, knobs) {
   const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
   return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => i === 0 ? [part] : [`<span class="dot">·</span>`, part])];
 }
-function crew_html(v, now) {
-  const top = `<button class="crew top${v.page === null ? " here" : ""}"${act_html({ $: "Goto", name: null })}>${esc("◆ " + MAIN + " · orchestrator · " + (v.pick?.model ?? "?") + " · " + (v.busy ? "working" : "idle"))}</button>`;
-  const rows = view_crew(v, now).map((r) => {
-    const here = v.page?.name === r.name ? " here" : "";
-    const done = r.status !== "working" && r.status !== "waiting" && r.status !== "asking";
-    const ask = r.status !== "asking" ? "" : `<span class="x yes" title="approve"${act_html({ $: "Approve", name: r.name, yes: true })}>✓</span><span class="x" title="deny"${act_html({ $: "Approve", name: r.name, yes: false })}>×</span>`;
-    const x = ask + (done ? `<span class="x" title="dismiss"${act_html({ $: "Dismiss", name: r.name })}>×</span>` : "");
-    return `<button class="crew d${Math.min(r.depth, 3)} ${r.status}${here}"${act_html({ $: "Goto", name: r.name })}>${esc(r.text.trimStart())}${x}</button>`;
-  });
-  return [top, ...rows];
-}
 function acts_html(c) {
   const x = (label, title, a, cls = "") => `<button class="x${cls}" title="${title}"${act_html(a)}>${label}</button>`;
   switch (c.status) {
@@ -2582,9 +2571,8 @@ function bars() {
   $(".composer").classList.toggle("rec", P.rec !== null);
   markup($("#pick"), pick_html(view_fold(v), v.fold === null, view_pick(v)));
   const crew = v.crew.length > 0;
-  $("#tabs").hidden = !crew && tabs.length < 2;
-  $("#tabs").classList.toggle("crew", crew);
-  markup($("#tabs"), crew ? crew_html(v, Date.now()) : tabs_html(tabs));
+  $("#tabs").hidden = crew || tabs.length < 2;
+  markup($("#tabs"), crew ? [] : tabs_html(tabs));
   crew_bars();
   import_bar();
 }

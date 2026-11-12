@@ -142,14 +142,6 @@ body.account footer > :not(#toast) { display: none; }
 #tabs button { flex: none; }
 #tabs button:hover, #tabs .here { color: var(--ink); }
 #tabs .here { font-weight: 600; }
-/* the crew (Html.crew_html): a row per agent, under its starter */
-#tabs.crew { flex-direction: column; gap: 2px; overflow-x: visible; }
-#tabs.crew button { text-align: left; overflow: hidden; text-overflow: ellipsis; }
-#tabs.crew .d1 { padding-left: 16px; } #tabs.crew .d2 { padding-left: 32px; } #tabs.crew .d3 { padding-left: 48px; }
-#tabs.crew .failed { color: var(--del); }
-#tabs.crew .asking { color: var(--accent); font-weight: 600; }
-#tabs.crew .x.yes:hover { color: var(--add); }
-#tabs.crew :is(.done, .stopped) { color: var(--soft); }
 /* Chat | Crew (Html.mode_html) in the header, the pill on Crew */
 header:has(#mode) > .brand { margin-right: 18px; }
 #mode { margin-right: auto; display: flex; gap: 4px; font-size: 13.5px; font-weight: 500; }
@@ -221,8 +213,6 @@ body.gridmode footer > :not(#toast) { display: none; }
 .dot.done { background: var(--add); opacity: .55; }
 .tell input { width: 100%; padding: 5px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px var(--sans); }
 .tell input:focus { outline: 0; border-color: var(--soft); }
-#tabs.crew .x { margin-left: 8px; padding: 0 4px; color: var(--soft); }
-#tabs.crew .x:hover { color: var(--ink); }
 
 /* Popovers (the browser's): the menu, the wallet, Import History */
 [popover] { inset: 60px 20px auto auto; margin: 0; width: 280px; padding: 10px 14px; border: 1px solid var(--hair); border-radius: 14px; color: var(--ink); background: var(--lift); box-shadow: var(--shadow); }

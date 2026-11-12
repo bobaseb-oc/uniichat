@@ -243,3 +243,10 @@ no cost display; desktop only.
   lane, pulses, multi-watch, demo crew at /?demo=1#crew), /crew full in the terminal, `unii device`.
   Suite 164 → 197 pass, the same 3 known fails. Found only end to end: boot() dropped the #crew hash.
   By hand still: a real crew (managers with workers) watched and steered from the web.
+- 2026-11-12 fix (user report: "can't switch back to chat after clicking Crew"): with a crew, Chat mode drew
+  the old footer crew list (Html.crew_html, from feat/hierarchy), one row per agent: with the demo crew it
+  was taller than the window and covered the chat and the header (elementFromPoint at the Chat/Crew links
+  hit footer rows). The footer shows no list with a crew now (the pill and Crew view do); crew_html, its
+  CSS and its 3 tests removed (escaping and approve/deny are covered by the tree's tests). Proof: real
+  clicks over CDP with the demo crew, Chat ↔ Crew 4 times, each hit the header link; footer 112 px in Chat;
+  Html.test.ts 10/10; full suite below.

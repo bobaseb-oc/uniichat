@@ -960,10 +960,11 @@ function bars(): void {
   $(".composer").classList.toggle("off", !on);
   $(".composer").classList.toggle("rec", P.rec !== null);
   markup($("#pick"), Html.pick_html(View.view_fold(v), v.fold === null, View.view_pick(v)));
+  // a crew is the Crew view's (the header's pill), not a list here: one
+  // row an agent buried the chat and the header under a tall footer
   const crew = v.crew.length > 0;
-  $("#tabs").hidden = !crew && tabs.length < 2;
-  $("#tabs").classList.toggle("crew", crew);
-  markup($("#tabs"), crew ? Html.crew_html(v, Date.now()) : Html.tabs_html(tabs));
+  $("#tabs").hidden = crew || tabs.length < 2;
+  markup($("#tabs"), crew ? [] : Html.tabs_html(tabs));
   crew_bars();
   import_bar();
 }
