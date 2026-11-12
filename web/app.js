@@ -483,20 +483,12 @@ var Modes;
         word = (word ?? "") + line.slice(k + 1, close2);
         k = close2;
       } else if (c === '"') {
-        let w = "";
-        for (k += 1;k < line.length && line[k] !== '"'; k++) {
-          if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
-            return "a command substitution";
-          }
-          if (line[k] === "\\") {
-            k += 1;
-          }
-          w += line[k] ?? "";
+        const q = dquote(line, k);
+        if (typeof q === "string") {
+          return q;
         }
-        if (k >= line.length) {
-          return "an unclosed quote";
-        }
-        word = (word ?? "") + w;
+        word = (word ?? "") + q[0];
+        k = q[1];
       } else if (c === "\\") {
         if (line[k + 1] === `
 `) {
@@ -514,13 +506,12 @@ var Modes;
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
       } else if (c === ">") {
-        const rest = line.slice(k + 1);
-        const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
-        if (word !== "2" || tail === null) {
-          return "a redirect (>)";
+        const to = stderr(line, k, word);
+        if (typeof to === "string") {
+          return to;
         }
         word = null;
-        k += tail[0].length;
+        k = to;
       } else if (c === "|" || c === ";" || c === "&") {
         const two = line.slice(k, k + 2);
         if (c === "&" && two !== "&&") {
@@ -540,6 +531,24 @@ var Modes;
     }
     end();
     return cmds.at(-1).length === 0 && cmds.length > 1 ? "an empty command" : cmds.filter((w) => w.length > 0);
+  }
+  function stderr(line, k, before) {
+    const rest = line.slice(k + 1);
+    const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
+    return before !== "2" || tail === null ? "a redirect (>)" : k + tail[0].length;
+  }
+  function dquote(line, k) {
+    let w = "";
+    for (k += 1;k < line.length && line[k] !== '"'; k++) {
+      if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
+        return "a command substitution";
+      }
+      if (line[k] === "\\") {
+        k += 1;
+      }
+      w += line[k] ?? "";
+    }
+    return k >= line.length ? "an unclosed quote" : [w, k];
   }
   function check(words) {
     const [cmd, ...args] = words;
@@ -1437,14 +1446,9 @@ function view_crew(v, now) {
   add("main", 0);
   return rows;
 }
-function view_todo(c, step = false) {
+function view_todo(c) {
   const list = c.todo ?? [];
-  if (list.length === 0) {
-    return "";
-  }
-  const done = list.filter((x) => x.status === "done").length + "/" + list.length;
-  const doing = list.find((x) => x.status === "doing")?.text;
-  return step && doing !== undefined ? done + ": " + doing : done;
+  return list.length === 0 ? "" : list.filter((x) => x.status === "done").length + "/" + list.length;
 }
 function view_label(c) {
   const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";

@@ -124,20 +124,12 @@ export namespace Modes {
         word = (word ?? "") + line.slice(k + 1, close);
         k = close;
       } else if (c === '"') {
-        let w = "";
-        for (k += 1; k < line.length && line[k] !== '"'; k++) {
-          if (line[k] === "`" || (line[k] === "$" && line[k + 1] === "(")) {
-            return "a command substitution";
-          }
-          if (line[k] === "\\") {
-            k += 1;
-          }
-          w += line[k] ?? "";
+        const q = dquote(line, k);
+        if (typeof q === "string") {
+          return q;
         }
-        if (k >= line.length) {
-          return "an unclosed quote";
-        }
-        word = (word ?? "") + w;
+        word = (word ?? "") + q[0];
+        k = q[1];
       } else if (c === "\\") {
         if (line[k + 1] === "\n") {
           return "a newline";
@@ -153,14 +145,12 @@ export namespace Modes {
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
       } else if (c === ">") {
-        // only stderr thrown away or joined to stdout
-        const rest = line.slice(k + 1);
-        const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
-        if (word !== "2" || tail === null) {
-          return "a redirect (>)";
+        const to = stderr(line, k, word);
+        if (typeof to === "string") {
+          return to;
         }
         word = null;
-        k += tail[0].length;
+        k = to;
       } else if (c === "|" || c === ";" || c === "&") {
         const two = line.slice(k, k + 2);
         if (c === "&" && two !== "&&") {
@@ -180,6 +170,31 @@ export namespace Modes {
     }
     end();
     return cmds.at(-1)!.length === 0 && cmds.length > 1 ? "an empty command" : cmds.filter((w) => w.length > 0);
+  }
+
+  // a redirect at k after the word before it: only stderr thrown away or
+  // joined to stdout (2>/dev/null, 2>&1), so where it ends; a string: why not
+  function stderr(line: string, k: number, before: string | null): number | string {
+    const rest = line.slice(k + 1);
+    const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
+    return before !== "2" || tail === null ? "a redirect (>)" : k + tail[0].length;
+  }
+
+  // a double-quoted word from the quote at k: its text and where it ends
+  // (the closing quote); a string: why not (a substitution expands even
+  // in double quotes)
+  function dquote(line: string, k: number): [string, number] | string {
+    let w = "";
+    for (k += 1; k < line.length && line[k] !== '"'; k++) {
+      if (line[k] === "`" || (line[k] === "$" && line[k + 1] === "(")) {
+        return "a command substitution";
+      }
+      if (line[k] === "\\") {
+        k += 1;
+      }
+      w += line[k] ?? "";
+    }
+    return k >= line.length ? "an unclosed quote" : [w, k];
   }
 
   // why one command is not read-only; null: it is

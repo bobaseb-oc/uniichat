@@ -715,16 +715,17 @@ export function view_crew(v: View, now: number): CrewRow[] {
   return rows;
 }
 
-// how far an agent's checklist is (Tools.todo): done/all, and with step
-// the item it is doing, as "1/3: Fix the race"; no checklist: ""
-export function view_todo(c: Crew, step = false): string {
+// how far an agent's checklist is (Tools.todo): done/all; no checklist: ""
+export function view_todo(c: Crew): string {
   const list = c.todo ?? [];
-  if (list.length === 0) {
-    return "";
-  }
-  const done = list.filter((x) => x.status === "done").length + "/" + list.length;
-  const doing = list.find((x) => x.status === "doing")?.text;
-  return step && doing !== undefined ? done + ": " + doing : done;
+  return list.length === 0 ? "" : list.filter((x) => x.status === "done").length + "/" + list.length;
+}
+
+// how far, and the item it is doing, as "1/3: Fix the race" (none doing:
+// how far only)
+export function view_step(c: Crew): string {
+  const doing = c.todo?.find((x) => x.status === "doing")?.text;
+  return doing === undefined ? view_todo(c) : view_todo(c) + ": " + doing;
 }
 
 // an agent as a line of text says it: its title (its goal) and name, or
