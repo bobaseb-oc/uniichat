@@ -326,3 +326,21 @@ test("a crew row's text: title, name, repos", () => {
   expect(fire.text).toStartWith("● Fix login tests (FireAnt) [auth-api, web] · worker");
   expect(plain.text).toStartWith("✓ PlainOwl · worker");
 });
+
+// the question backlog: an answer (a quick one or typed) goes to the
+// server as "answer", trimmed (empty: nothing); a drop dismisses it; open
+// questions count as needing the person in the Crew's pill
+test("questions: Answer and Drop acts, and the pill counts them as needing you", () => {
+  const v = View.view_new();
+  const q = (id: number, text: string): View.Question => ({ id, text, at: 0, date: "2026-11-12T10:00:00.000Z" });
+  View.view_hear(v, { $: "state", ...v, questions: [q(1, "Ship?"), q(2, "Rename?")] } as any);
+  expect(View.view_questions(v).map((x) => x.id)).toEqual([1, 2]);
+  expect(View.view_act(v, { $: "Answer", q: 1, text: "  yes  " })).toEqual([{ $: "answer", q: 1, text: "yes" }]);
+  expect(View.view_act(v, { $: "Answer", q: 1, text: "  " })).toEqual([]);
+  expect(View.view_act(v, { $: "Drop", q: 2 })).toEqual([{ $: "answer", q: 2 }]);
+  expect(View.view_pill(v)).toBe("2 need you");
+  View.view_hear(v, { $: "state", ...v, questions: [], crew: [{ name: "A", parent: "main", tier: "worker", model: "m", status: "working", since: 0 }] } as any);
+  expect(View.view_pill(v)).toBe("1 working");
+  View.view_hear(v, { $: "state", ...v, questions: [q(5, "Now?")] } as any);
+  expect(View.view_pill(v)).toBe("1 working, 1 need you");
+});

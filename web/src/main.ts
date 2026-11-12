@@ -99,6 +99,7 @@ const P = {
   g     : 0,
   watching : "",
   watched  : null as WebSocket | null,
+  qhide    : false, // the questions' pane put away (the header's ? button)
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -260,6 +261,7 @@ function chat(): void {
   document.onclick = click;
   onhashchange = crew_route;
   $("#grid").onsubmit = tell;
+  $("#questions").onsubmit = answer;
   $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
   crew_route();
@@ -357,6 +359,11 @@ function act(a: View.Act): void {
 // (Html.ts), unless it ends a selection dragged in
 // its element
 function click(ev: MouseEvent): void {
+  const qs = (ev.target as HTMLElement).closest<HTMLElement>("[data-qs], [data-qs-open]");
+  if (qs !== null) {
+    P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
+    paint();
+  }
   const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
@@ -1001,7 +1008,13 @@ function crew_bars(): void {
   const mode = View.view_route(location.hash).mode;
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
-  markup($("#mode"), Html.mode_html(mode, View.view_pill(v)));
+  const asked = View.view_questions(v).length;
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked));
+  // the question backlog, beside the chat, till put away
+  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  document.body.classList.toggle("qmode", pane);
+  $("#questions").hidden = !pane;
+  markup($("#questions"), pane ? Html.questions_html(v) : []);
   $("#crew").hidden = !crew;
   if (!crew) {
     document.body.classList.remove("gridmode");
@@ -1069,6 +1082,18 @@ function tell(ev: SubmitEvent): void {
   ev.preventDefault();
   const input = form.querySelector("input")!;
   act({ $: "Tell", name: form.dataset.tell!, text: input.value });
+  input.value = "";
+}
+
+// an answer typed in the question backlog: to the orchestrator
+function answer(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.qa");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input")!;
+  act({ $: "Answer", q: Number(form.dataset.q), text: input.value });
   input.value = "";
 }
 

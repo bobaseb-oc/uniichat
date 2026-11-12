@@ -219,6 +219,8 @@ export type Act =
   | { $: "Stop"; name: string }                 // that agent's work stopped (the Crew view)
   | { $: "Expand"; name: string }               // a manager's workers shown, or folded again
   | { $: "Tell"; name: string; text: string }   // a message to that agent (a tile's box)
+  | { $: "Answer"; q: number; text: string }    // an open question answered (the backlog pane)
+  | { $: "Drop"; q: number }                    // an open question dismissed
 
 // what a page draws, top to bottom
 export type Row =
@@ -540,6 +542,13 @@ export function view_act(v: View, act: Act): Client[] {
       const text = act.text.trim();
       return text === "" ? [] : [{ $: "tell", name: act.name, text }];
     }
+    case "Answer": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "answer", q: act.q, text }];
+    }
+    case "Drop": {
+      return [{ $: "answer", q: act.q }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -849,11 +858,17 @@ export function view_needs(v: View): Crew[] {
 
 // the Chat's pill: "3 working, 2 need you" ("": no crew)
 export function view_pill(v: View): string {
+  const asked = view_questions(v).length;
   if (v.crew.length === 0) {
-    return "";
+    return asked > 0 ? asked + " need you" : "";
   }
-  const need = view_needs(v).length;
+  const need = view_needs(v).length + asked;
   return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+
+// the orchestrator's questions still open, oldest first
+export function view_questions(v: View): Question[] {
+  return [...(v.questions ?? [])].sort((a, b) => a.id - b.id);
 }
 
 // the web's route by its hash, and back

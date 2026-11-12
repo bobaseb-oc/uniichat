@@ -320,9 +320,13 @@ it; shown in a web side pane beside Chat, in the Crew "needs you" lane, and in t
       pass, 3 known fails. tsc caught two real bugs the tests didn't (lessons.md): a second
       `Chat.answer` replacing the socket handler (now Chat.reply), and the act's `id` field clashing
       with the act's own (now `q`). Prompt: the orchestrator files waiting questions with ask.
-- [ ] Q2 web: a side pane in Chat (count badge, each question with its options as quick answers and
+- [x] Q2 web: a side pane in Chat (count badge, each question with its options as quick answers and
       an answer box, dismiss), and the questions first in the Crew "needs you" lane.
       → verify: View/Html tests, headless render.
+      Proof: View.test (Answer/Drop acts, pill counts questions with and without a crew) + Html.test
+      (pane escaped with lines kept, quick answers, box, dismiss; needs lane lists them first linking
+      to #chat; the ? n toggle); 5/5 mutants killed (pill after a fix to the test); suite 223 pass,
+      3 known fails; headless render of the pane checked; main.ts tsc: only its known error.
 - [ ] Q3 terminal: /questions lists them; /answer <n> <text>, /dismiss-q <n>; "N questions" in the
       status line. → verify: View/Paint tests.
 

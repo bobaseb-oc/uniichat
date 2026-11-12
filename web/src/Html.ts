@@ -204,10 +204,23 @@ export function lane_html(v: View.View, now: number): string {
 // what needs the person (View.view_needs), each with what it waits on
 // and its buttons
 export function needs_html(v: View.View): string[] {
-  return View.view_needs(v).map((c) => {
+  const asked = View.view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split("\n")[0]!)}</b> <span class="meta">question ${q.id}</span></a></div>`);
+  return [...asked, ...View.view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
     const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
     return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
+  })];
+}
+
+// the question backlog (View.view_questions), beside the chat: each the
+// orchestrator's question (its lines kept), its offered answers as
+// buttons, a box to answer it, a dismiss; none: nothing
+export function questions_html(v: View.View): string[] {
+  return View.view_questions(v).map((q) => {
+    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
+    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
+    return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
   });
 }
 
@@ -229,10 +242,12 @@ export function focus_html(v: View.View): string {
 
 // Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
 // marked when someone needs the person
-export function mode_html(mode: View.Mode, pill: string): string[] {
+// and the questions open (a button showing or hiding their pane)
+export function mode_html(mode: View.Mode, pill: string, asked = 0): string[] {
   const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`];
+  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...qs];
 }
 
 export function tabs_html(tabs: View.Tab[]): string[] {

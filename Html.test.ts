@@ -189,3 +189,25 @@ test("todo: the focus card lists the checklist, a tile says done/all", () => {
   expect(Html.focus_html(v)).not.toContain("todo");
   expect(Html.grid_html(v, 0).find((t) => t.includes("PlainOwl"))!).not.toContain("todo");
 });
+
+// the question backlog pane: each question escaped (its lines kept), its
+// offered answers as buttons, an answer box, a dismiss; none: nothing. The
+// Crew's needs-you lane lists them first, linking to the chat
+test("questions: the pane, and the needs-you lane lists them first", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, questions: [{ id: 3, text: "Ship <now>?\nOr Friday?", options: ["now", "Friday"], at: 0, date: "2026-11-12T10:00:00.000Z" }], crew: [crew("Bad", "main", "failed")] } as any);
+  const [pane] = Html.questions_html(v);
+  expect(pane).toContain('<div class="qt">Ship &lt;now&gt;?\nOr Friday?</div>');
+  expect(pane).toContain(act({ $: "Answer", q: 3, text: "Friday" }) + '">Friday</button>');
+  expect(pane).toContain('<form class="qa" data-q="3">');
+  expect(pane).toContain(act({ $: "Drop", q: 3 }));
+  const needs = Html.needs_html(v);
+  expect(needs).toHaveLength(2);
+  expect(needs[0]).toContain('href="#chat"');
+  expect(needs[0]).toContain("Ship &lt;now&gt;?");
+  expect(needs[1]).toContain("Bad");
+  expect(Html.mode_html("chat", "", 1).join("")).toContain('<button class="qs" data-qs title="your questions">? 1</button>');
+  expect(Html.mode_html("chat", "", 0).join("")).not.toContain("qs");
+  View.view_hear(v, { $: "state", ...v, questions: [] } as any);
+  expect(Html.questions_html(v)).toEqual([]);
+});

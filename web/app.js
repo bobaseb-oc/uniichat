@@ -1144,6 +1144,13 @@ function view_act(v, act) {
       const text = act.text.trim();
       return text === "" ? [] : [{ $: "tell", name: act.name, text }];
     }
+    case "Answer": {
+      const text = act.text.trim();
+      return text === "" ? [] : [{ $: "answer", q: act.q, text }];
+    }
+    case "Drop": {
+      return [{ $: "answer", q: act.q }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -1346,11 +1353,15 @@ function view_needs(v) {
   return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
 }
 function view_pill(v) {
+  const asked = view_questions(v).length;
   if (v.crew.length === 0) {
-    return "";
+    return asked > 0 ? asked + " need you" : "";
   }
-  const need = view_needs(v).length;
+  const need = view_needs(v).length + asked;
   return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+function view_questions(v) {
+  return [...v.questions ?? []].sort((a, b) => a.id - b.id);
 }
 function view_route(hash) {
   const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
@@ -1739,10 +1750,20 @@ function lane_html(v, now) {
   return `<div class="lane">${mk.join("")}</div>`;
 }
 function needs_html(v) {
-  return view_needs(v).map((c) => {
+  const asked = view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split(`
+`)[0])}</b> <span class="meta">question ${q.id}</span></a></div>`);
+  return [...asked, ...view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
     const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
     return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
+  })];
+}
+function questions_html(v) {
+  return view_questions(v).map((q) => {
+    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
+    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
+    return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
   });
 }
 function focus_html(v) {
@@ -1757,10 +1778,11 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill) {
+function mode_html(mode, pill, asked = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`];
+  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...qs];
 }
 function tabs_html(tabs) {
   return tabs.map((tab) => {
@@ -1920,7 +1942,8 @@ var P = {
   crew: false,
   g: 0,
   watching: "",
-  watched: null
+  watched: null,
+  qhide: false
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2050,6 +2073,7 @@ function chat() {
   document.onclick = click;
   onhashchange = crew_route;
   $("#grid").onsubmit = tell;
+  $("#questions").onsubmit = answer;
   $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
   crew_route();
@@ -2131,6 +2155,11 @@ function act(a) {
   draw(a.$ === "Send");
 }
 function click(ev) {
+  const qs = ev.target.closest("[data-qs], [data-qs-open]");
+  if (qs !== null) {
+    P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
+    paint();
+  }
   const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
   if (el === null || sel !== null && !sel.isCollapsed && el.contains(sel.focusNode)) {
@@ -2642,7 +2671,12 @@ function crew_bars() {
   const mode = view_route(location.hash).mode;
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
-  markup($("#mode"), mode_html(mode, view_pill(v)));
+  const asked = view_questions(v).length;
+  markup($("#mode"), mode_html(mode, view_pill(v), asked));
+  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  document.body.classList.toggle("qmode", pane);
+  $("#questions").hidden = !pane;
+  markup($("#questions"), pane ? questions_html(v) : []);
   $("#crew").hidden = !crew;
   if (!crew) {
     document.body.classList.remove("gridmode");
@@ -2698,6 +2732,16 @@ function tell(ev) {
   ev.preventDefault();
   const input = form.querySelector("input");
   act({ $: "Tell", name: form.dataset.tell, text: input.value });
+  input.value = "";
+}
+function answer(ev) {
+  const form = ev.target.closest("form.qa");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const input = form.querySelector("input");
+  act({ $: "Answer", q: Number(form.dataset.q), text: input.value });
   input.value = "";
 }
 function crew_keys(ev) {
