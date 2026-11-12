@@ -332,13 +332,13 @@ it; shown in a web side pane beside Chat, in the Crew "needs you" lane, and in t
       (view_questions_note, view_answer, view_drop). Proof: View/Paint tests; 4/4 mutants killed; suite
       225 pass, 3 known fails; tsc 2 → 2; Term.ts builds. By hand still: the commands in a live TUI.
 
-## Permission modes: plan / auto / full (feat/crew-ui) - RED ZONE, drafts until the user signs off
+## Permission modes: plan / auto / full (feat/crew-ui) - RED ZONE, signed off by the user 2026-11-12 (9aa44b4, e665a8e)
 Intent: Claude Code's plan and auto modes for Legion's agents, chat-wide. Decided with the user
 2026-11-12: modes plan / auto / full (full = today: hooks only; new chats auto); plan mode's shell is a
 read-only allowlist; when auto's reviewer can't answer, the call waits for the user's yes/no; Shift+Tab
 cycles the mode (speed keeps /speed and the pick menu). The gate runs on the server before a job goes
 to a device (it knows the mode and has the models); the device's hooks still run after it.
-- [x] M1 (DRAFT, awaiting sign-off) plan mode: Modes.ts (the mode type; readonly(cmd): the allowlist, quotes-aware, no redirects,
+- [x] M1 (signed off) plan mode: Modes.ts (the mode type; readonly(cmd): the allowlist, quotes-aware, no redirects,
       substitutions or writers; which tools a mode allows); the mode kept with the chat (view.json),
       in the state, set by a "mode" act; Tools.call refuses what plan mode doesn't allow (write, edit,
       a non-read-only shell, computer, Claude Code workers) saying so; the orchestrator's `plan` tool
@@ -362,7 +362,7 @@ to a device (it knows the mode and has the models); the device's hooks still run
       with the mode). Proof: View/Device/Server tests; 2/2 mutants killed; suite 234 pass, 3 known
       fails; tsc: one more TS2339 on setInterval().unref() (DOM-lib noise, as Term.ts's). By hand
       still: the line in the live web UI.
-- [x] M2 auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
+- [x] M2 (signed off) auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
       the agent's task, the call → allow, or refuse with a reason (the agent sees it); no answer
       (error, timeout, bad reply) → the call waits for the user's yes/no in Needs you. → verify:
       faked-model tests (allow, refuse, error → asks, yes runs, no refuses), mutants.
