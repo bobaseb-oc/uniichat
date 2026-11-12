@@ -138,6 +138,30 @@ Plan: ~/.claude/plans/can-we-totally-remake-precious-ripple.md · branch `feat/h
   - [ ] By hand: `spawn as claude` on a real repo, /approve, the report
 - [ ] By hand: `UNII_HOME_REPO=~/repos/home unii`; the status line's branch and spend
 
+## Crew UI and local sign-in (branch feat/crew-ui, off feat/hierarchy; user's ask 2026-11-12)
+Intent: the web is much more dynamic. Toggle Chat | Crew; Crew lets you watch and steer every agent's session.
+Before that: no email sign-in locally, and no phone features (phones aren't allowed at OnCorps).
+Decided with the user: watch and steer both; about 5-10 managers with an unknown number of workers;
+no cost display; desktop only.
+- [ ] A. `unii web` (RED ZONE: sign-in; a draft for the user's review, not merged without them).
+      The terminal's Bearer token mints a 60 s, single-use ticket bound to its user id. /auth?t= uses
+      it up and sets the cookie for that same account. The cookie can't mint one, nor can someone
+      signed out. Proof: Cloud tests, incl. negative cases (cookie, no auth, reuse, expiry).
+- [ ] B. Phone features hidden behind a setting (UNII_PHONE, default off): no APNs pushes,
+      no AASA, no phone-pairing UI. The code stays, so it's easy to undo.
+- [ ] C1. Web Crew view: a Chat|Crew toggle (#chat, #crew, #crew/<name>, keys g c / g m); a tree
+      with managers collapsed and their workers rolled up; a focus pane with the agent's live
+      session and its actions (tell, stop, approve/deny, dismiss); a "needs you" lane on top.
+      In Chat mode, a pill shows "N working, M need you".
+- [ ] C2. A pulse per agent for every view (status, current activity, last line); a view can
+      watch several agents at once (the visible tiles).
+- [ ] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;
+      the terminal's full-screen Crew mode (/crew full, Esc goes back to scrollback); a demo crew
+      (8 managers, 40 workers) for layout and tests.
+- [ ] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
+      a background process that connects as a device and runs jobs (Machine.run), with no screen.
+      It gets the same approvals as the terminal.
+
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
