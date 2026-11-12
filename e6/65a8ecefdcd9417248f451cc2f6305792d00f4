@@ -1,0 +1,56 @@
+web/style.css
+  s_35bcf61515e0b4::t_4dca14810b7c91 162,170-174
+web/app.js
+  s_35bcf61515e0b4::t_4dca14810b7c91 415-595,600,623,1335-1343,1553,1569,1579-1582,1974-1977,1984-1989,2010,2014-2015,2278-2282,2933-2934,2938,3003
+  s_35bcf61515e0b4::t_782f4ed5b0f6c6 1344,1463-1468,1475,2543-2547,2557-2574
+  s_35bcf61515e0b4::t_7106f354a83151 2575
+web/src/main.ts
+  s_35bcf61515e0b4::t_4dca14810b7c91 236-241
+  s_35bcf61515e0b4::t_782f4ed5b0f6c6 547-551,562-582
+  s_35bcf61515e0b4::t_26869a41b9011d 1046-1047,1052,1124,1132
+  s_35bcf61515e0b4::t_52240db4b9827d 583-584
+prompt.txt
+  s_35bcf61515e0b4::t_34fdb9360c69ca 49-51
+Html.test.ts
+  s_35bcf61515e0b4::t_2c534910562e9d 214-235
+Notify.test.ts
+  s_35bcf61515e0b4::t_142ace224cf66f 30-46
+Notify.ts
+  s_35bcf61515e0b4::t_801bbee12bed09 45-65
+Paint.test.ts
+  s_35bcf61515e0b4::t_307953c893b37b 88-92
+Server.test.ts
+  s_35bcf61515e0b4::t_d6265e353523c9 292-318
+Server.ts
+  s_35bcf61515e0b4::t_2e34d9d156fe86 1122,1351-1353
+Term.ts
+  s_35bcf61515e0b4::t_35b1b5aa0efa2a 63,205,220-225,351,381,396-401,1144
+Tools.test.ts
+  s_35bcf61515e0b4::t_c6b77678bfbec2 291-356
+Tools.ts
+  s_35bcf61515e0b4::t_0d909914b64f9f 41,134,137-141,376-384,540-630,652-657
+View.test.ts
+  s_35bcf61515e0b4::t_28ff3ed98ab747 381-421
+View.ts
+  s_35bcf61515e0b4::t_bf71839d85dba8 13,76,84-87,209,241-243,572-581,751-756,763,897,909,920,933-973
+tasks/todo.md
+  s_35bcf61515e0b4::t_a056d28c3206a7 365,369-389
+web/src/Html.ts
+  s_35bcf61515e0b4::t_b06212afe7faa0 12,208-210,218-228,260-261,265-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e665a8ecefdcd9417248f451cc2f6305792d00f4",
+  "prompts": {},
+  "sessions": {
+    "s_35bcf61515e0b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa6247a5-9a71-464b-bcf1-3a5c62a4e955",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
