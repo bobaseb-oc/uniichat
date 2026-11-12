@@ -1220,6 +1220,10 @@ function page_bars(mode: View.Mode): boolean {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "digest") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.digest_html(v));
   } else if (mode === "routines") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

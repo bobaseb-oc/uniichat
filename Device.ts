@@ -131,11 +131,12 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
   };
   const vars = Object.entries(Inbox.inbox_vars(now)).flatMap(([k, v]) => ["-f", k + "=" + v]);
   const jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
-  const [gql, notes, jira, clean] = await Promise.all([
+  const [gql, notes, jira, clean, digest] = await Promise.all([
     run(["gh", "api", "graphql", "-f", "query=" + Inbox.QUERY, ...vars]),
     run(["gh", "api", "notifications?participating=true&per_page=30"]),
     run(["acli", "jira", "workitem", "search", "--jql", jql, "--json", "--limit", "50"]),
     Promise.all(device_spaces(rules).map((s) => device_clean(s, run))).then((x) => x.flat()),
+    device_digest(rules, run, now, said),
   ]);
   const gh = Inbox.inbox_github(json(gql, "gh") ?? {});
   if (gh.error !== undefined) {
@@ -144,9 +145,31 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
   const tickets = json(jira, "acli");
   const inbox: Inbox.Inbox = {
     at: now.getTime(), login: gh.login, reviews: gh.reviews, mine: gh.mine, merged: gh.merged, today: gh.today,
-    tickets: tickets === null ? null : Inbox.inbox_tickets(tickets), clean, notes: Inbox.inbox_notes(json(notes, "gh") ?? []), errors,
+    tickets: tickets === null ? null : Inbox.inbox_tickets(tickets), clean, notes: Inbox.inbox_notes(json(notes, "gh") ?? []), errors, digest,
   };
   return { $: "inbox", inbox };
+}
+
+// the team digest: the spaces' GitHub repos (their origin), their PRs
+// merged this week and open; none on GitHub: null
+async function device_digest(rules: Rules, run: Exec, now: Date, said: (tool: string, r: { out: string }) => void): Promise<Inbox.Digest | null> {
+  const remotes = await Promise.all(device_spaces(rules).map((s) => run(["git", "-C", s, "remote", "get-url", "origin"])));
+  const repos = [...new Set(remotes.filter((r) => r.code === 0).map((r) => Inbox.inbox_repo(r.out)).filter((r): r is string => r !== null))];
+  if (repos.length === 0) {
+    return null;
+  }
+  const vars = Object.entries(Inbox.digest_vars(repos, now)).flatMap(([k, v]) => ["-f", k + "=" + v]);
+  const r = await run(["gh", "api", "graphql", "-f", "query=" + Inbox.DIGEST, ...vars]);
+  if (r.code !== 0) {
+    said("gh", r);
+    return null;
+  }
+  try {
+    return Inbox.inbox_digest(JSON.parse(r.out), repos);
+  } catch {
+    said("gh", { out: "unreadable digest" });
+    return null;
+  }
 }
 
 // a space's worktrees to clean up: uncommitted changes, or a merged branch

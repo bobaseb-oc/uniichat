@@ -124,7 +124,7 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   const exec: Device.Exec = async (cmd) => {
     ran.push(cmd);
     const line = cmd.join(" ");
-    if (line.startsWith("gh api graphql")) {
+    if (line.startsWith("gh api graphql") && !line.includes("digest")) {
       return { code: 0, out: JSON.stringify({ data: { viewer: { login: "me" }, reviews: { nodes: [] }, mine: { nodes: [pr] }, merged: { issueCount: 4 }, today: { issueCount: 1 } } }) };
     }
     if (line.startsWith("gh api notifications")) {
@@ -135,6 +135,12 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
     }
     if (line.includes("worktree list")) {
       return { code: 0, out: "worktree /s\nbranch refs/heads/main\n\nworktree /s/.wt/x\nbranch refs/heads/x\n\nworktree /s/.wt/y\nbranch refs/heads/y\n\nworktree /s/.wt/z\nbranch refs/heads/z\n" };
+    }
+    if (line.includes("remote get-url")) {
+      return { code: 0, out: "git@github.com:o/s.git\n" };
+    }
+    if (line.startsWith("gh api graphql") && line.includes("digest")) {
+      return { code: 0, out: JSON.stringify({ data: { merged: { nodes: [{ number: 9, title: "M", url: "https://github.com/o/s/pull/9", repository: { nameWithOwner: "o/s" }, author: { login: "bo" }, mergedAt: "2026-11-11T00:00:00Z" }] }, open: { nodes: [] } } }) };
     }
     if (line.includes("rev-parse")) {
       return { code: 0, out: "origin/main\n" };
@@ -155,6 +161,7 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   expect([inbox.merged, inbox.today]).toEqual([4, 1]);
   expect(inbox.notes.map((n: any) => n.kind)).toEqual(["assign"]);
   expect(inbox.tickets).toBe(null);
+  expect(inbox.digest).toMatchObject({ repos: ["o/s"], merged: [{ number: 9, author: "bo" }], open: [] });
   expect(inbox.errors).toEqual(["acli: ✗ Error: unauthorized: use 'acli jira auth login' to authenticate"]);
   // x has changes, y is merged and clean, z is clean and not merged (left out)
   expect(inbox.clean).toEqual([
@@ -168,4 +175,9 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   const none = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, async (cmd) => (cmd[0] === "gh" ? { code: 127, out: "not found" } : exec(cmd)), new Date()) as any;
   expect(none.inbox.errors.some((e: string) => e.startsWith("gh: "))).toBe(true);
   expect(none.inbox.mine).toEqual([]);
+  // no space on GitHub: no digest, and its search not run
+  ran.length = 0;
+  const bare = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, exec, new Date()) as any;
+  expect(bare.inbox.digest).toBe(null);
+  expect(ran.some((c) => c.join(" ").includes("query digest"))).toBe(false);
 });

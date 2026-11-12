@@ -68,6 +68,19 @@ The ` + title.toLowerCase() + `.
     merged: 28,
     today: 1,
     errors: [],
+    digest: {
+      repos: ["acme/agent-foundations"],
+      merged: [
+        ["ryan", 776, "Explainers generator and read-only runner"],
+        ["ryan", 774, "1.x CI made green and fast"],
+        ["ryan", 780, "Backtest drain and release pipeline"],
+        ["you", 747, "Checks-authoring eval suite and runner"],
+        ["you", 746, "Per-run quality record in Postgres"],
+        ["evan", 763, "ReviewAI as its own agent"],
+        ["chris", 807, "Known-differences table built from explainer results"]
+      ].map(([author, number, title]) => ({ repo: "acme/agent-foundations", number, title, url: "https://github.com/acme/agent-foundations/pull/" + number, author, at: at(30) })),
+      open: [{ repo: "acme/agent-foundations", number: 808, title: "Step-by-step calculation when one method explains over half a break", url: "https://github.com/acme/agent-foundations/pull/808", author: "chris", at: at(50) }]
+    },
     reviews: [
       pr("acme/agent-foundations", 766, "AO-10787 Add the 8 new custodians to the playbooks", "pending", 1, { author: "yiqun" }),
       pr("acme/agent-foundations", 760, "AO-10106 Regenerate the position catalogue", "blocked", 120, { author: "bob" }),
@@ -1247,6 +1260,7 @@ function view_new() {
     heard: null,
     alerted: new Map,
     inbox: null,
+    themes: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1268,6 +1282,10 @@ function view_hear(v, msg) {
     }
     case "inbox": {
       v.inbox = msg.inbox;
+      return [];
+    }
+    case "themes": {
+      v.themes = msg.themes.by;
       return [];
     }
     case "zoom":
@@ -1448,6 +1466,9 @@ function view_act(v, act) {
     }
     case "Archive": {
       return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Themes": {
+      return [{ $: "themes" }];
     }
     case "Routine": {
       const { $, ...op } = act;
@@ -2494,6 +2515,11 @@ function palette(v, q) {
   const starts = (i) => i.label.toLowerCase().startsWith(words[0]);
   return [...hits.filter(starts), ...hits.filter((i) => !starts(i))];
 }
+function digest_groups(prs) {
+  const by = new Map;
+  prs.forEach((p) => by.set(p.author, [...by.get(p.author) ?? [], p]));
+  return [...by.entries()].map(([author, list]) => ({ author, prs: list })).sort((a, b) => b.prs.length - a.prs.length || a.author.localeCompare(b.author));
+}
 
 // web/src/Pages.ts
 var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
@@ -2627,6 +2653,22 @@ function routines_html(v, now) {
   const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
   const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
   return [head, ...rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows, form];
+}
+function digest_html(v) {
+  const d = v.inbox?.digest ?? null;
+  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })}>Refresh</button>`;
+  if (d === null) {
+    return [`<div class="phead"><h2>Digest</h2><p class="meta">No digest yet: a device reads it from your spaces' GitHub repos (UNII_SPACES on the device, else its home repo).</p>${refresh}</div>`];
+  }
+  const head = `<div class="phead"><h2>${esc(d.repos.join(", "))}: last 7 days</h2><p class="meta">${d.merged.length} merged · ${d.open.length} open</p>` + `<button class="pbtn"${act_html2({ $: "Themes" })} title="one call to the compactor's model">Summarize by theme</button>${refresh}</div>`;
+  const pr = (p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a> <span class="meta">#${p.number}</span></li>`;
+  const merged = digest_groups(d.merged).map((g) => {
+    const themes = v.themes?.[g.author];
+    const lines = themes !== undefined && themes.length > 0 ? themes.map((t) => `<li>${esc(t)}</li>`).join("") : g.prs.map(pr).join("");
+    return `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${lines}</ul></div>`;
+  });
+  const open2 = digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
+  return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open2.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
 }
 
 // web/src/main.ts
@@ -3564,6 +3606,10 @@ function page_bars(mode) {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "digest") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), digest_html(v));
   } else if (mode === "routines") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

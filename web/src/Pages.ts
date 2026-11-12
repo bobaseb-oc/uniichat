@@ -201,3 +201,27 @@ export function routines_html(v: View.View, now: number): string[] {
     + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${Routines.TASK}"></textarea><button class="pbtn">Add</button></form>`;
   return [head, ...(rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows), form];
 }
+
+// Digest
+// ======
+
+// the team digest: the repos and the week; merged by author (their themes
+// if summarized, else their PRs), then open ones; Summarize by theme,
+// Refresh
+export function digest_html(v: View.View): string[] {
+  const d = v.inbox?.digest ?? null;
+  const refresh = `<button class="pbtn"${act_html({ $: "Fetch" })}>Refresh</button>`;
+  if (d === null) {
+    return [`<div class="phead"><h2>Digest</h2><p class="meta">No digest yet: a device reads it from your spaces' GitHub repos (UNII_SPACES on the device, else its home repo).</p>${refresh}</div>`];
+  }
+  const head = `<div class="phead"><h2>${esc(d.repos.join(", "))}: last 7 days</h2><p class="meta">${d.merged.length} merged · ${d.open.length} open</p>`
+    + `<button class="pbtn"${act_html({ $: "Themes" })} title="one call to the compactor's model">Summarize by theme</button>${refresh}</div>`;
+  const pr = (p: { title: string; url: string; number: number; repo: string }) => `<li><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a> <span class="meta">#${p.number}</span></li>`;
+  const merged = Cockpit.digest_groups(d.merged).map((g) => {
+    const themes = v.themes?.[g.author];
+    const lines = themes !== undefined && themes.length > 0 ? themes.map((t) => `<li>${esc(t)}</li>`).join("") : g.prs.map(pr).join("");
+    return `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${lines}</ul></div>`;
+  });
+  const open = Cockpit.digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
+  return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
+}

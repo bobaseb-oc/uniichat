@@ -133,3 +133,25 @@ test("the sidebar and the palette", async () => {
   expect(list).toContain("AO-1 &lt;fix&gt;");
   expect(Pages.palette_html([], 0).join("")).toContain("Nothing matches");
 });
+
+// the team digest (Pages.digest_html): merged by author (most first), each
+// author's themes if summarized, else their PRs; open ones; Summarize by
+// theme and Refresh; none yet: how
+test("the digest: merged by author, themes or PRs, open ones, its acts", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(Pages.digest_html(v).join("")).toContain("No digest yet");
+  const d = (n: number, author: string) => ({ repo: "o/r", number: n, title: "T" + n + " <x>", url: "https://github.com/o/r/pull/" + n, author, at: "" });
+  v.inbox = inbox({ digest: { repos: ["o/r"], merged: [d(1, "bo"), d(2, "ann"), d(3, "ann")], open: [d(4, "cy")] } });
+  expect(Cockpit.digest_groups(v.inbox.digest!.merged).map((g) => [g.author, g.prs.length])).toEqual([["ann", 2], ["bo", 1]]);
+  const html = Pages.digest_html(v).join("");
+  expect(html.indexOf(">ann<")).toBeLessThan(html.indexOf(">bo<"));
+  expect(html).toContain("T2 &lt;x&gt;");
+  expect(html).toContain('href="https://github.com/o/r/pull/4"');
+  expect(html).toContain(act({ $: "Themes" }));
+  expect(html).toContain(act({ $: "Fetch" }));
+  v.themes = { ann: ["Login <fixes> (#2, #3)"] };
+  const themed = Pages.digest_html(v).join("");
+  expect(themed).toContain("Login &lt;fixes&gt; (#2, #3)");
+  expect(themed.slice(themed.indexOf(">ann<"), themed.indexOf(">bo<"))).not.toContain("T2 &lt;x&gt;");
+});

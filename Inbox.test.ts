@@ -120,3 +120,21 @@ test("the server's check: a whole report kept; lists capped; long text cut; bad 
   // a field the report doesn't have isn't kept
   expect("extra" in (Inbox.inbox_check(report({ extra: 1 })) as any)).toBe(false);
 });
+
+// the team digest (Herdr's "last 7 days"): the spaces' GitHub repos from
+// their remotes; one search for merged PRs since a week ago, one for open;
+// read, and checked with the rest of the report (none: null)
+test("the digest: repos from remotes, the searches, PRs read, checked with the report", () => {
+  expect(Inbox.inbox_repo("git@github.com:OnCorps/agent-foundations.git\n")).toBe("OnCorps/agent-foundations");
+  expect(Inbox.inbox_repo("https://github.com/o/r")).toBe("o/r");
+  expect(Inbox.inbox_repo("https://gitlab.com/o/r.git")).toBe(null);
+  const vars = Inbox.digest_vars(["o/a", "o/b"], new Date(2026, 10, 12));
+  expect(vars).toEqual({ merged: "repo:o/a repo:o/b is:pr is:merged merged:>=2026-11-05", open: "repo:o/a repo:o/b is:pr is:open" });
+  const n = (k: number, at: string | null) => ({ number: k, title: "T" + k, url: "https://github.com/o/a/pull/" + k, repository: { nameWithOwner: "o/a" }, author: { login: "ann" }, mergedAt: at, createdAt: "2026-11-01T00:00:00Z", isDraft: false });
+  const d = Inbox.inbox_digest({ data: { merged: { nodes: [n(1, "2026-11-10T00:00:00Z"), {}] }, open: { nodes: [n(2, null)] } } }, ["o/a"]);
+  expect(d).toEqual({ repos: ["o/a"], merged: [{ repo: "o/a", number: 1, title: "T1", url: "https://github.com/o/a/pull/1", author: "ann", at: "2026-11-10T00:00:00Z" }], open: [{ repo: "o/a", number: 2, title: "T2", url: "https://github.com/o/a/pull/2", author: "ann", at: "2026-11-01T00:00:00Z" }] });
+  const base = { at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+  expect((Inbox.inbox_check(base) as Inbox.Inbox).digest).toBe(null);
+  expect((Inbox.inbox_check({ ...base, digest: d }) as Inbox.Inbox).digest).toEqual(d);
+  expect(typeof Inbox.inbox_check({ ...base, digest: { ...d, merged: [{ ...d.merged[0], url: "javascript:x" }] } })).toBe("string");
+});

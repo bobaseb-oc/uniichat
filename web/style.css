@@ -659,3 +659,11 @@ body.focus .hcols { grid-template-columns: 1fr; }
 .radd :is(input, select, textarea) { padding: 5px 8px; border: 1px solid var(--hair); border-radius: 6px; background: var(--lift); color: inherit; font: inherit; }
 .radd input[name="hours"] { width: 5em; }
 .radd .pbtn { align-self: flex-start; }
+
+/* the team digest: by author, a list each */
+.digest h3 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mid); }
+.dauthor h4 { margin: 10px 0 2px; font-size: 14px; }
+.dauthor ul { margin: 0; padding-left: 20px; }
+.dauthor li { margin: 2px 0; }
+.dauthor a { text-decoration: none; }
+.dauthor a:hover { text-decoration: underline; }

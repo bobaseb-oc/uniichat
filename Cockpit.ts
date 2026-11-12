@@ -4,7 +4,7 @@
 // markup (web/src/Pages.ts draws them): the inbox's sections and rows,
 // filtered, and what changed since the user looked.
 
-import type { Clean, Inbox, Note, Pr, Ticket } from "./Inbox.ts";
+import type { Clean, DigestPr, Inbox, Note, Pr, Ticket } from "./Inbox.ts";
 import { view_needs, view_questions, type Act, type Crew, type View } from "./View.ts";
 
 // a row: its key (a link, a path), its kind, what it says, under it (repo#n,
@@ -303,4 +303,14 @@ export function palette(v: View, q: string): Item[] {
   const hits = all.filter((i) => words.every((w) => (i.label + " " + i.hint).toLowerCase().includes(w)));
   const starts = (i: Item) => i.label.toLowerCase().startsWith(words[0]);
   return [...hits.filter(starts), ...hits.filter((i) => !starts(i))];
+}
+
+// Digest
+// ======
+
+// PRs by author, the most first (then by name)
+export function digest_groups(prs: DigestPr[]): { author: string; prs: DigestPr[] }[] {
+  const by = new Map<string, DigestPr[]>();
+  prs.forEach((p) => by.set(p.author, [...(by.get(p.author) ?? []), p]));
+  return [...by.entries()].map(([author, list]) => ({ author, prs: list })).sort((a, b) => b.prs.length - a.prs.length || a.author.localeCompare(b.author));
 }

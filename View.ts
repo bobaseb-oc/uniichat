@@ -155,6 +155,7 @@ export type View = State & {
   heard : Heard | null;
   alerted : Map<string, number>;
   inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
+  themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -182,7 +183,8 @@ export type Server =
   | { $: "jobs"; ids: string[] }
   | { $: "job"; id: string; job: unknown }
   | { $: "inbox"; inbox: Inbox | null } // the cockpit's inbox, a device's latest report (Inbox.ts)
-  | { $: "fetch" };                       // to devices: read the inbox now
+  | { $: "fetch" }                        // to devices: read the inbox now
+  | { $: "themes"; themes: { key: string; by: Record<string, string[]> } }; // the digest's themes (Chat.themes)
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -220,6 +222,7 @@ export type Client =
   | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
   | { $: "fetch" } // the inbox read anew by the devices
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
+  | { $: "themes" } // the digest's merged PRs summarized by theme
   | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
   | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
   | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
@@ -265,6 +268,7 @@ export type Act =
   | { $: "Fetch" }                              // the inbox read anew (its Refresh)
   | { $: "Archive"; names: string[] }           // agents out of the crew (Home's Archive, Archive all)
   | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
+  | { $: "Themes" }                             // the digest summarized by theme
 
 // what a page draws, top to bottom
 export type Row =
@@ -405,6 +409,7 @@ export function view_new(): View {
     heard     : null,
     alerted   : new Map(),
     inbox     : null,
+    themes    : null,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -427,6 +432,10 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "inbox": {
       v.inbox = msg.inbox;
+      return [];
+    }
+    case "themes": {
+      v.themes = msg.themes.by;
       return [];
     }
     case "zoom":
@@ -617,6 +626,9 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Archive": {
       return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Themes": {
+      return [{ $: "themes" }];
     }
     case "Routine": {
       const { $, ...op } = act;

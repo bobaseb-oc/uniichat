@@ -318,7 +318,7 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   fs.writeFileSync(dir + "/inbox.ts", INBOX);
   const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
-  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null };
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 
@@ -426,6 +426,49 @@ test("routines: added and checked, run now, run by the tick once when due, off, 
   expect(out.reviewed[0].task).toContain("Review o/r#2");
   expect(out.saved).toBe(20);
   expect(out.left).toBe(20);
+});
+
+// The digest's themes (the cockpit's Summarize by theme): one compactor
+// call over the merged PRs, its JSON kept only for the digest's authors,
+// lines capped and cut; asked again only when the digest changed; told
+// every view; none to summarize, or a reply not JSON, refused
+const THEMES = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const asks = [];
+let reply = JSON.stringify({ ann: ["Login fixes (#1, #2)", "x".repeat(900)], mallory: ["not in the digest"] });
+AskAI.ask = (ask) => { asks.push(ask.blocks.map((b) => b.text).join("")); return { send() {}, stop() {}, done: Promise.resolve({ ok: true, text: "Here: " + reply, left: [] }) }; };
+const none = await Chat.act(chat, "t0", { $: "themes" }, "");
+const pr = (n) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", at: "" });
+const inbox = (merged) => ({ at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: { repos: ["o/r"], merged, open: [] } });
+await Chat.act(chat, "i1", { $: "inbox", inbox: inbox([pr(1), pr(2)]) }, "mac");
+const ok = await Chat.act(chat, "t1", { $: "themes" }, "");
+const cached = await Chat.act(chat, "t2", { $: "themes" }, "");
+reply = "no json here";
+await Chat.act(chat, "i2", { $: "inbox", inbox: inbox([pr(1), pr(2), pr(3)]) }, "mac");
+const bad = await Chat.act(chat, "t3", { $: "themes" }, "");
+console.log(JSON.stringify({ none: "error" in none, ok, cached, bad: "error" in bad, asks, themes: sent.filter((m) => m.$ === "themes").map((m) => m.themes.by) }));
+process.exit(0);
+`;
+
+test("the digest's themes: one compactor call, its JSON checked, asked again only for a new digest", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/themes.ts", THEMES);
+  const proc = Bun.spawn([process.execPath, dir + "/themes.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ none: true, ok: {}, cached: {}, bad: true });
+  expect(out.asks.length).toBe(2);
+  expect(out.asks[0]).toContain("ann: #1 T1 (o/r)");
+  expect(out.themes.length).toBe(1);
+  expect(Object.keys(out.themes[0])).toEqual(["ann"]);
+  expect(out.themes[0].ann[0]).toBe("Login fixes (#1, #2)");
+  expect(out.themes[0].ann[1].length).toBe(200);
 });
 
 // A call waiting for the user (auto's reviewer couldn't check it): in the

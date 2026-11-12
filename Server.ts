@@ -97,9 +97,14 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // what to do once at rest as it ends (all: nothing runs) or moves (no
 // post runs); writes, held: the posts logging, one after another, and
 // the logging held meanwhile (null: none); wallet: what pays its calls
+// the team digest's themes (Chat.themes): the digest's key (its merged
+// PRs), each author's lines
+export type Themes = { key: string; by: Record<string, string[]> };
+
 type Chat = {
   status?: DeviceStatus; // the latest device's report, for the web's status line
   inbox?: Inbox.Inbox;   // the latest device's inbox (Device.device_inbox), checked
+  themes?: Themes;       // the digest's themes (Chat.themes), for the digest they were made of
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -1165,6 +1170,9 @@ export namespace Chat {
     if (chat.inbox !== undefined) {
       Chat.send(sock, { $: "inbox", inbox: chat.inbox });
     }
+    if (chat.themes !== undefined) {
+      Chat.send(sock, { $: "themes", themes: chat.themes });
+    }
     Chat.show(chat, sock);
     Chat.send(sock, { $: "live", live: chat.live });
     if (host === null) {
@@ -1368,6 +1376,9 @@ export namespace Chat {
       case "routine": {
         return Chat.routine(chat, id, msg);
       }
+      case "themes": {
+        return Chat.themes(chat);
+      }
       case "fetch": {
         Chat.all(chat, { $: "fetch" });
         return {};
@@ -1536,6 +1547,55 @@ export namespace Chat {
     chat.inbox = inbox;
     Chat.all(chat, { $: "inbox", inbox });
     Chat.automate(chat, inbox);
+    return {};
+  }
+
+  // the digest's themes: what the compactor is told, how long it may
+  // take, the most lines an author gets and characters a line
+  const THEMES = "You group a team's merged pull requests into themes. For each author, write 1 to 6 short lines, each a theme in a few plain words followed by its PR numbers in parentheses, like: \"Explainers generator, read-only runner (#776, #777)\". Use only the PRs given, and only their authors. Answer with JSON only: {\"<author>\": [\"<line>\", ...], ...}.";
+  const THEMES_MS = 90_000;
+  const THEME_LINES = 8;
+  const THEME_TEXT = 200;
+
+  // the digest's merged PRs in themes per author, by one compactor call
+  // the user asks for (Summarize by theme): its JSON kept only for the
+  // digest's authors, lines capped and cut; the same digest isn't asked
+  // again; told every view
+  export async function themes(chat: Chat): Promise<Answer> {
+    const merged = chat.inbox?.digest?.merged ?? [];
+    if (merged.length === 0) {
+      return { error: "Nothing merged to summarize yet." };
+    }
+    const key = merged.map((p) => p.url).sort().join(" ");
+    if (chat.themes?.key === key) {
+      return {};
+    }
+    const text = merged.map((p) => p.author + ": #" + p.number + " " + p.title + " (" + p.repo + ")").join("\n");
+    let end: { ok: boolean; text: string } | null;
+    try {
+      const call = AskAI.ask({ ...Pick.ask(config.COMPACTOR), system: THEMES, blocks: [{ text, mark: false }], searches: 0, server: "", bill: chat.mem.pay?.("chat", "themes") }, () => {});
+      const late = new Promise<null>((done) => setTimeout(() => done(null), THEMES_MS).unref?.());
+      end = await Promise.race([call.done.catch(() => null), late]);
+      if (end === null) {
+        call.stop();
+      }
+    } catch {
+      end = null;
+    }
+    const authors = new Set(merged.map((p) => p.author));
+    const by: Record<string, string[]> = {};
+    try {
+      const json = JSON.parse(/\{[\s\S]*\}/.exec(end?.ok ? end.text : "")?.[0] ?? "");
+      for (const [who, lines] of Object.entries(json ?? {})) {
+        if (authors.has(who) && Array.isArray(lines)) {
+          by[who] = lines.filter((l): l is string => typeof l === "string").slice(0, THEME_LINES).map((l) => l.trim().slice(0, THEME_TEXT));
+        }
+      }
+    } catch {
+      return { error: "The summary didn't come back right" + (end?.ok === false ? ": " + end.text.slice(0, 200) : "") + "." };
+    }
+    chat.themes = { key, by };
+    Chat.all(chat, { $: "themes", themes: chat.themes });
     return {};
   }
 

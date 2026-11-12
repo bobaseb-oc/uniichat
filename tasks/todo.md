@@ -496,8 +496,17 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       the server's reason. They run while the server runs and a view or a device is connected (Chat.free
       ends an idle chat with no socket, and its tick): said on the page. Mutants 11/11; suite 291 pass,
       3 known; tsc: one more setInterval().unref (the DOM-lib noise already known); Term.ts builds.
-- [ ] C7 team digest (#digest): merged PRs of the last 7 days in the spaces' repos by author, and open
-      ones; a theme line per author from the compactor, cached a day. → verify: tests, e2e.
+- [x] C7 team digest (#digest): merged PRs of the last 7 days in the spaces' repos by author, and open
+      ones; a theme line per author from the compactor, asked for by the user (Summarize by theme),
+      asked again only for a new digest. → verify: tests, e2e.
+      Proof: Inbox.test (repos from remotes, the searches, PRs read, checked with the report: links
+      https-only, none = null); Device.test (the spaces' origins → one digest search; no GitHub space: no
+      search); Server fixture (one compactor call, its JSON kept only for the digest's authors, lines
+      capped at 8 and cut at 200, the same digest not asked again, a reply not JSON refused, told every
+      view); Pages.test (by author, most first; themes in place of PRs once summarized; open ones; acts).
+      Live: this repo's two merged PRs read. E2E: the demo digest drawn; Summarize → the server's "Nothing
+      merged" (it holds no device's inbox). Mutants 8/8 (one test added: a device with no GitHub
+      space). Suite 294 pass, 3 known; tsc: the same setInterval().unref noise.
 - [ ] C8 (decision needed) Up next (calendar) and meeting transcripts: they need calendar/Drive
       access Legion doesn't have; a new sign-in is a Red Zone. Asked at the end.
 

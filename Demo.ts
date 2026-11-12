@@ -66,6 +66,15 @@ export function demo_inbox(now: number): Inbox {
   });
   return {
     at: now, login: "you", merged: 28, today: 1, errors: [],
+    digest: {
+      repos: ["acme/agent-foundations"],
+      merged: [
+        ["ryan", 776, "Explainers generator and read-only runner"], ["ryan", 774, "1.x CI made green and fast"], ["ryan", 780, "Backtest drain and release pipeline"],
+        ["you", 747, "Checks-authoring eval suite and runner"], ["you", 746, "Per-run quality record in Postgres"], ["evan", 763, "ReviewAI as its own agent"],
+        ["chris", 807, "Known-differences table built from explainer results"],
+      ].map(([author, number, title]) => ({ repo: "acme/agent-foundations", number: number as number, title: title as string, url: "https://github.com/acme/agent-foundations/pull/" + number, author: author as string, at: at(30) })),
+      open: [{ repo: "acme/agent-foundations", number: 808, title: "Step-by-step calculation when one method explains over half a break", url: "https://github.com/acme/agent-foundations/pull/808", author: "chris", at: at(50) }],
+    },
     reviews: [
       pr("acme/agent-foundations", 766, "AO-10787 Add the 8 new custodians to the playbooks", "pending", 1, { author: "yiqun" }),
       pr("acme/agent-foundations", 760, "AO-10106 Regenerate the position catalogue", "blocked", 120, { author: "bob" }),

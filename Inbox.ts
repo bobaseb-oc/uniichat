@@ -31,13 +31,18 @@ export type Clean = { repo: string; path: string; branch: string | null; changes
 export const KINDS = ["review", "assign", "mention", "ci", "security", "other"] as const;
 export type Note = { kind: (typeof KINDS)[number]; title: string; repo: string; url: string; at: string; unread: boolean };
 
+// the team digest (Herdr's "last 7 days"): the spaces' GitHub repos, their
+// PRs merged since a week ago and open now (at: merged, else opened)
+export type DigestPr = { repo: string; number: number; title: string; url: string; author: string; at: string };
+export type Digest = { repos: string[]; merged: DigestPr[]; open: DigestPr[] };
+
 // a device's report: when (ms), whose (GitHub login), the review requests,
 // the user's open PRs, how many merged this week and today, Jira's (null:
 // acli missing or signed out), worktrees to clean, notifications, and what
-// failed to be read
+// failed to be read, the team digest (null: no space on GitHub)
 export type Inbox = {
   at: number; login: string; reviews: Pr[]; mine: Pr[]; merged: number; today: number;
-  tickets: Ticket[] | null; clean: Clean[]; notes: Note[]; errors: string[];
+  tickets: Ticket[] | null; clean: Clean[]; notes: Note[]; errors: string[]; digest?: Digest | null;
 };
 
 // the most kept of a list; a field's and a body's most characters
@@ -154,6 +159,34 @@ export function inbox_notes(json: any): Note[] {
   });
 }
 
+// a remote's GitHub repo (owner/name), else none
+export function inbox_repo(remote: string): string | null {
+  const m = /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?\s*$/.exec(remote.trim());
+  return m === null ? null : m[1];
+}
+
+// the digest's query: PRs merged in the repos since a week ago, and open
+export const DIGEST = `query digest($merged:String!,$open:String!){
+  merged: search(query:$merged,type:ISSUE,first:100){ nodes{ ...d ... on PullRequest{ mergedAt } } }
+  open: search(query:$open,type:ISSUE,first:100){ nodes{ ...d } }
+}
+fragment d on PullRequest { number title url createdAt repository{ nameWithOwner } author{ login } }`;
+
+export function digest_vars(repos: string[], now: Date): Record<string, string> {
+  const week = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+  const where = repos.map((r) => "repo:" + r).join(" ");
+  return { merged: where + " is:pr is:merged merged:>=" + day(week), open: where + " is:pr is:open" };
+}
+
+// the digest's answer read
+export function inbox_digest(res: any, repos: string[]): Digest {
+  const prs = (s: any): DigestPr[] => ((s?.nodes ?? []) as any[]).filter((n) => Number.isInteger(n?.number)).map((n) => ({
+    repo: String(n.repository?.nameWithOwner ?? ""), number: n.number, title: String(n.title ?? ""), url: String(n.url ?? ""),
+    author: String(n.author?.login ?? ""), at: String(n.mergedAt ?? n.createdAt ?? ""),
+  }));
+  return { repos, merged: prs(res?.data?.merged), open: prs(res?.data?.open) };
+}
+
 // Check
 // =====
 // A device's report is the only way the inbox reaches a view, so the
@@ -208,6 +241,10 @@ function pr(p: any): Pr {
   };
 }
 
+function dpr(p: any): DigestPr {
+  return { repo: str(p?.repo), number: num(p?.number), title: str(p?.title), url: link(p?.url), author: str(p?.author), at: str(p?.at, 60) };
+}
+
 // a device's report checked: the inbox kept, or why it's refused
 export function inbox_check(x: any): Inbox | string {
   try {
@@ -223,6 +260,10 @@ export function inbox_check(x: any): Inbox | string {
       clean: list(x.clean, (c) => ({ repo: str(c?.repo), path: str(c?.path), branch: c?.branch === null ? null : str(c?.branch), changes: num(c?.changes), merged: bool(c?.merged) })),
       notes: list(x.notes, (n) => ({ kind: one(n?.kind, KINDS), title: str(n?.title), repo: str(n?.repo), url: link(n?.url), at: str(n?.at, 60), unread: bool(n?.unread) })),
       errors: list(x.errors, (e) => str(e)),
+      digest: x.digest === undefined || x.digest === null ? null : {
+        repos: list(x.digest.repos, (r) => str(r)),
+        merged: list(x.digest.merged, dpr), open: list(x.digest.open, dpr),
+      },
     };
   } catch (err) {
     if (err instanceof Bad) {
