@@ -310,3 +310,15 @@ test("a turn waits on summaries a down vendor won't build only so long, told why
   await completes(mem);
   expect(mem.trouble).toBeNull();
 }));
+
+// each request's usage told to its asker (Ask.used), as the vendor told it:
+// what the cockpit's per-agent cost is estimated from; billing untouched
+test("a request's usage is told to its asker", () => fast(async () => {
+  broke = false;
+  const used: any[] = [];
+  const end = await AskAI.ask({ ...SHARE, blocks: [{ text: "hi", mark: true }], used: (u) => used.push(u) }, () => {}).done;
+  expect(end.ok).toBe(true);
+  expect(used.length).toBe(1);
+  expect(used[0].run.model).toBe("claude-opus-5-5");
+  expect(used[0].use.output).toBe(100);
+}));

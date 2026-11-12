@@ -109,6 +109,7 @@ test("a device reports the folder Unii works in and its branch", () => {
   const s = Device.device_status({ work: "/nowhere", home: repo, computer: false }, Date.now()) as any;
   expect(s).toMatchObject({ $: "status", dir: repo.split("/").pop(), branch: "trunk" });
   expect(typeof s.stale).toBe("boolean");
+  expect(s.week === null || typeof s.week === "number").toBe(true); // the last 7 days' spend (Cost.cost_week)
   const none = Device.device_status({ work: os.tmpdir(), computer: false }, Date.now()) as any;
   expect(none).toMatchObject({ dir: "main", branch: null });
 });

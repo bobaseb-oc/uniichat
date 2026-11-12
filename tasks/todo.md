@@ -454,11 +454,21 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       Chat and back. Fixed after looking: links styled as `.open` blocks (class clash), PR rows of
       the user folded as old. Mutants 15/15 killed (one test added for the acts). Suite 271 pass, 3
       known fails; tsc 194 → 194 (a `Page` name clash with View's agent page caught and renamed Deck).
-- [ ] C4 home (#home): greeting, "N need you · M working", stat cards (agents, reviews for you, your
+- [x] C4 home (#home): greeting, "N need you · M working", stat cards (agents, reviews for you, your
       PRs to fix, merged this week, agent spend today / 7 days), Working and Done cards (repo,
       ticket, PR, est. cost, age; Go to agent, Archive, Archive all), Apps (Inbox, Questions, Routines),
       Activity. Per-agent cost: an estimate at list price (Price.ts) from each request's usage, shown
       "≈"; billing untouched. 7-day spend: the cost cache's daily files. → verify: tests, e2e.
+      Proof: Ask.used (each request's usage, beside Ask.again; Agent.ts calls it after grant.end) →
+      Tools.spent (list price, a model with no price adds nothing) → Crew.spent; failsafe.test (the
+      fake vendor's usage told once), Tools.test. Cost.cost_week (the last 7 UTC days' caches summed)
+      → the status report's week, checked by the server (Cost/Device/Server tests). Cockpit.test 4 more
+      (greeting, line, stats, cards: Unii's own agents, working then done, ticket/PR/cost; Archive →
+      a dismiss each; apps; activity newest first); Pages.test (escaping, Archive only on done, Archive
+      all). E2E on the demo: stats, groups, 9 cards, Focus on/off, stat → #inbox, New agent → #chat with
+      "/agent " in the box, Archive → the server's refusal (demo agents aren't its own). Fixed after
+      looking: `.chip` was the account page's button class (renamed hchip). Mutants 11/11; suite 279
+      pass, 3 known; tsc 208 → 208.
 - [ ] C5 sidebar, palette, bar: a left column (search or run, page icons with badges, agents grouped
       by ticket key, spaces with their worktrees, Settings, Add machine), Ctrl+P / ⌘⇧P palette
       (pages, agents, PRs, commands, New agent), focus mode, bottom bar need you · working · ready ·

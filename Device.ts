@@ -76,7 +76,8 @@ export function device_status(rules: Rules, now: number): View.Client {
   if (spend.due) {
     Cost.cost_refresh(Cost.COST_REFRESH);
   }
-  return { $: "status", dir: path.basename(dir) || "~", branch, spend: spend.spend, stale: spend.stale };
+  const week = Cost.cost_week(Cost.COST_CACHE, now).spend;
+  return { $: "status", dir: path.basename(dir) || "~", branch, spend: spend.spend, stale: spend.stale, week };
 }
 
 // how often a device reads its inbox (ms), and the most a command it runs

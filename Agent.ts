@@ -393,6 +393,9 @@ export namespace Agent {
     const { vendor, model, effort, speed } = run.ask;
     const use = res?.ok ? Agent.used(wire.usage(st), read, json) : null;
     grant.end(use && { run: { vendor, model, effort, speed }, use });
+    if (use !== null) {
+      run.ask.used?.({ run: { vendor, model, effort, speed }, use });
+    }
     const cut = use !== null && use.output >= grant.max ? grant.cut : null;
     const tokens = use === null ? undefined : use.input + use.write + use.read;
     return { res, step: cut === null ? { ...step, tokens } : Agent.fail(cut, seen) };

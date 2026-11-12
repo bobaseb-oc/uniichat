@@ -116,3 +116,62 @@ test("the cockpit's acts: Review sends the PRs' links, how, and whether as Claud
   View.view_hear(v, { $: "inbox", inbox: null });
   expect(v.inbox).toBe(null);
 });
+
+// Home
+// ----
+
+const agent = (name: string, status: View.Status, over: Partial<View.Crew> = {}): View.Crew => ({ name, parent: "main", tier: "worker", model: "m", status, since: NOW - 120e3, ...over });
+
+test("home: a greeting by the hour; who needs the user and who works", () => {
+  expect(Cockpit.home_greeting(new Date(2026, 10, 12, 9))).toBe("Good morning");
+  expect(Cockpit.home_greeting(new Date(2026, 10, 12, 13))).toBe("Good afternoon");
+  expect(Cockpit.home_greeting(new Date(2026, 10, 12, 19))).toBe("Good evening");
+  const v = View.view_new();
+  expect(Cockpit.home_line(v)).toBe("no agent needs you · 0 working");
+  v.crew = [agent("A", "working"), agent("B", "failed"), agent("C", "asking", { tier: "claude" }), agent("D", "working", { parent: "A" })];
+  v.questions = [{ id: 1, text: "q", at: 0, date: "" }];
+  expect(Cockpit.home_line(v)).toBe("3 need you · 2 working");
+});
+
+test("home: the stat cards: agents, reviews for you, your PRs to fix, merged this week, agent spend", () => {
+  const v = View.view_new();
+  v.crew = [agent("A", "working"), agent("B", "done"), agent("C", "done", { parent: "A" })];
+  v.inbox = inbox({ reviews: [pr(), pr({ number: 2, you: false })], mine: [pr({ number: 3, state: "failing" }), pr({ number: 4 })], merged: 28, today: 1 });
+  v.status = { device: "mac", dir: "x", branch: null, spend: 2.5, stale: false, week: 17.94 };
+  expect(Cockpit.home_stats(v).map((s) => [s.label, s.value, s.sub])).toEqual([
+    ["Agents", "3", "1 working · 2 done"],
+    ["Reviews for you", "1", "1 for your team"],
+    ["Your PRs", "2", "1 to fix"],
+    ["Merged this week", "28", "1 today"],
+    ["Agent spend", "$17.94", "$2.50 today"],
+  ]);
+  const none = Cockpit.home_stats(View.view_new()).map((s) => s.value);
+  expect(none).toEqual(["0", "–", "–", "–", "–"]);
+});
+
+test("home: agent cards (Unii's own), working then done; their repo, ticket, PR, estimated cost; Archive all takes the done", () => {
+  const v = View.view_new();
+  v.crew = [
+    agent("A", "working", { title: "review o/r#5 for AO-10852", repos: ["r"], spent: 2.437 }),
+    agent("B", "done", { title: "fix the login AO-1201" }),
+    agent("C", "failed"),
+    agent("D", "working", { parent: "A" }),
+  ];
+  const { working, done } = Cockpit.home_cards(v, NOW);
+  expect(working.map((c) => c.name)).toEqual(["A"]);
+  expect(working[0]).toMatchObject({ title: "review o/r#5 for AO-10852", repo: "r", ticket: "AO-10852", pr: "#5", cost: "≈$2.44", age: "2m", under: 1 });
+  expect(done.map((c) => [c.name, c.ticket, c.cost])).toEqual([["B", "AO-1201", ""], ["C", null, ""]]);
+  expect(View.view_act(v, { $: "Archive", names: ["B", "C"] })).toEqual([{ $: "dismiss", name: "B" }, { $: "dismiss", name: "C" }]);
+});
+
+test("home: the apps' lines and the activity, newest first", () => {
+  const v = View.view_new();
+  expect(Cockpit.home_apps(v)).toEqual({ inbox: "not read yet", questions: "none open", routines: "none scheduled" });
+  v.inbox = inbox({ mine: [pr({ state: "failing" })], notes: [
+    { kind: "assign", title: "old", repo: "o/r", url: "https://github.com/x", at: "2026-11-10T00:00:00Z", unread: false },
+    { kind: "review", title: "new", repo: "o/r", url: "https://github.com/y", at: "2026-11-12T00:00:00Z", unread: true },
+  ] });
+  v.questions = [{ id: 1, text: "q", at: 0, date: "" }];
+  expect(Cockpit.home_apps(v)).toMatchObject({ inbox: "1 PR failing", questions: "1 open" });
+  expect(Cockpit.home_activity(v).map((n) => n.title)).toEqual(["new", "old"]);
+});

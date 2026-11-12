@@ -567,3 +567,39 @@ details.old summary { padding: 4px 26px; color: var(--mid); font-size: 12.5px; c
 #picks .cc { display: block; margin: 8px 0; font-size: 12.5px; }
 #picks .acts { display: flex; flex-wrap: wrap; gap: 6px; }
 #picks .meta { margin: 2px 0 0; color: var(--mid); font-size: 12.5px; }
+
+/* Home: the head, the stat cards in a row, the agents' cards beside the
+   apps and the activity */
+#page .phead.home { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 8px; }
+#page .phead.home > p:first-child, #page .phead.home h2, #page .phead.home > p:nth-of-type(2) { grid-column: 1; }
+#page .phead.home h2 { font-size: 26px; }
+#page .phead.home .pbtn { grid-row: 1 / span 3; align-self: center; }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 14px 0 18px; }
+.stat { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 10px; text-decoration: none; }
+.stat:hover { background: var(--block); }
+.stat b { font: 600 26px/1.2 var(--brand); }
+.stat .meta { font-size: 12.5px; }
+.hcols { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+.hgroup { margin-bottom: 16px; }
+.hgh { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mid); }
+.hgh .n { flex: 1; font: 500 12px var(--mono); }
+.hcard { margin-bottom: 8px; padding: 10px 12px; border: 1px solid var(--hair); border-left: 3px solid var(--hair); border-radius: 10px; }
+.hcard.working { border-left-color: #d29922; }
+.hcard.failed { border-left-color: var(--del); }
+.hcard.done { border-left-color: var(--accent); }
+.hc1 { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.hc1 .age { margin-left: auto; color: var(--soft); font: 12px var(--mono); }
+.ht { display: block; margin: 4px 0; font-weight: 600; }
+.hc2 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.hc3 { display: flex; gap: 6px; margin-top: 8px; }
+.hchip { padding: 0 7px; border-radius: 6px; background: var(--block); color: var(--mid); font: 12px/18px var(--mono); }
+.hchip.who { color: var(--accent); }
+.cost { color: var(--mid); font: 12px var(--mono); }
+.hside section { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--hair); border-radius: 10px; }
+.hside h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mid); }
+.hside .app, .hside .act { display: flex; gap: 8px; align-items: baseline; padding: 3px 4px; border-radius: 6px; text-decoration: none; }
+.hside .app:hover, .hside .act:hover { background: var(--block); }
+.hside .app b { width: 6.5em; font-weight: 500; }
+.hside .act .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hside .act .mk { width: 1em; color: var(--mid); }
+@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .hcols { grid-template-columns: 1fr; } }

@@ -5,7 +5,7 @@
 // filtered, and what changed since the user looked.
 
 import type { Clean, Inbox, Note, Pr, Ticket } from "./Inbox.ts";
-import type { Crew } from "./View.ts";
+import { view_needs, view_questions, type Crew, type View } from "./View.ts";
 
 // a row: its key (a link, a path), its kind, what it says, under it (repo#n,
 // a ticket's status), a tag and its tone, its age; what it is
@@ -130,5 +130,96 @@ export function inbox_badge(inbox: Inbox | null): number {
   if (inbox === null) {
     return 0;
   }
-  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => ["failing", "conflicts", "changes"].includes(p.state)).length;
+  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => FIX.includes(p.state)).length;
+}
+
+// Home
+// ====
+// Herdr's digest: a greeting, who needs the user, the stat cards, Unii's
+// own agents as cards (working, then done), the apps' lines, the
+// activity. An agent's cost is an estimate at list price (Tools.spent).
+
+// the greeting by the local hour
+export function home_greeting(now: Date): string {
+  const h = now.getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+// what needs the user: agents asking or failed, open questions, calls
+// waiting, a plan to approve
+function needing(v: View): number {
+  return view_needs(v).length + view_questions(v).length + (v.calls ?? []).length + (v.plan ? 1 : 0);
+}
+
+// "3 need you · 2 working"
+export function home_line(v: View): string {
+  const need = needing(v);
+  const working = v.crew.filter((c) => c.status === "working").length;
+  return (need === 0 ? "no agent needs you" : need + " need you") + " · " + working + " working";
+}
+
+// a stat card: what, its number, under it, where a click goes
+export type Stat = { label: string; value: string; sub: string; href: string };
+
+const usd = (x: number) => "$" + x.toFixed(2);
+
+export function home_stats(v: View): Stat[] {
+  const crew = v.crew;
+  const inbox = v.inbox;
+  const working = crew.filter((c) => c.status === "working" || c.status === "waiting" || c.status === "asking").length;
+  const you = inbox?.reviews.filter((p) => p.you).length ?? 0;
+  const fix = inbox?.mine.filter((p) => FIX.includes(p.state)).length ?? 0;
+  const week = v.status?.week ?? null;
+  const today = v.status?.spend ?? null;
+  return [
+    { label: "Agents", value: String(crew.length), sub: working + " working · " + (crew.length - working) + " done", href: "#crew" },
+    { label: "Reviews for you", value: inbox === null ? "–" : String(you), sub: inbox === null ? "" : inbox.reviews.length - you + " for your team", href: "#inbox" },
+    { label: "Your PRs", value: inbox === null ? "–" : String(inbox.mine.length), sub: inbox === null ? "" : fix + " to fix", href: "#inbox" },
+    { label: "Merged this week", value: inbox === null ? "–" : String(inbox.merged), sub: inbox === null ? "" : inbox.today + " today", href: "#digest" },
+    { label: "Agent spend", value: week === null ? "–" : usd(week), sub: today === null ? "" : usd(today) + " today", href: "#home" },
+  ];
+}
+
+// a PR's states that ask for a fix
+export const FIX = ["failing", "conflicts", "changes"];
+
+// a ticket key in a text (AO-10852), or none
+export function ticket_of(text: string): string | null {
+  return /\b[A-Z][A-Z0-9]{1,9}-\d+\b/.exec(text)?.[0] ?? null;
+}
+
+// an agent's card: its name, title, first repo, ticket, PR, estimated
+// cost, age, status, how many agents under it
+export type Card = { name: string; title: string; repo: string | null; ticket: string | null; pr: string | null; cost: string; age: string; status: Crew["status"]; under: number };
+
+// Unii's own agents (the crew's top), working (or waiting, asking) first,
+// then done (done, stopped, failed)
+export function home_cards(v: View, now: number): { working: Card[]; done: Card[] } {
+  const top = v.crew.filter((c) => c.parent === "main");
+  const under = (name: string): number => v.crew.filter((c) => c.parent === name).reduce((n, c) => n + 1 + under(c.name), 0);
+  const card = (c: Crew): Card => {
+    const title = c.title ?? c.name;
+    return {
+      name: c.name, title, repo: c.repos?.[0] ?? null, ticket: ticket_of(title), pr: /#(\d+)\b/.exec(title)?.[0] ?? null,
+      cost: c.spent === undefined ? "" : "≈" + usd(c.spent), age: c.since === 0 ? "" : age(now - c.since), status: c.status, under: under(c.name),
+    };
+  };
+  const live = (c: Crew) => c.status === "working" || c.status === "waiting" || c.status === "asking";
+  return { working: top.filter(live).map(card), done: top.filter((c) => !live(c)).map(card) };
+}
+
+// the apps' lines: the inbox's (PRs failing), the questions', the routines'
+export function home_apps(v: View, routines = 0): { inbox: string; questions: string; routines: string } {
+  const failing = v.inbox?.mine.filter((p) => p.state === "failing").length ?? 0;
+  const open = view_questions(v).length;
+  return {
+    inbox: v.inbox === null ? "not read yet" : failing === 0 ? "nothing failing" : failing + " PR" + (failing === 1 ? "" : "s") + " failing",
+    questions: open === 0 ? "none open" : open + " open",
+    routines: routines === 0 ? "none scheduled" : routines + " scheduled",
+  };
+}
+
+// the inbox's notifications, newest first, the 12 last
+export function home_activity(v: View): Note[] {
+  return [...(v.inbox?.notes ?? [])].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
 }

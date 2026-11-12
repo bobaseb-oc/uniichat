@@ -25,7 +25,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AskAI, type Ask, type Bill, type Block, type Call, type Event, type Kind, type Pay } from "./AskAI.ts";
+import { AskAI, type Ask, type Bill, type Block, type Call, type Event, type Kind, type Pay, type Used } from "./AskAI.ts";
 import type { Out } from "./Agent.ts";
 import { report_text } from "./Call.ts";
 import { clip_page } from "./Clip.ts";
@@ -37,6 +37,7 @@ import { Memory, type Seen } from "./Memory.ts";
 import { ABOUT, Modes } from "./Modes.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
+import { Price } from "./Price.ts";
 import { Search } from "./Search.ts";
 import type { Crew, Live, Pulse, Question, Status, Todo, Waiting } from "./View.ts";
 
@@ -77,6 +78,7 @@ export type Agent = {
   hidden? : boolean; // dismissed from the crew (View.ts) by the person
   asks?   : boolean; // a Claude Code worker waiting for the person's approval
   task?   : string;  // a Claude Code worker's task, as it was given
+  spent?  : number;  // its requests' cost so far, an estimate at list price (USD; Tools.spent)
   title?  : string;  // its goal, as the person sees it (Tools.label)
   repos?  : string[]; // the repos its work touches (Tools.label)
   todo?   : Todo[];  // its checklist, as it set it last (Tools.todo)
@@ -906,7 +908,7 @@ export namespace Tools {
       const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
       const status = Tools.status(tools, a);
       const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
-      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }), ...(a.todo === undefined ? {} : { todo: a.todo }) };
+      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }), ...(a.todo === undefined ? {} : { todo: a.todo }), ...(a.spent === undefined ? {} : { spent: a.spent }) };
       return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0, ...label };
     });
   }
@@ -1320,6 +1322,17 @@ export namespace Tools {
     }
   }
 
+  // a request of an agent's, its usage added to its cost: an estimate at
+  // list price (Price.ts), for the cockpit; a model with no price adds
+  // nothing. Billing is the payer's (Tools.bill), untouched
+  export function spent(agent: Agent, used: Used): void {
+    try {
+      agent.spent = (agent.spent ?? 0) + Price.cost(used.run.model, used.use) / 1e6;
+    } catch {
+      return;
+    }
+  }
+
   // what pays an agent's calls
   export function bill(tools: Tools, agent: Agent): Bill | undefined {
     return tools.pay?.(agent.role.$ === "sub" ? "agent" : "computer", agent.name);
@@ -1340,7 +1353,7 @@ export namespace Tools {
         const system = Tools.system(role.tier === "manager" ? MGR : SUB);
         const blocks = [...seen.view, Tools.devices(tools), seen.log];
         const effort = role.effort ?? run.effort;
-        return { ...run, effort, system, blocks, searches: SEARCHES, server, bill };
+        return { ...run, effort, system, blocks, searches: SEARCHES, server, bill, used: (u) => Tools.spent(agent, u) };
       }
       case "cli": {
         throw new Error("Claude Code runs on its device, asked nothing here");
@@ -1348,7 +1361,7 @@ export namespace Tools {
       case "hands": {
         const run = Pick.ask(tools.hooks.pick());
         const system = Tools.system(HANDS.replace("{device}", role.device));
-        return { ...run, system, blocks: [...seen.view, seen.log], searches: 0, server, bill };
+        return { ...run, system, blocks: [...seen.view, seen.log], searches: 0, server, bill, used: (u) => Tools.spent(agent, u) };
       }
     }
   }

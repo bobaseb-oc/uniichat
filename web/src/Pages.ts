@@ -107,3 +107,34 @@ export function picks_html(sections: Cockpit.Section[], picks: Set<string>, clau
     + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>`
     + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
 }
+
+// Home
+// ====
+
+function card_html(c: Cockpit.Card, archive: boolean): string {
+  const chips = [c.repo, c.ticket, c.pr].filter((x): x is string => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
+  const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
+  const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
+  return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc(c.name)}</span><span class="meta">${esc(c.status)}</span><span class="age">${esc(c.age)}</span></div>`
+    + `<b class="ht">${esc(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
+}
+
+const KIND_MARK: Record<string, string> = { review: "◎", assign: "▣", mention: "@", ci: "✗", security: "⚠", other: "•" };
+
+// Home: the head (date, greeting, who needs the user; New agent, Focus),
+// the stats, Unii's agents working then done, the apps, the activity
+export function home_html(v: View.View, now: Date, routines = 0): string[] {
+  const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(Cockpit.home_greeting(now))}</h2><p class="meta">${esc(Cockpit.home_line(v))}</p>`
+    + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
+  const stats = `<div class="stats">${Cockpit.home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
+  const { working, done } = Cockpit.home_cards(v, now.getTime());
+  const group = (title: string, cards: Cockpit.Card[], archive: boolean) => cards.length === 0 ? "" :
+    `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
+  const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
+  const apps = Cockpit.home_apps(v, routines);
+  const app = (href: string, name: string, line: string) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
+  const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>`
+    + `<section><h3>Activity</h3>${Cockpit.home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
+}

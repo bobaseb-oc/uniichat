@@ -31,7 +31,7 @@ export function demo_crew(now: number): Crew[] {
   const crew: Crew[] = [];
   for (let m = 0; m < 8; m++) {
     const [title, repos] = GOALS[m];
-    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: m % 3 === 2 ? "done" : "waiting", since: now - (m + 1) * 60000, title, repos, spent: 0.35 + m * 1.7 });
     for (let w = 0; w < 5; w++) {
       const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
       // the first worker of each manager keeps a checklist, m steps done

@@ -39,3 +39,17 @@ test("the status line: offline first, the folder, branch, model, agents at work,
   expect(Paint.status_text({ ...all, up: false, branch: null, working: 1, spend: { spend: 0.0042, stale: false, due: false } })).toBe("offline · home · opus-5.5 · 1 agent at work · $0.0042 today");
   expect(Paint.status_text({ ...all, working: 0, spend: { spend: null, stale: true, due: true } })).toBe("home ⎇ main · opus-5.5");
 });
+
+// the last 7 days' spend (the cockpit's Agent spend): the daily caches
+// that are there, summed; how many days that is; none: no spend
+test("the week's spend: the daily caches there summed, and how many", () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-week-");
+  const day = (d: string, spend: unknown) => fs.writeFileSync(dir + "/litellm-" + d + ".json", JSON.stringify({ spend, fetched_at: NOW }));
+  expect(Cost.cost_week(dir, NOW)).toEqual({ spend: null, days: 0 });
+  day("2026-11-11", 4.5);
+  day("2026-11-09", 1.25);
+  day("2026-11-05", 2); // the 7th day back: in
+  day("2026-11-04", 100); // the 8th: out
+  day("2026-11-10", "x"); // unreadable: none
+  expect(Cost.cost_week(dir, NOW)).toEqual({ spend: 7.75, days: 3 });
+});

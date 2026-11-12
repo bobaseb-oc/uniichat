@@ -276,7 +276,11 @@ const web = await Chat.act(chat, "s0", { $: "status", dir: "x", branch: null, sp
 const ok = await Chat.act(chat, "s1", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, junk: 1 }, "mac");
 const kept = Chat.state(chat).status;
 const bad = await Chat.act(chat, "s2", { $: "status", dir: 5, branch: "main", spend: "lots", stale: false }, "mac");
-console.log(JSON.stringify({ none, web: "error" in web, ok, kept, bad: "error" in bad, after: Chat.state(chat).status }));
+const after = Chat.state(chat).status;
+const weekly = await Chat.act(chat, "s3", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, week: 12.5 }, "mac");
+const week = Chat.state(chat).status.week;
+const badweek = await Chat.act(chat, "s4", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, week: "lots" }, "mac");
+console.log(JSON.stringify({ none, web: "error" in web, ok, kept, bad: "error" in bad, after, weekly, week, badweek: "error" in badweek }));
 process.exit(0);
 `;
 
@@ -286,7 +290,7 @@ test("a device's status is kept and told in the state; only a device's, its fiel
   const proc = Bun.spawn([process.execPath, dir + "/status.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   const mac = { device: "mac", dir: "uniichat", branch: "main", spend: 0.25, stale: false };
-  expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac });
+  expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac, weekly: {}, week: 12.5, badweek: true });
 });
 
 // A device's inbox (Device.device_inbox): only a device's, checked

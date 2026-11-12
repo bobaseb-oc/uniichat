@@ -93,6 +93,7 @@ export type Ask = Pick & {
   patient?  : boolean;
   yields?   : string;
   again?    : (end: End) => void; // a patient call's try failed: told before it asks again
+  used?     : (used: Used) => void; // each request's usage, as the vendor told it (an agent's cost: Tools.spent)
 };
 
 // a prefix cached: until when; while its leader's response has not

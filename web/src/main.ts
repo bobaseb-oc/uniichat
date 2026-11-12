@@ -1203,6 +1203,10 @@ function page_bars(mode: View.Mode): boolean {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "home") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.home_html(v, new Date()));
   } else {
     $("#picks").hidden = true;
     markup($("#page .ptop"), [`<div class="phead"><h2>${mode[0].toUpperCase() + mode.slice(1)}</h2></div>`]);
@@ -1255,6 +1259,17 @@ function page_click(ev: MouseEvent): void {
       C.detail = C.detail === row ? null : row;
     }
     C.cursor = row;
+  }
+  // New agent: the chat, its box saying /agent (Enter starts it); Focus:
+  // the side columns put away, or back
+  if (el.closest("[data-new-agent]") !== null) {
+    location.hash = "#chat";
+    BOX.value = "/agent ";
+    BOX.dispatchEvent(new Event("input"));
+    setTimeout(() => BOX.focus());
+  }
+  if (el.closest("[data-focus]") !== null) {
+    document.body.classList.toggle("focus");
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));

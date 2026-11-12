@@ -82,14 +82,14 @@ export type State = {
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number }; // spent: est. USD (Tools.spent)
 // a call waiting for the user's yes (Tools.ask_user): its number, who
 // calls, its tool, what it does
 export type Waiting = { id: number; who: string; tool: string; what: string };
 
 // a device's report for the status line (Device.device_status): its
 // name, the folder Unii works in there, its branch, today's spend (stale)
-export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean };
+export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null }; // week: the last 7 days' (Cost.cost_week)
 
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
@@ -214,7 +214,7 @@ export type Client =
   | { $: "bang"; command: string } // the person's !command, run with the shell on a device
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
-  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
+  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null } // a device's report
   | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
   | { $: "fetch" } // the inbox read anew by the devices
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
@@ -255,6 +255,7 @@ export type Act =
   | { $: "Consent"; n: number; yes: boolean }   // a waiting call: run it, or not
   | { $: "Review"; prs: string[]; how: "review" | "fix"; claude?: boolean } // PRs of the inbox, each to a Legion agent (claude: a Claude Code worker under a manager)
   | { $: "Fetch" }                              // the inbox read anew (its Refresh)
+  | { $: "Archive"; names: string[] }           // agents out of the crew (Home's Archive, Archive all)
 
 // what a page draws, top to bottom
 export type Row =
@@ -604,6 +605,9 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Fetch": {
       return [{ $: "fetch" }];
+    }
+    case "Archive": {
+      return act.names.map((name) => ({ $: "dismiss", name }));
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {

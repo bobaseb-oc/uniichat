@@ -1505,11 +1505,12 @@ export namespace Chat {
   // as the latest, told every view when it changes
   export function reported(chat: Chat, device: string, msg: any): Answer {
     const text = (x: unknown) => typeof x === "string" && x.length <= 200;
-    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && (msg.spend === null || Number.isFinite(msg.spend)) && typeof msg.stale === "boolean";
+    const usd = (x: unknown) => x === null || Number.isFinite(x);
+    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && usd(msg.spend) && typeof msg.stale === "boolean" && (msg.week === undefined || usd(msg.week));
     if (device === "" || !ok) {
       return { error: device === "" ? "Only a device reports its status." : "A status needs dir, branch, spend and stale." };
     }
-    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale };
+    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale, ...(msg.week === undefined ? {} : { week: msg.week }) };
     if (JSON.stringify(status) !== JSON.stringify(chat.status ?? null)) {
       chat.status = status;
       Chat.change(chat);

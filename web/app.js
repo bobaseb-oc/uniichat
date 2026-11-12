@@ -16,7 +16,7 @@ function demo_crew(now) {
   const crew = [];
   for (let m = 0;m < 8; m++) {
     const [title, repos] = GOALS[m];
-    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: m % 3 === 2 ? "done" : "waiting", since: now - (m + 1) * 60000, title, repos, spent: 0.35 + m * 1.7 });
     for (let w = 0;w < 5; w++) {
       const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
       const todo = w === 0 ? { todo: STEPS.map((text, k) => ({ text, status: k < m % STEPS.length ? "done" : k === m % STEPS.length ? "doing" : "pending" })) } : {};
@@ -1424,6 +1424,9 @@ function view_act(v, act) {
     case "Fetch": {
       return [{ $: "fetch" }];
     }
+    case "Archive": {
+      return act.names.map((name) => ({ $: "dismiss", name }));
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -2219,78 +2222,6 @@ function span_html(s) {
   }
 }
 
-// web/src/Pages.ts
-var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
-function act_html2(act) {
-  return ` data-act="${esc(JSON.stringify(act))}"`;
-}
-function link_html(url, text = "↗") {
-  return url === "" ? "" : `<a class="go" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
-}
-var FIXABLE = ["failing", "conflicts", "changes"];
-function row_acts(s, r) {
-  if (r.pr === undefined) {
-    return "";
-  }
-  if (s === "reviews") {
-    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "review" })} title="a Legion agent reviews it">Review</button>`;
-  }
-  if ((s === "mine" || s === "alerts") && FIXABLE.includes(r.pr.state)) {
-    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "fix" })} title="a Legion agent fixes it">Fix</button>`;
-  }
-  return "";
-}
-function detail_html(r) {
-  const p = r.pr;
-  if (p === undefined) {
-    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc(r.clean.path)}</code></div>`;
-  }
-  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc).join(" · ")}</p>`;
-  const body = p.body.trim() === "" ? "" : `<div class="body">${esc(p.body)}</div>`;
-  return `<div class="ibd"><p class="meta">${esc(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
-}
-function row_html2(s, r, ui) {
-  const here = ui.cursor === r.key ? " here" : "";
-  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
-  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc(r.tag)}</span>`;
-  const open2 = ui.detail === r.key ? detail_html(r) : "";
-  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
-  return `<div class="ibr ${r.kind}${here}" data-row="${esc(r.key)}">${pick}<span class="sub">${esc(r.sub)}</span><span class="t">${esc(r.title)}</span>${tag}<span class="age">${esc(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
-}
-function inbox_html(sections, ui) {
-  return sections.map((s) => {
-    const shut = ui.shut.has(s.id);
-    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc(s.title)}</b><span class="meta">${esc(s.sub)}</span><span class="n">${s.count}</span></button>`;
-    const fresh = s.rows.filter((r) => !r.old).map((r) => row_html2(s.id, r, ui)).join("");
-    const old = s.rows.filter((r) => r.old);
-    const folded = old.length === 0 ? "" : `<details class="old"><summary>${old.length} older than 60 days</summary>${old.map((r) => row_html2(s.id, r, ui)).join("")}</details>`;
-    const note = s.note === undefined ? "" : `<p class="ibnote">${esc(s.note)}</p>`;
-    return `<section class="ibs${shut ? " shut" : ""}" data-sec="${s.id}">${head}<div class="ibrows">${note}${fresh}${folded}</div></section>`;
-  });
-}
-function inbox_head(inbox, changed) {
-  const issue = `<a class="pbtn" href="${esc(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
-  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })} title="the devices read it anew">Refresh</button>`;
-  if (inbox === null) {
-    return `<div class="phead"><h2>Inbox</h2><p class="meta">No device has read the inbox yet: open a terminal (legion) or run legion device; it reads with your gh, acli and git.</p>${refresh}${issue}</div>`;
-  }
-  const at = new Date(inbox.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc(e)}</p>`).join("");
-  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
-}
-function picks_html(sections, picks, claude) {
-  if (picks.size === 0) {
-    return "";
-  }
-  const rows = sections.flatMap((s) => s.rows.filter((r) => picks.has(r.key) && r.pr !== undefined).map((r) => [s.id, r]));
-  const keys = [...new Set(rows.map(([, r]) => r.key))];
-  const reviews = keys.filter((k) => rows.some(([s, r]) => r.key === k && s === "reviews"));
-  const fixes = keys.filter((k) => rows.some(([s, r]) => r.key === k && s !== "reviews" && FIXABLE.includes(r.pr.state)));
-  const go = (label, prs, how) => prs.length === 0 ? "" : `<button class="pbtn"${act_html2(claude ? { $: "Review", prs, how, claude: true } : { $: "Review", prs, how })}>${label} ${prs.length}</button>`;
-  const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
-  return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
-}
-
 // Cockpit.ts
 var DAY2 = 86400000;
 var OLD2 = 60 * DAY2;
@@ -2414,7 +2345,163 @@ function inbox_badge(inbox) {
   if (inbox === null) {
     return 0;
   }
-  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => ["failing", "conflicts", "changes"].includes(p.state)).length;
+  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => FIX.includes(p.state)).length;
+}
+function home_greeting(now) {
+  const h = now.getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+function needing(v) {
+  return view_needs(v).length + view_questions(v).length + (v.calls ?? []).length + (v.plan ? 1 : 0);
+}
+function home_line(v) {
+  const need = needing(v);
+  const working = v.crew.filter((c) => c.status === "working").length;
+  return (need === 0 ? "no agent needs you" : need + " need you") + " · " + working + " working";
+}
+var usd = (x) => "$" + x.toFixed(2);
+function home_stats(v) {
+  const crew = v.crew;
+  const inbox = v.inbox;
+  const working = crew.filter((c) => c.status === "working" || c.status === "waiting" || c.status === "asking").length;
+  const you = inbox?.reviews.filter((p) => p.you).length ?? 0;
+  const fix = inbox?.mine.filter((p) => FIX.includes(p.state)).length ?? 0;
+  const week = v.status?.week ?? null;
+  const today = v.status?.spend ?? null;
+  return [
+    { label: "Agents", value: String(crew.length), sub: working + " working · " + (crew.length - working) + " done", href: "#crew" },
+    { label: "Reviews for you", value: inbox === null ? "–" : String(you), sub: inbox === null ? "" : inbox.reviews.length - you + " for your team", href: "#inbox" },
+    { label: "Your PRs", value: inbox === null ? "–" : String(inbox.mine.length), sub: inbox === null ? "" : fix + " to fix", href: "#inbox" },
+    { label: "Merged this week", value: inbox === null ? "–" : String(inbox.merged), sub: inbox === null ? "" : inbox.today + " today", href: "#digest" },
+    { label: "Agent spend", value: week === null ? "–" : usd(week), sub: today === null ? "" : usd(today) + " today", href: "#home" }
+  ];
+}
+var FIX = ["failing", "conflicts", "changes"];
+function ticket_of(text) {
+  return /\b[A-Z][A-Z0-9]{1,9}-\d+\b/.exec(text)?.[0] ?? null;
+}
+function home_cards(v, now) {
+  const top = v.crew.filter((c) => c.parent === "main");
+  const under = (name) => v.crew.filter((c) => c.parent === name).reduce((n, c) => n + 1 + under(c.name), 0);
+  const card = (c) => {
+    const title = c.title ?? c.name;
+    return {
+      name: c.name,
+      title,
+      repo: c.repos?.[0] ?? null,
+      ticket: ticket_of(title),
+      pr: /#(\d+)\b/.exec(title)?.[0] ?? null,
+      cost: c.spent === undefined ? "" : "≈" + usd(c.spent),
+      age: c.since === 0 ? "" : age(now - c.since),
+      status: c.status,
+      under: under(c.name)
+    };
+  };
+  const live = (c) => c.status === "working" || c.status === "waiting" || c.status === "asking";
+  return { working: top.filter(live).map(card), done: top.filter((c) => !live(c)).map(card) };
+}
+function home_apps(v, routines = 0) {
+  const failing = v.inbox?.mine.filter((p) => p.state === "failing").length ?? 0;
+  const open2 = view_questions(v).length;
+  return {
+    inbox: v.inbox === null ? "not read yet" : failing === 0 ? "nothing failing" : failing + " PR" + (failing === 1 ? "" : "s") + " failing",
+    questions: open2 === 0 ? "none open" : open2 + " open",
+    routines: routines === 0 ? "none scheduled" : routines + " scheduled"
+  };
+}
+function home_activity(v) {
+  return [...v.inbox?.notes ?? []].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
+}
+
+// web/src/Pages.ts
+var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
+function act_html2(act) {
+  return ` data-act="${esc(JSON.stringify(act))}"`;
+}
+function link_html(url, text = "↗") {
+  return url === "" ? "" : `<a class="go" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
+}
+var FIXABLE = ["failing", "conflicts", "changes"];
+function row_acts(s, r) {
+  if (r.pr === undefined) {
+    return "";
+  }
+  if (s === "reviews") {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "review" })} title="a Legion agent reviews it">Review</button>`;
+  }
+  if ((s === "mine" || s === "alerts") && FIXABLE.includes(r.pr.state)) {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "fix" })} title="a Legion agent fixes it">Fix</button>`;
+  }
+  return "";
+}
+function detail_html(r) {
+  const p = r.pr;
+  if (p === undefined) {
+    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc(r.clean.path)}</code></div>`;
+  }
+  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc).join(" · ")}</p>`;
+  const body = p.body.trim() === "" ? "" : `<div class="body">${esc(p.body)}</div>`;
+  return `<div class="ibd"><p class="meta">${esc(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
+}
+function row_html2(s, r, ui) {
+  const here = ui.cursor === r.key ? " here" : "";
+  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
+  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc(r.tag)}</span>`;
+  const open2 = ui.detail === r.key ? detail_html(r) : "";
+  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
+  return `<div class="ibr ${r.kind}${here}" data-row="${esc(r.key)}">${pick}<span class="sub">${esc(r.sub)}</span><span class="t">${esc(r.title)}</span>${tag}<span class="age">${esc(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
+}
+function inbox_html(sections, ui) {
+  return sections.map((s) => {
+    const shut = ui.shut.has(s.id);
+    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc(s.title)}</b><span class="meta">${esc(s.sub)}</span><span class="n">${s.count}</span></button>`;
+    const fresh = s.rows.filter((r) => !r.old).map((r) => row_html2(s.id, r, ui)).join("");
+    const old = s.rows.filter((r) => r.old);
+    const folded = old.length === 0 ? "" : `<details class="old"><summary>${old.length} older than 60 days</summary>${old.map((r) => row_html2(s.id, r, ui)).join("")}</details>`;
+    const note = s.note === undefined ? "" : `<p class="ibnote">${esc(s.note)}</p>`;
+    return `<section class="ibs${shut ? " shut" : ""}" data-sec="${s.id}">${head}<div class="ibrows">${note}${fresh}${folded}</div></section>`;
+  });
+}
+function inbox_head(inbox, changed) {
+  const issue = `<a class="pbtn" href="${esc(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
+  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })} title="the devices read it anew">Refresh</button>`;
+  if (inbox === null) {
+    return `<div class="phead"><h2>Inbox</h2><p class="meta">No device has read the inbox yet: open a terminal (legion) or run legion device; it reads with your gh, acli and git.</p>${refresh}${issue}</div>`;
+  }
+  const at = new Date(inbox.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc(e)}</p>`).join("");
+  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
+}
+function picks_html(sections, picks, claude) {
+  if (picks.size === 0) {
+    return "";
+  }
+  const rows = sections.flatMap((s) => s.rows.filter((r) => picks.has(r.key) && r.pr !== undefined).map((r) => [s.id, r]));
+  const keys = [...new Set(rows.map(([, r]) => r.key))];
+  const reviews = keys.filter((k) => rows.some(([s, r]) => r.key === k && s === "reviews"));
+  const fixes = keys.filter((k) => rows.some(([s, r]) => r.key === k && s !== "reviews" && FIXABLE.includes(r.pr.state)));
+  const go = (label, prs, how) => prs.length === 0 ? "" : `<button class="pbtn"${act_html2(claude ? { $: "Review", prs, how, claude: true } : { $: "Review", prs, how })}>${label} ${prs.length}</button>`;
+  const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
+  return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
+}
+function card_html(c, archive) {
+  const chips = [c.repo, c.ticket, c.pr].filter((x) => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
+  const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
+  const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
+  return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc(c.name)}</span><span class="meta">${esc(c.status)}</span><span class="age">${esc(c.age)}</span></div>` + `<b class="ht">${esc(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
+}
+var KIND_MARK = { review: "◎", assign: "▣", mention: "@", ci: "✗", security: "⚠", other: "•" };
+function home_html(v, now, routines = 0) {
+  const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(home_greeting(now))}</h2><p class="meta">${esc(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
+  const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
+  const { working, done } = home_cards(v, now.getTime());
+  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
+  const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
+  const apps = home_apps(v, routines);
+  const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
+  const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
 
 // web/src/main.ts
@@ -3335,6 +3422,10 @@ function page_bars(mode) {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "home") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), home_html(v, new Date));
   } else {
     $("#picks").hidden = true;
     markup($("#page .ptop"), [`<div class="phead"><h2>${mode[0].toUpperCase() + mode.slice(1)}</h2></div>`]);
@@ -3378,6 +3469,15 @@ function page_click(ev) {
       C.detail = C.detail === row ? null : row;
     }
     C.cursor = row;
+  }
+  if (el.closest("[data-new-agent]") !== null) {
+    location.hash = "#chat";
+    BOX.value = "/agent ";
+    BOX.dispatchEvent(new Event("input"));
+    setTimeout(() => BOX.focus());
+  }
+  if (el.closest("[data-focus]") !== null) {
+    document.body.classList.toggle("focus");
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));

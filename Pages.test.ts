@@ -83,3 +83,29 @@ test("the inbox's head: when read, what changed, refresh, File issue (on Legion'
   expect(h).toContain(`href="${Pages.ISSUES}"`); // Legion's own repo: a bug in the cockpit
   expect(h).toContain("gh: &lt;bad&gt;");
 });
+
+// Home (Pages.home_html): the head, the stat cards linking to their pages,
+// the agent cards (Go to agent, Archive; Archive all over the done), the
+// apps, the activity; text escaped
+test("home: greeting, stats, agent cards with their acts, apps, activity", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  v.crew = [
+    { name: "A", parent: "main", tier: "worker", model: "m", status: "working", since: NOW - 60e3, title: "review o/r#5 <x>", repos: ["r"], spent: 1 },
+    { name: "B", parent: "main", tier: "worker", model: "m", status: "done", since: NOW - 60e3, title: "AO-1 done" },
+  ];
+  v.inbox = inbox({ notes: [{ kind: "review", title: "Review requested: <y>", repo: "o/r", url: "https://github.com/o/r/pull/1", at: "", unread: true }] });
+  const html = Pages.home_html(v, new Date(NOW)).join("");
+  expect(html).toContain("Good ");
+  expect(html).toContain("1 working");
+  expect(html).toContain('href="#inbox"');
+  expect(html).toContain("review o/r#5 &lt;x&gt;");
+  expect(html).toContain('href="#crew/A"');
+  expect(html).toContain("≈$1.00");
+  expect(html).toContain(act({ $: "Archive", names: ["B"] }));
+  expect(html).not.toContain(act({ $: "Archive", names: ["A"] })); // working: not archived
+  expect(html).toContain("Archive all");
+  expect(html).toContain("Review requested: &lt;y&gt;");
+  expect(html).toContain("data-new-agent");
+  expect(html).toContain("data-focus");
+});
