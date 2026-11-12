@@ -1,0 +1,34 @@
+web/src/main.ts
+  s_7a9417f632900b::t_3683b07bc96fa6 41-42,187
+web/app.js
+  s_7a9417f632900b::t_3683b07bc96fa6 1644,1743
+  s_7a9417f632900b::t_dfa6441937ac20 1744
+local/unii-local.sh
+  s_7a9417f632900b::t_9e06b89bea36cb 13,155
+Cloud.test.ts
+  s_7a9417f632900b::t_6a8519497dd393 12-13,91-148
+Cloud.ts
+  s_7a9417f632900b::t_137876f0a9bbc8 11-13,30-32,63,352-354,364-366,434-463
+Term.ts
+  s_7a9417f632900b::t_7ef3ef23b69b8a 86,88,106,1218-1234,1250-1251
+tasks/lessons.md
+  s_7a9417f632900b::t_5414558393d104 5
+tasks/todo.md
+  s_7a9417f632900b::t_27e49ff46c3478 146,150-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0047bb2f045d1110cc223fcd0e366ae594b566a2",
+  "prompts": {},
+  "sessions": {
+    "s_7a9417f632900b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "05baf7be-9020-400d-88ca-0ec05e7170c6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
