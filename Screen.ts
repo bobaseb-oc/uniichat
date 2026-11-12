@@ -42,6 +42,7 @@ type Place = Spot & { pos: number };
 // above the cursor (its blank rows too), the rows from the footer's top
 // to the screen's bottom, where keys go
 export type Screen = {
+  grab?  : boolean; // every key to Term.ts, text too, none edits (a full-screen mode)
   tty    : boolean;
   kitty  : boolean;
   ed     : Ed;
@@ -204,7 +205,7 @@ function screen_key(scr: Screen, data: string): number {
   if (seq !== null) {
     const ch = seq_text(seq[1] ?? "", seq[2]);
     if (ch !== null) {
-      ed_type(scr.ed, ch);
+      screen_text(scr, ch);
     } else {
       screen_press(scr, seq_name(seq[1] ?? "", seq[2]));
     }
@@ -217,7 +218,7 @@ function screen_key(scr: Screen, data: string): number {
     return 1 + ch.length;
   }
   if (text !== null) {
-    ed_type(scr.ed, text[0]);
+    screen_text(scr, text[0]);
     return text[0].length;
   }
   screen_press(scr, KEYS[code] ?? "Ctrl+" + String.fromCharCode(code + 64));
@@ -225,9 +226,19 @@ function screen_key(scr: Screen, data: string): number {
 }
 
 // a key: an editing key edits the input; any other goes to Term.ts
+// (all of them, grabbed)
 function screen_press(scr: Screen, key: string): void {
-  if (!ed_key(scr.ed, key)) {
+  if (scr.grab || !ed_key(scr.ed, key)) {
     scr.on(key);
+  }
+}
+
+// text typed: into the input, or, grabbed, to Term.ts as a key
+function screen_text(scr: Screen, text: string): void {
+  if (scr.grab) {
+    scr.on(text);
+  } else {
+    ed_type(scr.ed, text);
   }
 }
 

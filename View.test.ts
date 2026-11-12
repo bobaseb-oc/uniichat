@@ -273,3 +273,37 @@ test("the lane: marks by time, spawns, stalls", () => {
   expect(live.find((m) => m.kind === "words")!.at).toBeCloseTo(0.4, 2);
 });
 
+
+// The terminal's full-screen Crew (/crew full): keys move a selection on
+// the tree, open and fold managers, act on the one selected; Enter
+// shows its page and leaves, Esc or q leaves
+test("full-screen Crew keys", () => {
+  const v = team();
+  const key = (sel: string | null, k: string) => View.view_full(v, sel, k);
+  expect(key(null, "Down").sel).toBe("Mgr");
+  expect(key("Ask", "j").sel).toBe("Mgr");
+  expect(key("Ask", "Up").sel).toBe("Ask");
+  expect(key("Solo", "Down").sel).toBe("Solo");
+  expect(key("Mgr", "k").sel).toBe("Ask");
+  expect(key("Mgr", "Right")).toMatchObject({ acts: [], done: false });
+  expect(v.expanded.has("Mgr")).toBe(true);
+  expect(key("Mgr", "Down").sel).toBe("D");
+  expect(key("Mgr", "Right").acts).toEqual([]);
+  expect(v.expanded.has("Mgr")).toBe(true);
+  key("Mgr", "Left");
+  expect(v.expanded.has("Mgr")).toBe(false);
+  key("Mgr", " ");
+  expect(v.expanded.has("Mgr")).toBe(true);
+  expect(key("A", "s").acts).toEqual([{ $: "stop", name: "A" }]);
+  expect(key("C", "s").acts).toEqual([]);
+  expect(key("Ask", "a").acts).toEqual([{ $: "approve", name: "Ask", yes: true }]);
+  expect(key("Ask", "d").acts).toEqual([{ $: "approve", name: "Ask", yes: false }]);
+  expect(key("A", "a").acts).toEqual([]);
+  expect(key("C", "x").acts).toEqual([{ $: "dismiss", name: "C" }]);
+  expect(key("A", "x").acts).toEqual([]);
+  expect(key("A", "Enter")).toMatchObject({ done: true, focus: "A" });
+  expect(key("A", "Esc").done).toBe(true);
+  expect(key("A", "Esc").focus).toBeUndefined();
+  expect(key("A", "q").done).toBe(true);
+  expect(key("A", "z")).toMatchObject({ sel: "A", acts: [], done: false });
+});

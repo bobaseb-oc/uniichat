@@ -36,3 +36,29 @@ test("past the most rows, the rest are counted", () => {
   expect(lines).toHaveLength(4);
   expect(text(lines[3])).toContain("+4 more");
 });
+
+// /crew full: a head (what's going on, the keys), who needs you, then the
+// tree, the selection marked, each row's activity line; no line past the
+// width, none past the height (the selection kept in sight)
+test("the full-screen Crew: head, needs, tree with its selection, within the screen", async () => {
+  const { demo_crew, demo_pulses } = await import("./Demo.ts");
+  const v = View.view_new();
+  const all = demo_crew(1e12);
+  View.view_hear(v, { $: "state", ...v, crew: all });
+  demo_pulses(all).forEach((p) => View.view_hear(v, p));
+  View.view_act(v, { $: "Expand", name: "Mgr1" });
+  const lines = Paint.crew_full(v, 70, 24, "W1-0", 1e12).map(text);
+  expect(lines.length).toBeLessThanOrEqual(24);
+  expect(lines[0]).toMatch(/^Crew · \d+ working, \d+ need you/);
+  expect(lines.some((l) => l.includes("Claude1 asks to start"))).toBe(true);
+  expect(lines.filter((l) => l.startsWith("▸ "))).toHaveLength(1);
+  expect(lines.find((l) => l.startsWith("▸ "))).toContain("W1-0");
+  expect(lines.some((l) => l.includes("Mgr0") && l.includes("working,"))).toBe(true);
+  for (const l of lines) {
+    expect(l.length).toBeLessThanOrEqual(70);
+  }
+  // a short screen still shows the selection
+  const short = Paint.crew_full(v, 70, 8, "Mgr7", 1e12).map(text);
+  expect(short.length).toBeLessThanOrEqual(8);
+  expect(short.some((l) => l.startsWith("▸ ") && l.includes("Mgr7"))).toBe(true);
+});

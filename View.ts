@@ -718,6 +718,35 @@ function rollup(crew: Crew[]): string {
     .filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
 }
 
+// a key on the terminal's full-screen Crew (Paint.crew_full): the agent
+// selected next (by name: the tree may change under it), the acts it
+// sends, whether the screen closes (focus: the agent whose page to show)
+export type Full = { sel: string | null; acts: Client[]; done: boolean; focus?: string };
+
+export function view_full(v: View, sel: string | null, key: string): Full {
+  const rows = view_tree(v, 0);
+  const at = Math.max(0, rows.findIndex((r) => r.name === sel));
+  const row = rows[at];
+  const name = row?.name ?? null;
+  const go = (k: number): Full => ({ sel: rows[Math.min(rows.length - 1, Math.max(0, k))]?.name ?? null, acts: [], done: false });
+  const now = (acts: Client[]): Full => ({ sel: name, acts, done: false });
+  const at_work = row?.status === "working" || row?.status === "waiting";
+  switch (key) {
+    case "Up": case "k": return go(at - 1);
+    case "Down": case "j": return go(at + 1);
+    case "Right": case "l": case "Left": case "h": case " ": {
+      const want = key === " " ? !row?.open : key === "Right" || key === "l";
+      return now(row !== undefined && row.kids > 0 && row.open !== want ? view_act(v, { $: "Expand", name: row.name }) : []);
+    }
+    case "s": return now(row !== undefined && at_work ? view_act(v, { $: "Stop", name: row.name }) : []);
+    case "a": case "d": return now(row?.status === "asking" ? view_act(v, { $: "Approve", name: row.name, yes: key === "a" }) : []);
+    case "x": return now(row !== undefined && !at_work && row.status !== "asking" ? view_act(v, { $: "Dismiss", name: row.name }) : []);
+    case "Enter": return { sel: name, acts: [], done: true, focus: name ?? undefined };
+    case "Esc": case "q": return { sel: name, acts: [], done: true };
+  }
+  return now([]);
+}
+
 // a mark on the timeline lane: the message it is (k, in its page's log;
 // null: none), where (0: the first, 1: the last or now), what, its
 // label, its time (ms since 1970)

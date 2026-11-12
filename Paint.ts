@@ -449,6 +449,34 @@ export function crew_lines(v: View.View, w: number, now: number, most: number): 
   return rows.length > shown.length ? [...lines, [Run(text_cut("  … +" + (rows.length - shown.length) + " more: /tab <name>", w), DIM)]] : lines;
 }
 
+// /crew full (Term.ts): a head (the pill, the keys), who needs you (at
+// most NEEDS, and a third of the screen), then the tree (View.view_tree) with each row's activity,
+// the selection marked "▸ " and kept in sight; w columns, h rows at most
+const NEEDS = 5;
+export function crew_full(v: View.View, w: number, h: number, sel: string | null, now: number): Line[] {
+  const keys = "↑↓ move · →← open · Enter focus · s stop · a/d approve · x dismiss · Esc back";
+  const head = [Run(text_cut("Crew · " + (View.view_pill(v) || "no agents") + " · " + keys, w), { ...INK, b: true })];
+  const needs = View.view_needs(v);
+  const most = Math.max(1, Math.min(NEEDS, Math.floor((h - 2) / 3)));
+  const need = needs.slice(0, most).map((c) => [Run(text_cut("  " + c.name + (c.status === "asking" ? " asks to start" : " failed"), w), c.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : { ...INK, c: Theme.ANSI.del })]);
+  const more = needs.length > most ? [[Run("  … +" + (needs.length - most) + " more", DIM)]] : [];
+  const top = [head, [Run("")], ...(need.length > 0 ? [[Run("Needs you", DIM)], ...need, ...more, [Run("")]] : [])];
+  const rows = View.view_tree(v, now);
+  const room = Math.max(1, h - top.length);
+  const at = Math.max(0, rows.findIndex((r) => r.name === sel));
+  const from = Math.min(Math.max(0, at - Math.floor(room / 2)), Math.max(0, rows.length - room));
+  const tree = rows.slice(from, from + room).map((r) => {
+    const here = r.name === sel;
+    const pulse = v.pulses.get(r.name);
+    const act = pulse === undefined ? "" : pulse.act || pulse.last;
+    const what = r.kids > 0 && !r.open ? "▸ " + r.rollup : r.tier + " · " + r.model;
+    const text = "  ".repeat(r.depth) + View.CREW[r.status] + " " + r.name + " · " + what + (act === "" ? "" : " · " + act);
+    const ink = r.status === "asking" ? { ...INK, c: Theme.ANSI.you, b: true } : r.status === "failed" ? { ...INK, c: Theme.ANSI.del } : r.status === "done" || r.status === "stopped" ? DIM : INK;
+    return [Run(here ? "▸ " : "  ", { ...INK, b: true }), Run(text_cut(text, w - 2), here ? { ...ink, b: true } : ink)];
+  });
+  return [...top, ...tree].slice(0, h);
+}
+
 // a text cut to w columns, its last one an ellipsis if cut
 export function text_cut(s: string, w: number): string {
   if (text_width(s) <= w) {

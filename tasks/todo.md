@@ -185,7 +185,7 @@ no cost display; desktop only.
       parse; both versions checked with Bun.Transpiler), always act, watch nothing, first pulse kept.
       Not killed by a test: the 16 cap (it needs 17 live agents). Suite 182 pass, 3 baseline fails; tsc
       75 → 75 (one new error, an unknown[] in watch, fixed).
-- [ ] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;
+- [x] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;
       the terminal's full-screen Crew mode (/crew full, Esc goes back to scrollback); a demo crew
       (8 managers, 40 workers) for layout and tests.
       - [x] Grid and demo: Demo.ts (8 managers × 5 workers, a sub-manager, a Claude Code worker asking);
@@ -205,6 +205,15 @@ no cost display; desktop only.
         agent entries now carry their date. Proof: lane tests (View, Html); mutants (no stalls, always to
         now, no spawns, thoughts marked, no jump, label raw) each kill one; suite 190 pass, 3 baseline
         fails; tsc on changed files 62 → 62 (the earlier "0 → 0"s were void: see lessons.md, zsh).
+      - [x] Terminal: /crew full: the alternate screen with Paint.crew_full (head with the pill and keys,
+        who needs you, at most a third of the screen, the tree with activity lines, the selection kept in
+        sight); keys by View.view_full (↑↓/jk, →←/hl/Space, Enter focus, s, a/d, x, Esc/q/Ctrl+C);
+        Screen.grab sends every key to Term while it shows; Esc gives back the scrollback as it was.
+        Proof: View keys test, Paint test (24 and 8 rows: the first try had no room for the tree on 8
+        rows: the needs lane is capped to a third); suite 192 pass, 3 baseline fails; tsc on changed files
+        71 → 76, all 5 the no-@types/node noise (process). PTY smoke (script, throwaway server, token
+        file): /crew full enters the alternate screen and draws its head, j moves, q leaves, the footer
+        is drawn again.
 - [ ] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
       a background process that connects as a device and runs jobs (Machine.run), with no screen.
       It gets the same approvals as the terminal.

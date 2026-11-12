@@ -57,6 +57,7 @@ type Term = {
   flow    : Map<View.Live, number>;
   logs    : Map<string, number>;
   crew?   : boolean; // the crew panel hidden (/crew)
+  full?   : { sel: string | null }; // /crew full shown: the agent selected
   away?   : boolean; // the terminal not in front (it told FocusOut): alerts notify
   goto?   : string | null; // the last alert's agent, shown as the terminal comes back
   branch? : string | null; // the branch of the folder Unii works in (term_status)
@@ -202,7 +203,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/tab [name]",       "",                        "the tabs; with a name, that one",               term_tab],
       ["/agent <task>",     "",                        "start an agent on a task; its report waits in the chat, starting no turn", (t, a) => term_act(t, { $: "Send", text: "/agent " + a })],
       ["/stop [name]",      "",                        "stop all work, agents too; or that agent and those under it", term_stop],
-      ["/crew",             "",                        "show or hide the crew: UniiChat and every agent under its starter", term_crew],
+      ["/crew [full]",      "",                        "show or hide the crew: UniiChat and every agent under its starter; full: the whole screen (Esc goes back)", term_crew],
       ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
       ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
       ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
@@ -443,6 +444,9 @@ function term_press(t: Term, key: string): void {
   if (key === "FocusIn" || key === "FocusOut") {
     return term_focus(t, key === "FocusOut");
   }
+  if (t.full !== undefined) {
+    return term_full_key(t, key);
+  }
   const cmd = term_commands(t.v).find((c) => c[1] !== "" && c[1].split(", ").includes(key));
   if (cmd !== undefined) {
     cmd[3](t, cmd[0] === "" ? key : "");
@@ -481,6 +485,51 @@ function term_cycle(t: Term): void {
   const tabs = View.view_tabs(t.v);
   const at   = tabs.findIndex((tab) => tab.here) + 1;
   term_act(t, { $: "Goto", name: tabs[at % tabs.length].name });
+}
+
+// Full-screen Crew
+// ----------------
+// /crew full: the alternate screen, the whole crew (Paint.crew_full),
+// every key the Crew's (Screen grab: View.view_full); Esc, q or Ctrl+C
+// leaves, the scrollback as it was; Enter leaves on that agent's page
+
+const ALT_ON  = "\x1b[?1049h\x1b[?25l";
+const ALT_OFF = "\x1b[?25h\x1b[?1049l";
+
+function term_full(t: Term, on: boolean): void {
+  if (on && !t.scr.tty) {
+    return term_note(t, "/crew full needs a terminal.");
+  }
+  if (on === (t.full !== undefined)) {
+    return;
+  }
+  t.full = on ? { sel: t.v.page?.name ?? null } : undefined;
+  t.scr.grab = on;
+  process.stdout.write(on ? ALT_ON : ALT_OFF);
+  if (on) {
+    process.once("exit", () => t.full !== undefined && process.stdout.write(ALT_OFF));
+  }
+  term_draw(t);
+}
+
+function term_full_key(t: Term, key: string): void {
+  const out = View.view_full(t.v, t.full?.sel ?? null, key === "Ctrl+C" ? "Esc" : key);
+  t.full = { sel: out.sel };
+  out.acts.forEach((msg) => View.link_send(t.v, msg));
+  if (out.done) {
+    term_full(t, false);
+    if (out.focus !== undefined) {
+      term_act(t, { $: "Goto", name: out.focus });
+    }
+  }
+  term_draw(t);
+}
+
+// the full-screen Crew drawn whole, from the top
+function term_full_paint(t: Term): void {
+  const lines = Paint.crew_full(t.v, Screen.screen_width(), process.stdout.rows || 24, t.full?.sel ?? null, Date.now());
+  process.stdout.write("\x1b[H\x1b[2J" + lines.map(Paint.line_ansi).join("\r\n"));
+  t.due = false;
 }
 
 // Commands
@@ -548,8 +597,11 @@ function term_agent(t: Term, arg: string): string {
   return View.view_named(t.v, arg);
 }
 
-// shows or hides the crew panel
-function term_crew(t: Term): void {
+// shows or hides the crew panel; full: the full-screen Crew
+function term_crew(t: Term, arg = ""): void {
+  if (arg === "full") {
+    return term_full(t, true);
+  }
   t.crew = !(t.crew ?? true);
   term_note(t, t.crew ? "The crew shows below the input." : "The crew is hidden: /crew shows it.");
 }
@@ -1014,6 +1066,9 @@ function term_inner(): number {
 // a new size: the page laid out again, at the new width, once the size
 // settles
 function term_resize(t: Term): void {
+  if (t.full !== undefined) {
+    return term_draw(t);
+  }
   clearTimeout(t.settle);
   t.settle = setTimeout(() => term_page(t), SETTLE);
 }
@@ -1032,6 +1087,9 @@ function term_draw(t: Term): void {
 // The screen's top row stays free: an erase from the top left clears
 // the screen, which tmux keeps in its scrollback at each paint
 function term_paint(t: Term): void {
+  if (t.full !== undefined) {
+    return term_full_paint(t);
+  }
   t.out = t.out.concat(term_lines(t.v.notes.splice(0).map(View.Cap)));
   term_flow(t);
   const w     = Screen.screen_width();
