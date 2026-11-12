@@ -75,6 +75,7 @@ export type State = {
   status?   : DeviceStatus | null; // the latest device's report (Device.device_status)
   calls?    : Waiting[];  // calls waiting for the user's yes (auto mode's reviewer couldn't check them)
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
+  trouble?  : string | null; // why the last summary failed and asks again (Memory's trouble)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
@@ -635,7 +636,8 @@ export function view_tail(v: View, live = view_stream(v)): Row[] {
   if (v.page !== null || rows.length > 0 || v.wait === "") {
     return [...rows, ...kept, ...load];
   }
-  return [Cap(v.wait === SUMMARIES ? SUMS : "waiting for " + v.wait + "…"), ...kept, ...load];
+  const sums = v.trouble ? SUMS + " (compactor: " + v.trouble + ")" : SUMS;
+  return [Cap(v.wait === SUMMARIES ? sums : "waiting for " + v.wait + "…"), ...kept, ...load];
 }
 
 // what streams on the page shown

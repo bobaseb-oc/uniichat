@@ -55,7 +55,7 @@
 // no summary.
 
 import * as fs from "node:fs";
-import { AskAI, type Ask, type Bill, type Block, type Call, type Img, type Kind, type Pay, type Say, type Served } from "./AskAI.ts";
+import { AskAI, type Ask, type Bill, type Block, type Call, type End as Ended, type Img, type Kind, type Pay, type Say, type Served } from "./AskAI.ts";
 import { clip_page, clip_pages } from "./Clip.ts";
 import { type Mode, Modes } from "./Modes.ts";
 import type { Question } from "./View.ts";
@@ -127,6 +127,8 @@ type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; go
 // each log is indexed; busy: nodes building, by slot, with their side;
 // sides: the side by the last message of nodes not built; calls: those
 // building's calls; hold: why each side is held (null: it builds);
+// trouble: why the last summary asked failed and asks again (the vendor's
+// words; null: none since one was answered), troubled told as it changes;
 // wait: checks run as the views change; share: what
 // compactions share with the chat's turns; pay: what pays them (none:
 // free); made, acted: told of each node built, of each act indexed
@@ -152,6 +154,8 @@ export type Memory = {
   sides  : Map<number, number>;
   calls  : Map<Call, Sum>;
   hold   : Array<string | null>;
+  trouble: string | null;
+  troubled?: () => void;
   done   : boolean;
   wait   : Set<() => void>;
   share  : () => Share;
@@ -196,6 +200,14 @@ const SCALE = "-".repeat(NODE);
 
 const WAIT = "(not summarized yet: zoom it)";
 
+// how long a turn (or agent) waits on the summaries before it: then it goes,
+// the lines not built shown as WAIT, as a compactor down (its calls asking
+// again forever) must not hold the chat
+const SETTLE = 60e3;
+
+// the most of the compactor's trouble kept to show
+const TROUBLE = 200;
+
 const IMAGES = "/docs/images/";
 
 const AGENTS = "/docs/agent/";
@@ -225,7 +237,7 @@ export namespace Memory {
     const mem: Memory = {
       dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, questions: [], asked: 0, mode: "auto", plan: null, work: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: SEEN },
-      busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted,
+      busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], trouble: null, done: false, wait: new Set(), share, acted,
     };
     const saved = Memory.saved(dir);
     mem.pick = saved?.pick ?? null;
@@ -828,13 +840,22 @@ export namespace Memory {
   // a call of node (l,i)'s summary, on the compactor
   export function ask(mem: Memory, l: number, i: number, text: string, blocks: Block[]): Call {
     const bill = Memory.bill(mem, l, i, text);
-    return AskAI.ask({ ...mem.share(), ...Pick.ask(config.COMPACTOR), blocks, bill, patient: true, yields: Memory.served(mem, l, i) === "import" ? mem.dir : undefined }, () => {});
+    const again = (end: Ended) => Memory.trouble(mem, Memory.flat(end.why ?? end.text).slice(0, TROUBLE));
+    return AskAI.ask({ ...mem.share(), ...Pick.ask(config.COMPACTOR), blocks, bill, patient: true, again, yields: Memory.served(mem, l, i) === "import" ? mem.dir : undefined }, () => {});
+  }
+
+  // the compactor's trouble, as it changes (Memory's trouble)
+  export function trouble(mem: Memory, why: string | null): void {
+    if (mem.trouble !== why) {
+      mem.trouble = why;
+      mem.troubled?.();
+    }
   }
 
   // a summary's try: its call's end, the call held in `calls` till then
   export function compact(mem: Memory, l: number, i: number, call: Call): Call["done"] {
     mem.calls.set(call, { l, i, kind: Memory.served(mem, l, i) });
-    return call.done.finally(() => mem.calls.delete(call));
+    return call.done.then((end) => (end.ok && Memory.trouble(mem, null), end)).finally(() => mem.calls.delete(call));
   }
 
   // node (l,i)'s task, but its input
@@ -997,21 +1018,25 @@ ${Memory.cut(line)}| ← LIMIT`;
     return { parts: view.filter((part) => part !== null), size, gone };
   }
 
-  // once the chat's messages before `end` are built (not an import's):
-  // null; else why they won't be: "Stopped." (signal aborted), or why
-  // their side is held (no credit for them: Billing.ts book), so no
-  // turn or agent waits on summaries no call is building
+  // once the chat's messages before `end` are built (not an import's),
+  // or SETTLE passed: null; else why they won't be: "Stopped." (signal
+  // aborted), or why their side is held (no credit for them: Billing.ts
+  // book), so no turn or agent waits on summaries no call is building,
+  // nor long on those a call can't get built
   export function settle(mem: Memory, end: number, signal: AbortSignal): Promise<string | null> {
     return new Promise((resolve) => {
+      let late = false;
       const check = () => {
-        const built = Memory.first(mem) >= end;
+        const built = late || Memory.first(mem) >= end;
         const why = signal.aborted ? "Stopped." : built ? null : mem.hold[0];
         if (built || why !== null) {
+          clearTimeout(timer);
           mem.wait.delete(check);
           signal.removeEventListener("abort", check);
           resolve(why);
         }
       };
+      const timer = setTimeout(() => ((late = true), check()), SETTLE);
       mem.wait.add(check);
       signal.addEventListener("abort", check);
       check();
@@ -1044,12 +1069,13 @@ ${Memory.cut(line)}| ← LIMIT`;
     return view.filter((part) => Memory.span(part)[1] < end);
   }
 
-  // the view's lines built before message `end`, in blocks (the last cut
+  // the view's lines before message `end` (one not built says WAIT: a turn
+  // past SETTLE), in blocks (the last cut
   // short), one marked: the last whole one, else the opening one. One
   // mark only: a request takes four, and Anthropic.ts adds three (the
   // system prompt's, a reply's end's, the top-level)
   export function view(mem: Memory, end = mem.count, parts = mem.view.parts): Block[] {
-    const lines = Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n");
+    const lines = Memory.before(parts, end).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n");
     const whole = Math.floor(lines.length / BLOCK);
     const blocks: Block[] = [{ text: "<chat>\n", mark: whole === 0 }];
     for (let k = 0; k < whole; k++) {

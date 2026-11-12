@@ -289,3 +289,24 @@ test("a stream that writes, each piece within the idle time, is never cut, howev
   const step = await sent((signal) => drip(events, 100, false, signal));
   expect(step.stop).toBe("done");
 }));
+
+// the vendor down for good (as a gateway past its budget): a turn waits on
+// the summaries before it SETTLE at most, then goes, each line not built
+// shown as such (zoom opens it), the compactor's last words kept to say
+// why; once the vendor answers the tree completes and they are let go
+test("a turn waits on summaries a down vendor won't build only so long, told why", () => fast(async () => {
+  broke = true;
+  const mem = Memory.load(DIR + "/deadline", () => SHARE);
+  Memory.push(mem, MSGS);
+  const signal = new AbortController().signal;
+  const told = await Promise.race([Memory.settle(mem, mem.count, signal), sleep(300).then(() => "still waiting")]);
+  expect(told).toBeNull();
+  expect(Memory.first(mem)).toBeLessThan(mem.count);
+  const lines = Memory.view(mem).map((block) => block.text).join("").split("\n").filter((line) => /^\d+\+\d+\|/.test(line));
+  expect(lines).toEqual(MSGS.map((_, k) => k + "+1|(not summarized yet: zoom it)"));
+  expect(mem.trouble).toContain(BROKE.slice(0, 40));
+
+  broke = false;
+  await completes(mem);
+  expect(mem.trouble).toBeNull();
+}));

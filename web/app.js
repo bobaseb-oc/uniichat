@@ -1396,7 +1396,8 @@ function view_tail(v, live = view_stream(v)) {
   if (v.page !== null || rows.length > 0 || v.wait === "") {
     return [...rows, ...kept, ...load];
   }
-  return [Cap(v.wait === SUMMARIES ? SUMS : "waiting for " + v.wait + "…"), ...kept, ...load];
+  const sums = v.trouble ? SUMS + " (compactor: " + v.trouble + ")" : SUMS;
+  return [Cap(v.wait === SUMMARIES ? sums : "waiting for " + v.wait + "…"), ...kept, ...load];
 }
 function view_stream(v) {
   return v.page === null ? v.live : v.page.live;

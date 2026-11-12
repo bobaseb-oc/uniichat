@@ -92,6 +92,7 @@ export type Ask = Pick & {
   bill?     : Bill;
   patient?  : boolean;
   yields?   : string;
+  again?    : (end: End) => void; // a patient call's try failed: told before it asks again
 };
 
 // a prefix cached: until when; while its leader's response has not
@@ -115,6 +116,7 @@ export type End = {
   left  : Say[];
   note? : string;
   stop? : "fail" | "lost" | "down";
+  why?  : string;  // down: the vendor's words (text says only BUSY)
   roll? : boolean; // ended past config.ROLL: its asker asks again from its tree
 };
 
@@ -170,6 +172,7 @@ export namespace AskAI {
       for (;;) {
         const wait = ask.patient === true && !end.ok && end.stop !== "fail" && end.stop !== "lost";
         if (wait) {
+          ask.again?.(end);
           await Machine.nap(AGAIN, halt.signal);
         }
         if (halt.signal.aborted || !wait) {
