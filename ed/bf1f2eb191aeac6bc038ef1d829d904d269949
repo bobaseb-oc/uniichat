@@ -1,0 +1,27 @@
+Device.ts
+  s_7a9417f632900b::t_5c59b6b392d235 1-80
+local/unii-local.sh
+  s_7a9417f632900b::t_44cc614372194d 14-15,158
+Device.test.ts
+  s_7a9417f632900b::t_0247026ef2b333 1-100
+Term.ts
+  s_7a9417f632900b::t_23fad7e1e43812 26,28,69,88,91,110-111,140-142,270-275,277,325,1256-1272,1307-1308
+tasks/todo.md
+  s_7a9417f632900b::t_5d8f587a1b7721 217,220-230,240-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edbf1f2eb191aeac6bc038ef1d829d904d269949",
+  "prompts": {},
+  "sessions": {
+    "s_7a9417f632900b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "05baf7be-9020-400d-88ca-0ec05e7170c6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
