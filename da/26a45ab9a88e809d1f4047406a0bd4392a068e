@@ -1,0 +1,31 @@
+prompt.txt
+  s_35bcf61515e0b4::t_8b0ac0d0df0cdd 60
+Hooks.test.ts
+  s_35bcf61515e0b4::t_946445a0c0b697 40-41
+Hooks.ts
+  s_35bcf61515e0b4::t_0f3dd256be48c3 97,116-123
+Machine.test.ts
+  s_35bcf61515e0b4::t_9d3557c3e7d7b7 116-165
+Machine.ts
+  s_35bcf61515e0b4::t_9e01655c359e9b 75-76,183-188,448-568
+Tools.ts
+  s_35bcf61515e0b4::t_9cbf39c96d016d 259
+tasks/todo.md
+  s_35bcf61515e0b4::t_30071968a731f4 265,285,287-290,300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da26a45ab9a88e809d1f4047406a0bd4392a068e",
+  "prompts": {},
+  "sessions": {
+    "s_35bcf61515e0b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa6247a5-9a71-464b-bcf1-3a5c62a4e955",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
