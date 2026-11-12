@@ -127,6 +127,73 @@ export function crew_html(v: View.View, now: number): string[] {
   return [top, ...rows];
 }
 
+// Crew view
+// ---------
+
+// an agent's buttons by its status: at work, stop; asking, approve and
+// deny; done, failed or stopped, dismiss
+function acts_html(c: View.Crew): string {
+  const x = (label: string, title: string, a: View.Act, cls = "") => `<button class="x${cls}" title="${title}"${act_html(a)}>${label}</button>`;
+  switch (c.status) {
+    case "working":
+    case "waiting": return x("■", "stop", { $: "Stop", name: c.name });
+    case "asking":  return x("✓", "approve", { $: "Approve", name: c.name, yes: true }, " yes") + x("×", "deny", { $: "Approve", name: c.name, yes: false });
+    default:        return x("×", "dismiss", { $: "Dismiss", name: c.name });
+  }
+}
+
+// the link that puts an agent in focus (#crew/<name>)
+function focus_href(name: string): string {
+  return ` href="${esc(View.view_hash("crew", name))}"`;
+}
+
+// the Crew tree (View.view_tree): per agent a caret (managers: fold or
+// open), its link (mark, name, tier, model; its roll-up or how long
+// ago), its actions
+export function tree_html(v: View.View, now: number): string[] {
+  return View.view_tree(v, now).map((r) => {
+    const here = v.page?.name === r.name ? " here" : "";
+    const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
+    const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
+    const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
+    const what = `<span class="st">${View.CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
+    const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}</div>`;
+  });
+}
+
+// what needs the person (View.view_needs), each with what it waits on
+// and its buttons
+export function needs_html(v: View.View): string[] {
+  return View.view_needs(v).map((c) => {
+    const why = c.status === "asking" ? "asks to start" : "failed";
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.name)}</b> ${why}</a>${acts_html(c)}</div>`;
+  });
+}
+
+// the agent in focus, over its session (the log): its name, what it
+// is, how it is, its actions; none: Unii's chat. One the crew no longer
+// tells (dismissed) shows its name only
+export function focus_html(v: View.View): string {
+  const name = v.page?.name ?? null;
+  if (name === null) {
+    return `<div class="focus"><b>${esc(View.MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
+  }
+  const c = v.crew.find((x) => x.name === name);
+  if (c === undefined) {
+    return `<div class="focus"><b>${esc(name)}</b></div>`;
+  }
+  return `<div class="focus ${c.status}"><b>${esc(c.name)}</b> <span class="meta">${esc(c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+}
+
+// Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
+// marked when someone needs the person
+export function mode_html(mode: View.Mode, pill: string): string[] {
+  const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
+  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`];
+}
+
 export function tabs_html(tabs: View.Tab[]): string[] {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";

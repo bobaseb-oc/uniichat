@@ -159,10 +159,20 @@ no cost display; desktop only.
       existed; the web's iOS bridge (APP) is only in the iOS web view, so desktop shows none.
       Proof: Cloud.test.ts 8/8; mutants (push route ungated, default on) each 7 pass 1 fail. The AASA and
       APNs-send gates aren't test-killable (tests have no APPLE/APNS set); covered by reading.
-- [ ] C1. Web Crew view: a Chat|Crew toggle (#chat, #crew, #crew/<name>, keys g c / g m); a tree
+- [x] C1. Web Crew view: a Chat|Crew toggle (#chat, #crew, #crew/<name>, keys g c / g m); a tree
       with managers collapsed and their workers rolled up; a focus pane with the agent's live
       session and its actions (tell, stop, approve/deny, dismiss); a "needs you" lane on top.
       In Chat mode, a pill shows "N working, M need you".
+      Done: View.view_tree/view_needs/view_pill/view_route/view_hash, acts Stop and Expand; Html.tree_html,
+      needs_html, focus_html, mode_html; #crew column, header switch, hash routes, keys g c / g m; the
+      focus's session is its agent page (live transcript, tools folded, tell by typing).
+      Proof: View.test.ts 12/12, Html.test.ts 9/9; View mutants (all open, no focus ancestors, needs order,
+      no decode, expand never folds, stop all) each kill one test (needs order survived at first: test
+      tightened); Html mutants (no stop, pill unmarked, no roll-up, raw name) killed; "href unescaped" is
+      equivalent (encodeURIComponent already escapes " < > &). Suite 178 pass, 3 baseline fails; tsc on
+      changed files 8 → 8. Headless Chrome render of a demo crew (8 managers, 40 workers) checked: the
+      first had no status glyphs (.mark clashed with the logo's class: renamed .st) and roll-ups cut off
+      (a folded manager now shows only its roll-up; tier and model in the tooltip).
 - [ ] C2. A pulse per agent for every view (status, current activity, last line); a view can
       watch several agents at once (the visible tiles).
 - [ ] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;

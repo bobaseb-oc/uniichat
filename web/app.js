@@ -929,6 +929,7 @@ function view_new() {
     minds: new Map,
     pages: new Map,
     page: null,
+    expanded: new Set,
     heard: null,
     alerted: new Map,
     notes: [],
@@ -1086,6 +1087,15 @@ function view_act(v, act) {
     case "Approve": {
       return [{ $: "approve", name: act.name, yes: act.yes }];
     }
+    case "Stop": {
+      return [{ $: "stop", name: act.name }];
+    }
+    case "Expand": {
+      if (!v.expanded.delete(act.name)) {
+        v.expanded.add(act.name);
+      }
+      return [];
+    }
     case "Goto": {
       if (act.name === null) {
         v.page = null;
@@ -1192,6 +1202,55 @@ function view_alerts(v, now) {
     }
     return due;
   });
+}
+function view_tree(v, now) {
+  const rows = view_crew(v, now);
+  const up = new Map(v.crew.map((c) => [c.name, c.parent]));
+  const focus = new Set;
+  for (let at = up.get(v.page?.name ?? ""), k = 0;at !== undefined && k < rows.length; k++) {
+    focus.add(at);
+    at = up.get(at);
+  }
+  const out = [];
+  let shut = Infinity;
+  rows.forEach((r, i) => {
+    if (r.depth > shut) {
+      return;
+    }
+    shut = Infinity;
+    const end = rows.findIndex((s, j) => j > i && s.depth <= r.depth);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const open2 = under.length > 0 && (v.expanded.has(r.name) || focus.has(r.name));
+    out.push({ ...r, kids: under.length, rollup: rollup(under), open: open2 });
+    if (under.length > 0 && !open2) {
+      shut = r.depth;
+    }
+  });
+  return out;
+}
+var ROLLUP = ["working", "waiting", "asking", "failed", "stopped", "done"];
+function rollup(crew) {
+  return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length]).filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+function view_needs(v) {
+  return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
+}
+function view_pill(v) {
+  if (v.crew.length === 0) {
+    return "";
+  }
+  const need = view_needs(v).length;
+  return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+function view_route(hash) {
+  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  if (m === null || m[1] === "chat") {
+    return { mode: "chat", name: null };
+  }
+  return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
+}
+function view_hash(mode, name) {
+  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 function ago(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -1515,6 +1574,54 @@ function crew_html(v, now) {
   });
   return [top, ...rows];
 }
+function acts_html(c) {
+  const x = (label, title, a, cls = "") => `<button class="x${cls}" title="${title}"${act_html(a)}>${label}</button>`;
+  switch (c.status) {
+    case "working":
+    case "waiting":
+      return x("■", "stop", { $: "Stop", name: c.name });
+    case "asking":
+      return x("✓", "approve", { $: "Approve", name: c.name, yes: true }, " yes") + x("×", "deny", { $: "Approve", name: c.name, yes: false });
+    default:
+      return x("×", "dismiss", { $: "Dismiss", name: c.name });
+  }
+}
+function focus_href(name) {
+  return ` href="${esc(view_hash("crew", name))}"`;
+}
+function tree_html(v, now) {
+  return view_tree(v, now).map((r) => {
+    const here = v.page?.name === r.name ? " here" : "";
+    const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
+    const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
+    const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
+    const what = `<span class="st">${CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
+    const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}</div>`;
+  });
+}
+function needs_html(v) {
+  return view_needs(v).map((c) => {
+    const why = c.status === "asking" ? "asks to start" : "failed";
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.name)}</b> ${why}</a>${acts_html(c)}</div>`;
+  });
+}
+function focus_html(v) {
+  const name = v.page?.name ?? null;
+  if (name === null) {
+    return `<div class="focus"><b>${esc(MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
+  }
+  const c = v.crew.find((x) => x.name === name);
+  if (c === undefined) {
+    return `<div class="focus"><b>${esc(name)}</b></div>`;
+  }
+  return `<div class="focus ${c.status}"><b>${esc(c.name)}</b> <span class="meta">${esc(c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+}
+function mode_html(mode, pill) {
+  const here = (m) => m === mode ? ` class="here"` : "";
+  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`];
+}
 function tabs_html(tabs) {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";
@@ -1668,7 +1775,9 @@ var P = {
   found: new Map,
   done: {},
   off: new Set,
-  step: ""
+  step: "",
+  crew: false,
+  g: 0
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -1796,6 +1905,9 @@ function chat() {
     attach([...ev.dataTransfer?.files ?? []]);
   };
   document.onclick = click;
+  onhashchange = crew_route;
+  document.addEventListener("keydown", crew_keys);
+  crew_route();
   visualViewport.onresize = () => draw(true);
   document.onscroll = () => {
     P.end = innerHeight + scrollY >= document.documentElement.scrollHeight - 1;
@@ -2360,7 +2472,44 @@ function bars() {
   $("#tabs").hidden = !crew && tabs.length < 2;
   $("#tabs").classList.toggle("crew", crew);
   markup($("#tabs"), crew ? crew_html(v, Date.now()) : tabs_html(tabs));
+  crew_bars();
   import_bar();
+}
+function crew_route() {
+  const r = view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+    act({ $: "Goto", name: r.name });
+  }
+  P.crew = r.mode === "crew";
+  draw(true);
+}
+function crew_bars() {
+  const mode = P.crew ? "crew" : "chat";
+  document.body.classList.toggle("crewmode", P.crew && !P.guest);
+  markup($("#mode"), mode_html(mode, view_pill(v)));
+  $("#crew").hidden = !P.crew;
+  if (!P.crew) {
+    return;
+  }
+  markup($("#crew .needs"), needs_html(v));
+  markup($("#crew .card"), [focus_html(v)]);
+  markup($("#crew .tree"), tree_html(v, Date.now()));
+  const hash = view_hash("crew", v.page?.name ?? null);
+  if (location.hash !== hash) {
+    history.replaceState(null, "", location.pathname + location.search + hash);
+  }
+}
+function crew_keys(ev) {
+  const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;
+  if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat" }[ev.key] : undefined;
+  P.g = ev.key === "g" ? Date.now() : 0;
+  if (to !== undefined) {
+    location.hash = to;
+  }
 }
 function anchor() {
   for (const r of document.querySelectorAll("#log [data-a]")) {

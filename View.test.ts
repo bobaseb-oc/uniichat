@@ -110,3 +110,80 @@ test("a Claude Code worker asking to start: first in the crew, alerted, approved
   expect(View.view_act(v, { $: "Approve", name: "Cc", yes: true })).toEqual([{ $: "approve", name: "Cc", yes: true }]);
   expect(View.view_asking(v)).toEqual(["Cc"]);
 });
+
+// The web's Crew view
+// -------------------
+
+// the hash names the mode and the agent in focus; a name round-trips,
+// odd characters too; anything else is the chat
+test("routes: #chat, #crew, #crew/<name>", () => {
+  expect(View.view_route("")).toEqual({ mode: "chat", name: null });
+  expect(View.view_route("#chat")).toEqual({ mode: "chat", name: null });
+  expect(View.view_route("#crew")).toEqual({ mode: "crew", name: null });
+  expect(View.view_route("#crew/Ada")).toEqual({ mode: "crew", name: "Ada" });
+  expect(View.view_route("#nonsense")).toEqual({ mode: "chat", name: null });
+  expect(View.view_route(View.view_hash("crew", "a b/c"))).toEqual({ mode: "crew", name: "a b/c" });
+  expect(View.view_hash("chat", "x")).toBe("#chat");
+  expect(View.view_hash("crew", null)).toBe("#crew");
+});
+
+const team = () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [
+    crew("Mgr", "main", "manager", "waiting", 2),
+    crew("A", "Mgr", "worker", "working", 3),
+    crew("B", "Mgr", "worker", "working", 4),
+    crew("C", "Mgr", "worker", "done", 5),
+    crew("D", "Mgr", "worker", "failed", 6),
+    crew("Sub", "Mgr", "manager", "waiting", 7),
+    crew("E", "Sub", "worker", "working", 8),
+    crew("Ask", "main", "claude", "asking", 9),
+    crew("Solo", "main", "worker", "done", 1),
+  ] });
+  return v;
+};
+
+// managers start folded: a row rolls up all under it, by status; opened,
+// its children show (a folded sub-manager rolls up its own)
+test("the tree folds managers and rolls up their workers", () => {
+  const v = team();
+  const names = () => View.view_tree(v, 0).map((r) => r.name);
+  expect(names()).toEqual(["Ask", "Mgr", "Solo"]);
+  const mgr = View.view_tree(v, 0).find((r) => r.name === "Mgr")!;
+  expect(mgr.kids).toBe(6);
+  expect(mgr.open).toBe(false);
+  expect(mgr.rollup).toBe("3 working, 1 waiting, 1 failed, 1 done");
+  View.view_act(v, { $: "Expand", name: "Mgr" });
+  expect(names()).toEqual(["Ask", "Mgr", "D", "B", "A", "Sub", "C", "Solo"]);
+  expect(View.view_tree(v, 0).find((r) => r.name === "Sub")!.rollup).toBe("1 working");
+  expect(View.view_tree(v, 0).find((r) => r.name === "A")!.rollup).toBe("");
+  View.view_act(v, { $: "Expand", name: "Mgr" });
+  expect(names()).toEqual(["Ask", "Mgr", "Solo"]);
+});
+
+// the agent in focus shows even under folded managers: its ancestors open
+test("the focused agent's managers open for it", () => {
+  const v = team();
+  View.view_act(v, { $: "Goto", name: "E" });
+  expect(View.view_tree(v, 0).map((r) => r.name)).toContain("E");
+});
+
+// what needs the person, asking first: on top of the Crew view and as
+// the Chat's pill
+test("needs you: asking, then failed; the pill counts them with those at work", () => {
+  const v = team();
+  expect(View.view_needs(v).map((c) => c.name)).toEqual(["Ask", "D"]);
+  expect(View.view_pill(v)).toBe("3 working, 2 need you");
+  View.view_hear(v, { $: "state", ...v, crew: [crew("F1", "main", "worker", "failed"), crew("Q", "main", "claude", "asking"), crew("F2", "main", "worker", "failed")] });
+  expect(View.view_needs(v).map((c) => c.name)).toEqual(["Q", "F1", "F2"]);
+  View.view_hear(v, { $: "state", ...v, crew: [crew("A", "main", "worker", "working")] });
+  expect(View.view_pill(v)).toBe("1 working");
+  View.view_hear(v, { $: "state", ...v, crew: [] });
+  expect(View.view_pill(v)).toBe("");
+});
+
+// the Crew view's stop: that agent only
+test("Stop stops the agent named", () => {
+  const v = team();
+  expect(View.view_act(v, { $: "Stop", name: "A" })).toEqual([{ $: "stop", name: "A" }]);
+});

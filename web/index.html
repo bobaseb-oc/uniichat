@@ -19,11 +19,14 @@
 <body class="guest">
 <header>
   <button class="brand" data-go="/" data-act='{"$":"Goto","name":null}'><i class="mark"></i><span>UniiChat</span></button>
+  <nav id="mode"></nav>
   <span class="net">offline</span>
   <button class="imping" popovertarget="import" hidden><span></span><progress max="1" value="0"></progress></button>
   <button class="credits" data-go="/account"></button>
   <button class="menu" popovertarget="menu">☰</button>
 </header>
+<!-- the Crew view (#crew): who needs you, the agent in focus, the tree; the log shows the focus's session -->
+<aside id="crew" hidden><section class="needs"></section><div class="card"></div><div class="tree"></div></aside>
 <main id="log"><div class="rows"></div><div class="tail"></div></main>
 <main id="account" hidden></main>
 <footer>

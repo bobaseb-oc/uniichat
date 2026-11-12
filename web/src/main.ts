@@ -89,6 +89,8 @@ const P = {
   done  : {} as Import.Done,
   off   : new Set<string>(),
   step  : "" as "" | "start" | "pay" | "send" | "run" | "seen" | "done",
+  crew  : false,
+  g     : 0,
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -247,6 +249,9 @@ function chat(): void {
     attach([...(ev.dataTransfer?.files ?? [])]);
   };
   document.onclick = click;
+  onhashchange = crew_route;
+  document.addEventListener("keydown", crew_keys);
+  crew_route();
   // a phone's keyboard up or down: the bottom stays in sight, if at it
   visualViewport!.onresize = () => draw(true);
   document.onscroll = () => {
@@ -944,7 +949,59 @@ function bars(): void {
   $("#tabs").hidden = !crew && tabs.length < 2;
   $("#tabs").classList.toggle("crew", crew);
   markup($("#tabs"), crew ? Html.crew_html(v, Date.now()) : Html.tabs_html(tabs));
+  crew_bars();
   import_bar();
+}
+
+// Crew
+// ====
+// The web's two modes by location.hash (View.view_route): #chat, or
+// #crew[/<name>], where a column shows who needs the person, the agent in
+// focus and the tree, and the log the focus's session (its page). Keys:
+// g c, the Crew; g m, the chat (not while typing).
+
+// the hash's focus put on screen: in the Crew, its page (none: Unii's);
+// to the chat, Unii's
+function crew_route(): void {
+  const r = View.view_route(location.hash);
+  const at = v.page?.name ?? null;
+  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+    act({ $: "Goto", name: r.name });
+  }
+  P.crew = r.mode === "crew";
+  draw(true);
+}
+
+// the header's switch and pill; in the Crew, its column, and the hash
+// kept on the focus (a Goto elsewhere: a tab, the logo)
+function crew_bars(): void {
+  const mode = P.crew ? "crew" : "chat";
+  document.body.classList.toggle("crewmode", P.crew && !P.guest);
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v)));
+  $("#crew").hidden = !P.crew;
+  if (!P.crew) {
+    return;
+  }
+  markup($("#crew .needs"), Html.needs_html(v));
+  markup($("#crew .card"), [Html.focus_html(v)]);
+  markup($("#crew .tree"), Html.tree_html(v, Date.now()));
+  const hash = View.view_hash("crew", v.page?.name ?? null);
+  if (location.hash !== hash) {
+    history.replaceState(null, "", location.pathname + location.search + hash);
+  }
+}
+
+// g, then c or m within a second: the Crew, or the chat
+function crew_keys(ev: KeyboardEvent): void {
+  const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;
+  if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat" } as Record<string, string>)[ev.key] : undefined;
+  P.g = ev.key === "g" ? Date.now() : 0;
+  if (to !== undefined) {
+    location.hash = to;
+  }
 }
 
 // the first row in sight with a first message (no row inside it): that

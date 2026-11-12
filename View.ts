@@ -89,6 +89,15 @@ export type Heard = { busy: boolean; status: Map<string, Status> };
 // a crew row as drawn: its agent, how deep under Unii, its text
 export type CrewRow = Crew & { depth: number; text: string };
 
+// a row of the web's Crew tree: how many are under it, them by status
+// ("3 working, 1 failed"; none: ""), whether its children show
+export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
+
+// the web's two modes, and the agent in focus (location.hash: #chat,
+// #crew, #crew/<name>)
+export type Mode = "chat" | "crew";
+export type Route = { mode: Mode; name: string | null };
+
 // fold: the tops shown (null: not folded); nodes and whole: the summaries
 // ("id+n") and messages known; open: the blocks opened (true) or shut by
 // hand; minds: the thoughts after each message; pages: the agents' asked
@@ -105,6 +114,7 @@ export type View = State & {
   minds : Map<number, string[]>;
   pages : Map<string, Page>;
   page  : Page | null;
+  expanded : Set<string>;
   heard : Heard | null;
   alerted : Map<string, number>;
   notes : string[];
@@ -186,6 +196,8 @@ export type Act =
   | { $: "Goto"; name: string | null }          // a tab, a name, the logo (null: UniiChat)
   | { $: "Dismiss"; name: string }              // a done agent out of the crew
   | { $: "Approve"; name: string; yes: boolean } // a Claude Code worker asking to start: let it, or not
+  | { $: "Stop"; name: string }                 // that agent's work stopped (the Crew view)
+  | { $: "Expand"; name: string }               // a manager's workers shown, or folded again
 
 // what a page draws, top to bottom
 export type Row =
@@ -294,7 +306,7 @@ export function Cap(text: string): Row {
 // ====
 
 // a crew row's mark by status, and the order siblings are listed in
-const CREW: Record<Status, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+export const CREW: Record<Status, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
 const STATUSES: Status[] = ["asking", "failed", "working", "waiting", "stopped", "done"];
 // the least time between two alerts of a key (a turn's ends: one in a run)
 const ALERT_GAP = 20000;
@@ -321,6 +333,7 @@ export function view_new(): View {
     minds     : new Map(),
     pages     : new Map(),
     page      : null,
+    expanded  : new Set(),
     heard     : null,
     alerted   : new Map(),
     notes     : [],
@@ -487,6 +500,15 @@ export function view_act(v: View, act: Act): Client[] {
     case "Approve": {
       return [{ $: "approve", name: act.name, yes: act.yes }];
     }
+    case "Stop": {
+      return [{ $: "stop", name: act.name }];
+    }
+    case "Expand": {
+      if (!v.expanded.delete(act.name)) {
+        v.expanded.add(act.name);
+      }
+      return [];
+    }
     case "Goto": {
       if (act.name === null) {
         v.page = null;
@@ -638,6 +660,69 @@ export function view_alerts(v: View, now: number): Alert[] {
     }
     return due;
   });
+}
+
+// the Crew tree: the crew's rows (view_crew), a manager's children shown
+// once opened, or while the agent in focus is under it; each row with
+// what's under it, by status
+export function view_tree(v: View, now: number): TreeRow[] {
+  const rows = view_crew(v, now);
+  const up = new Map(v.crew.map((c) => [c.name, c.parent]));
+  const focus = new Set<string>();
+  for (let at = up.get(v.page?.name ?? ""), k = 0; at !== undefined && k < rows.length; k++) {
+    focus.add(at);
+    at = up.get(at);
+  }
+  const out: TreeRow[] = [];
+  let shut = Infinity;
+  rows.forEach((r, i) => {
+    if (r.depth > shut) {
+      return;
+    }
+    shut = Infinity;
+    const end = rows.findIndex((s, j) => j > i && s.depth <= r.depth);
+    const under = rows.slice(i + 1, end < 0 ? rows.length : end);
+    const open = under.length > 0 && (v.expanded.has(r.name) || focus.has(r.name));
+    out.push({ ...r, kids: under.length, rollup: rollup(under), open });
+    if (under.length > 0 && !open) {
+      shut = r.depth;
+    }
+  });
+  return out;
+}
+
+// agents by status, in ROLLUP order: "3 working, 1 failed" ("": none)
+const ROLLUP: Status[] = ["working", "waiting", "asking", "failed", "stopped", "done"];
+function rollup(crew: Crew[]): string {
+  return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length] as const)
+    .filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+
+// the agents that need the person, those asking first, then the failed
+export function view_needs(v: View): Crew[] {
+  return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
+}
+
+// the Chat's pill: "3 working, 2 need you" ("": no crew)
+export function view_pill(v: View): string {
+  if (v.crew.length === 0) {
+    return "";
+  }
+  const need = view_needs(v).length;
+  return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+
+// the web's route by its hash, and back
+export function view_route(hash: string): Route {
+  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  if (m === null || m[1] === "chat") {
+    return { mode: "chat", name: null };
+  }
+  return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
+}
+
+export function view_hash(mode: Mode, name: string | null): string {
+  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 
 // the Claude Code workers waiting for the person's approval, by name
