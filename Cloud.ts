@@ -10,8 +10,8 @@
 // shows (in no link). An emailed link works until it expires (mail apps open it
 // first); other tickets once. `unii web`: a signed-in terminal (its Bearer
 // token, never a cookie) gets a one-minute, one-use link for its own account.
-// Tokens are kept as hashes. The iOS app's links
-// open it (AASA), its phones get each turn's last message (APNs).
+// Tokens are kept as hashes. With phones on (UNII_PHONE=1), the iOS app's
+// links open it (AASA), its phones get each turn's last message (APNs).
 
 import type { Database } from "bun:sqlite";
 import * as crypto from "node:crypto";
@@ -45,6 +45,7 @@ export type Cloud = {
   post    : (mail: object) => Promise<string | null>;
   waits   : Map<string, () => void>;
   billing : Billing;
+  phone   : boolean;
 };
 
 // Constants
@@ -106,7 +107,7 @@ export namespace Cloud {
     const db = Disk.db(file);
     db.exec(SCHEMA);
     const base = { db, wal: file + "-wal", change, signed, post, waits: new Map() };
-    return { ...base, billing: Billing.open(base) };
+    return { ...base, billing: Billing.open(base), phone: config.PHONE };
   }
 
   // a terminal's session made: its wait answered, if here
@@ -256,7 +257,7 @@ export namespace Cloud {
   // the start of a message, to every phone of the user's (a push token
   // goes with its sign-in); a phone APNs no longer knows is forgotten
   export function push(cloud: Cloud, user: string, text: string): void {
-    if (!config.APNS || !config.KEYS.apns) {
+    if (!cloud.phone || !config.APNS || !config.KEYS.apns) {
       return;
     }
     const sql = "select token from pushes where user = ?";
@@ -395,7 +396,7 @@ export namespace Cloud {
       }
       case "/.well-known/apple-app-site-association": {
         const links = [{ "/": "/auth" }];
-        return config.APPLE ? Response.json({ applinks: { details: [{ appIDs: [config.APPLE], components: links }] } }) : null;
+        return cloud.phone && config.APPLE ? Response.json({ applinks: { details: [{ appIDs: [config.APPLE], components: links }] } }) : null;
       }
       case "/api/logout": {
         db.query("delete from sessions where hash = ?").run(Cloud.hash(Cloud.token(req)));
@@ -420,6 +421,9 @@ export namespace Cloud {
         return Response.json({ ...(await Cloud.data(cloud, user)), bills: billing.bills, credits: billing.credits(user.id) });
       }
       case "/api/push": {
+        if (!cloud.phone) {
+          return null;
+        }
         const token = (await req.text()).trim();
         if (!/^[0-9a-f]{64,256}$/.test(token)) {
           return Response.json({ error: "Not a push token" }, { status: 400 });

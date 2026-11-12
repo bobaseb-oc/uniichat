@@ -60,6 +60,9 @@ export const MCP        = config_path(config_get("mcp", ""));
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
+// phones at all (UNII_PHONE=1): off, as phones aren't allowed at work;
+// then no pushes, push tokens or AASA, whatever APPLE and APNS say
+export const PHONE      = config_get("phone", "") === "1";
 export const APPLE      = config_get("apple", "");
 export const APNS       = config_get("apns", "");
 

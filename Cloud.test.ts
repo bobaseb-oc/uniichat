@@ -146,3 +146,20 @@ test("a web ticket can't confirm a terminal", async () => {
   const out = await Cloud.confirm(cloud, post);
   expect(out.headers.get("location")).toContain("expired=1");
 });
+
+// Phones (APNs pushes, push tokens, the iOS app's AASA) are off unless
+// UNII_PHONE=1: no route answers and nothing is stored or sent.
+test("phone features are off by default", async () => {
+  const cloud = cloud_new();
+  expect(cloud.phone).toBe(false);
+  const me = Cloud.session(cloud, { id: "u1", name: "me@x.com" });
+  const token = "a".repeat(64);
+  const push = () => Cloud.http(cloud, new Request("http://127.0.0.1/api/push", { method: "POST", headers: { authorization: "Bearer " + me }, body: token }));
+  const stored = () => cloud.db.query("select count(*) n from pushes").get() as { n: number };
+  expect(await push()).toBeNull();
+  expect(stored().n).toBe(0);
+  expect(await Cloud.http(cloud, new Request("http://127.0.0.1/.well-known/apple-app-site-association"))).toBeNull();
+  cloud.phone = true;
+  expect((await push())?.status).toBe(200);
+  expect(stored().n).toBe(1);
+});

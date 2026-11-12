@@ -153,8 +153,12 @@ no cost display; desktop only.
       unmutated 7/7 first (the "counted" mutant survived at first: test tightened to 3 open tickets).
       Full suite 166 pass, the 3 baseline fails. tsc on changed files 71 → 72, the one new is the same
       no-@types/node noise (process.platform). app.js rebuild: HEAD reproducible, +3 lines.
-- [ ] B. Phone features hidden behind a setting (UNII_PHONE, default off): no APNs pushes,
+- [x] B. Phone features hidden behind a setting (UNII_PHONE, default off): no APNs pushes,
       no AASA, no phone-pairing UI. The code stays, so it's easy to undo.
+      Done: Config.PHONE (UNII_PHONE=1), cloud.phone gates Cloud.push, /api/push, AASA. No pairing UI
+      existed; the web's iOS bridge (APP) is only in the iOS web view, so desktop shows none.
+      Proof: Cloud.test.ts 8/8; mutants (push route ungated, default on) each 7 pass 1 fail. The AASA and
+      APNs-send gates aren't test-killable (tests have no APPLE/APNS set); covered by reading.
 - [ ] C1. Web Crew view: a Chat|Crew toggle (#chat, #crew, #crew/<name>, keys g c / g m); a tree
       with managers collapsed and their workers rolled up; a focus pane with the agent's live
       session and its actions (tell, stop, approve/deny, dismiss); a "needs you" lane on top.
