@@ -214,9 +214,20 @@ no cost display; desktop only.
         71 → 76, all 5 the no-@types/node noise (process). PTY smoke (script, throwaway server, token
         file): /crew full enters the alternate screen and draws its head, j moves, q leaves, the footer
         is drawn again.
-- [ ] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
+- [x] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
       a background process that connects as a device and runs jobs (Machine.run), with no screen.
       It gets the same approvals as the terminal.
+      Done: Device.ts holds the job rules both use (Term.ts's term_jobs/term_run moved there): run once,
+      computer use only with UNII_COMPUTER=1, an output over the frame refused by its size, a job the
+      server drops stopped; approvals stay server-side (a Claude Code worker waits for ✓ from any view).
+      `unii device [url]` (Term.ts word; launcher `device)`) connects as this device with no screen; the
+      server gives a job to the newest live tab of a device, so it and a terminal can both be open.
+      (`serve` was checked first: it runs a server, not a device.)
+      Proof: Device.test.ts 5/5 against a fake server socket (Bearer and device name sent, once, refused
+      computer job never runs, size cap, stop on a dropped id); mutants (computer allowed, no size cap,
+      runs twice, never stops, stops all) each 4 pass 1 fail, unmutated 5/5. Suite 197 pass, 3 baseline
+      fails. tsc: only missing Bun/Node type noise (Buffer moved with the code). Live: signed out it
+      refuses ("sign in first"); signed in it connects and stays up, no errors.
 
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
@@ -226,3 +237,9 @@ no cost display; desktop only.
 - Bigger import: tool I/O, older/full chat history, more pdf/xlsx, subagent transcripts.
 
 ## Review
+- 2026-11-12, Crew UI and local sign-in (feat/crew-ui, A → D, one commit each, nothing pushed):
+  `unii web` (Red Zone, reviewed and approved by the user), phones off by default, the web Crew view
+  (Chat | Crew, tree with roll-ups, needs-you lane, focus card with actions, grid of tiles, timeline
+  lane, pulses, multi-watch, demo crew at /?demo=1#crew), /crew full in the terminal, `unii device`.
+  Suite 164 → 197 pass, the same 3 known fails. Found only end to end: boot() dropped the #crew hash.
+  By hand still: a real crew (managers with workers) watched and steered from the web.

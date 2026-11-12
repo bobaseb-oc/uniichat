@@ -11,6 +11,8 @@
 #   unii serve        run the server in the foreground
 #   unii start|stop   start (background) or stop the server and SearXNG
 #   unii web          open the site in your browser, signed in as your terminal
+#   unii device       this computer runs the agents' jobs with no terminal open
+#                     (foreground; e.g. `unii device &` for the background)
 #   unii log          follow the server's log (sign-in links print there)
 #   unii knowledge    rebuild ~/.unii-prime/knowledge.json (OKF, graphify guides,
 #                     repo digests and cards; local/prime/knowledge.ts)
@@ -153,6 +155,7 @@ case "${1:-}" in
   start) server_start ;;
   stop)  server_stop ;;
   web)   server_start && term_exec web "$URL" ;;
+  device) server_start && term_exec device "$URL" ;;
   log)   exec tail -f "$LOG" ;;
   knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "unii: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;

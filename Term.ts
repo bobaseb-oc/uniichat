@@ -23,8 +23,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import type { Kind } from "./AskAI.ts";
 import * as Cost from "./Cost.ts";
+import * as Device from "./Device.ts";
 import * as Import from "./Import.ts";
-import { Machine, type Job } from "./Machine.ts";
+import { Machine } from "./Machine.ts";
 import * as Notify from "./Notify.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
@@ -65,7 +66,7 @@ type Term = {
 };
 
 // a job running here: its stop, its send to the background (a shell's)
-type Run = { abort: AbortController; away: AbortController; name: string };
+type Run = Device.Run;
 
 // a line of /help: how it is typed ("": keys only), its keys, what it
 // does; it runs on its argument, or by a key on "" (or the key's name)
@@ -84,9 +85,10 @@ const HELP   = ARGS.some((a) => ["help", "--help", "-h"].includes(a));
 const ASKVER = ARGS.includes("version");
 const UPDATE = ARGS.includes("update");
 const SERVE  = ARGS.includes("serve");
+const DEVICED = ARGS.includes("device");
 const WEBIN  = ARGS.includes("web");
 const PORT   = SERVE ? ARGS.find((a) => /^\d+$/.test(a)) : undefined;
-const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "web"];
+const WORDS  = ["login", "help", "--help", "-h", "version", "update", "serve", "web", "device"];
 const WEB    = /^https?:\/\//;
 const ODD    = ARGS.find((a) => !WORDS.includes(a) && !WEB.test(a) && a !== PORT);
 const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
@@ -105,6 +107,8 @@ if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
 const USAGE = `Usage: unii [url]           the chat (url: $UNII_URL, else http://127.0.0.1:8788)
        unii login [url]     sign in
        unii web [url]       open the site in your browser, signed in as this terminal
+       unii device [url]    this computer runs the agents' jobs, with no screen
+                            (as a terminal does; the newest one open runs them)
        unii update [url]    disabled in this build (it ran curl | sh)
        unii version         this unii's version
        unii serve [port]    your own UniiChat server, at http://127.0.0.1:8788
@@ -132,6 +136,9 @@ const HOME_REPO = process.env.UNII_HOME_REPO || "";
 
 // whether the agent may use this device's screen, mouse and keyboard
 const COMPUTER = process.env.UNII_COMPUTER === "1";
+
+// how this device runs the server's jobs (Device.ts), a terminal or not
+const RULES: Device.Rules = { work: WORK, home: HOME_REPO || undefined, computer: COMPUTER };
 
 // the margin left of each line
 const MARGIN = 2;
@@ -260,8 +267,14 @@ function term_new(url: string): Term {
 }
 
 // connects, by View's link, naming this device
+// this device as the socket names it: its name, whether it does computer
+// use, its work dir, its home repo
+function term_device(): string {
+  return "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
+}
+
 function term_connect(t: Term): void {
-  const dev = "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
+  const dev = term_device();
   View.link_open(t.v, {
     open : (query) => new WebSocket(t.url.replace(/^http/, "ws") + "/ws" + query + dev, { headers: term_auth() } as any),
     post : (path, body) => fetch(t.url + path, { method: "POST", headers: term_auth(), body }),
@@ -309,7 +322,7 @@ function term_hear(t: Term, msg: View.Server): void {
   }
   term_went(t, was);
   if (msg.$ === "jobs" || msg.$ === "job") {
-    term_jobs(t, msg);
+    Device.device_jobs(t.v, t.jobs, msg, RULES, (out) => term_send(t, out));
     return;
   }
   term_print(t, msg);
@@ -1116,39 +1129,6 @@ function term_paint(t: Term): void {
 // Jobs
 // ----
 
-// the server's word on this terminal's jobs: a job, run unless it runs
-// or its output waits for an answer; or their ids, the rest halted
-function term_jobs(t: Term, msg: View.Server & { $: "jobs" | "job" }): void {
-  if (msg.$ === "job") {
-    const sent = t.v.out.some((p) => p.msg.$ === "out" && p.msg.job === msg.id);
-    if (!t.jobs.has(msg.id) && !sent) {
-      term_run(t, msg.id, msg.job as Job);
-    }
-    return;
-  }
-  for (const [id, run] of t.jobs) {
-    if (!msg.ids.includes(id)) {
-      run.abort.abort();
-    }
-  }
-}
-
-// runs a job here, and answers its output; one too large for a socket
-// message (View.FRAME, the 1 KiB left for the act around it) answers its
-// size instead, failed (sent, it would close the socket at every try)
-async function term_run(t: Term, id: string, job: Job): Promise<void> {
-  const abort = new AbortController();
-  const away  = new AbortController();
-  t.jobs.set(id, { abort, away, name: job.name });
-  const no   = { text: "This terminal does no computer use.", fail: true };
-  const out  = job.name === "computer" && !COMPUTER ? no : await Machine.run(job, WORK, abort.signal, away.signal, HOME_REPO || undefined);
-  const size = Buffer.byteLength(JSON.stringify(out));
-  const most = View.FRAME - 1024;
-  const big  = { text: "The output, " + size + " bytes, is over the " + most + " a tool may send.", fail: true };
-  t.jobs.delete(id);
-  term_send(t, { $: "out", job: id, out: size > most ? big : out });
-}
-
 // the shell commands running here, sent to the background: each answers
 // now and goes on, its output to a file; dropped from the jobs, so the
 // server's ids no longer stop them (quitting does)
@@ -1273,6 +1253,23 @@ async function term_signed(url: string): Promise<boolean> {
   return res === null || res.status !== 401;
 }
 
+// `unii device`: this computer runs the server's jobs with no screen
+// (Device.ts), signed in as this terminal is; signed out, it stops
+async function device_run(url: string): Promise<void> {
+  if (!await term_signed(url)) {
+    login_fail("sign in first: unii login");
+  }
+  const lost = async (up: boolean) => {
+    if (!up && !await term_signed(url)) {
+      login_fail("signed out: unii login, then unii device again");
+    }
+    console.error("unii device: offline, trying again");
+    return true;
+  };
+  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("unii device: " + line), lost);
+  console.log("unii device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
+}
+
 // `unii web`: a one-use link (a minute) that signs a browser in as this
 // terminal, printed and opened (`open` may be refused, e.g. in a sandbox)
 async function web_run(url: string): Promise<void> {
@@ -1307,6 +1304,8 @@ if (HELP || ODD !== undefined) {
   await login_run(SERVER);
 } else if (WEBIN) {
   await web_run(SERVER);
+} else if (DEVICED) {
+  await device_run(SERVER);
 } else {
   if (!await term_signed(SERVER)) {
     await login_run(SERVER);
