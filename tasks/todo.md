@@ -1,4 +1,4 @@
-# UniiChat local: LiteLLM + primed memory tree
+# Legion (OnCorps): plans and proof
 
 Plan: ~/.claude/plans/can-you-make-me-idempotent-waterfall.md
 
