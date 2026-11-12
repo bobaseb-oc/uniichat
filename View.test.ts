@@ -362,3 +362,19 @@ test("questions in the terminal: the listing, and /answer and /drop parsed", () 
   expect(View.view_drop(v, "7")).toEqual({ $: "Drop", q: 7 });
   expect(View.view_drop(v, "x")).toBe("No open question x: /questions lists them.");
 });
+
+// the status line both views show (as Claude Code's): offline first, the
+// folder and branch, the model, agents at work, today's spend, the mode,
+// questions open. The web builds it from the state: the latest device's
+// report (dir, branch, spend), the pick's model, the crew, the mode
+test("the status line, and the web's from the state", () => {
+  const s = { up: true, dir: "repo", branch: "main", model: "opus", working: 2, spend: { spend: 1.234, stale: true }, questions: 1, mode: "plan" as const };
+  expect(View.status_text(s)).toBe("repo ⎇ main · opus · 2 agents at work · $1.23* today · plan mode · 1 question (/questions)");
+  expect(View.status_text({ ...s, up: false, branch: null, working: 0, spend: { spend: null, stale: false }, questions: 0, mode: undefined })).toBe("offline · repo · opus");
+  const v = View.view_new();
+  expect(View.view_status(v)).toBe("");
+  View.view_hear(v, { $: "state", ...v, up: true, agents: ["A"], mode: "auto", status: { device: "mac", dir: "uniichat", branch: "feat/crew-ui", spend: 0.5, stale: false } } as any);
+  v.up = true;
+  v.pick = { model: "sonnet-5.5" } as any;
+  expect(View.view_status(v)).toBe("mac: uniichat ⎇ feat/crew-ui · sonnet-5.5 · 1 agent at work · $0.50 today · auto mode");
+});

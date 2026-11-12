@@ -978,6 +978,8 @@ function bars(): void {
   const crew = v.crew.length > 0;
   $("#tabs").hidden = crew || tabs.length < 2;
   markup($("#tabs"), crew ? [] : Html.tabs_html(tabs));
+  // textContent: the line is device-reported text, never markup
+  $("#status").textContent = P.guest ? "" : View.view_status(v);
   crew_bars();
   import_bar();
 }

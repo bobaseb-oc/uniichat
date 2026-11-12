@@ -63,6 +63,7 @@ type Term = {
   goto?   : string | null; // the last alert's agent, shown as the terminal comes back
   branch? : string | null; // the branch of the folder Unii works in (term_status)
   spend?  : Cost.Spend;    // today's LiteLLM spend (term_status)
+  reported?: string;       // the status last sent as this device's (term_status)
 };
 
 // a job running here: its stop, its send to the background (a shell's)
@@ -350,14 +351,16 @@ function term_dir(): string {
   return dir.startsWith("~/") ? os.homedir() + dir.slice(1) : dir;
 }
 
-// the status line's branch and today's spend, read anew (Cost.ts: the
-// refresher run when due)
+// the status line's branch and today's spend, read anew (Device.ts), and
+// sent as this device's report when changed (the web's status line)
 function term_status(t: Term, draw = true): void {
-  const git = Bun.spawnSync(["git", "-C", term_dir(), "branch", "--show-current"], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
-  t.branch = git.exitCode === 0 ? git.stdout.toString().trim() || null : null;
-  t.spend = Cost.cost_read(Cost.COST_CACHE, Date.now());
-  if (t.spend.due) {
-    Cost.cost_refresh(Cost.COST_REFRESH);
+  const s = Device.device_status(RULES, Date.now()) as View.Client & { $: "status" };
+  t.branch = s.branch;
+  t.spend = { spend: s.spend, stale: s.stale, due: false };
+  const said = JSON.stringify(s);
+  if (said !== t.reported) {
+    t.reported = said;
+    term_send(t, s);
   }
   if (draw) {
     term_draw(t);
@@ -1126,7 +1129,7 @@ function term_paint(t: Term): void {
   const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
   const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
   const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
-  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length };
+  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length, mode: t.v.mode };
   const under = Paint.rule_text(t.v.pick === null && t.v.up ? "" : Paint.status_text(status), iw);
   const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));

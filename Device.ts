@@ -9,6 +9,9 @@
 // stopped. Approvals stay the server's (a Claude Code worker waits for
 // the person's ✓, from the web or a terminal), so a device asks nothing.
 
+import * as os from "node:os";
+import * as path from "node:path";
+import * as Cost from "./Cost.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as View from "./View.ts";
 
@@ -55,6 +58,25 @@ export async function device_run(jobs: Map<string, Run>, id: string, job: Job, r
   send({ $: "out", job: id, out: size > most ? big : out });
 }
 
+// how often a device reports its status (ms)
+export const STATUS_EVERY = 60_000;
+
+// this device's report for the status line (the web's; the terminal draws
+// its own from it): the folder Unii works in (its home repo, else
+// <work>/main) and its branch, today's LiteLLM spend (Cost.ts: the
+// refresher run when due)
+export function device_status(rules: Rules, now: number): View.Client {
+  const raw = rules.home || rules.work + "/main";
+  const dir = raw.startsWith("~/") ? os.homedir() + raw.slice(1) : raw;
+  const git = Bun.spawnSync(["git", "-C", dir, "branch", "--show-current"], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
+  const branch = git.exitCode === 0 ? git.stdout.toString().trim() || null : null;
+  const spend = Cost.cost_read(Cost.COST_CACHE, now);
+  if (spend.due) {
+    Cost.cost_refresh(Cost.COST_REFRESH);
+  }
+  return { $: "status", dir: path.basename(dir) || "~", branch, spend: spend.spend, stale: spend.stale };
+}
+
 // `legion device`: connects to the server at url as this device (auth: its
 // session's header; query: its name, work dir, whether it does computer
 // use) and runs its jobs, with no screen; what goes wrong, to log. A
@@ -76,5 +98,8 @@ export function device_open(url: string, auth: Record<string, string>, query: st
     },
     lost,
   });
+  const report = () => send(device_status(rules, Date.now()));
+  report();
+  setInterval(report, STATUS_EVERY).unref();
   return v;
 }

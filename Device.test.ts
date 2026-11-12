@@ -7,6 +7,8 @@
 // refused by its size; a job the server drops is stopped.
 
 import { afterAll, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as Device from "./Device.ts";
 import * as View from "./View.ts";
 
@@ -97,4 +99,16 @@ test("a job the server no longer lists is stopped", async () => {
   sock!.send(JSON.stringify({ $: "jobs", ids: [] }));
   expect(await until(() => outs().some((o) => o.job === "j4"))).toBe(true);
   expect(runs.find((r) => r.job.input === "slow")!.signal.aborted).toBe(true);
+});
+
+// a device's report for the web's status line (Device.device_status): the
+// folder Unii works in (its home repo, else <work>/main), its branch
+test("a device reports the folder Unii works in and its branch", () => {
+  const repo = fs.mkdtempSync(os.tmpdir() + "/legion-home-");
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", repo]);
+  const s = Device.device_status({ work: "/nowhere", home: repo, computer: false }, Date.now()) as any;
+  expect(s).toMatchObject({ $: "status", dir: repo.split("/").pop(), branch: "trunk" });
+  expect(typeof s.stale).toBe("boolean");
+  const none = Device.device_status({ work: os.tmpdir(), computer: false }, Date.now()) as any;
+  expect(none).toMatchObject({ dir: "main", branch: null });
 });

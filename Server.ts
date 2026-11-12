@@ -47,7 +47,7 @@ import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -96,6 +96,7 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // post runs); writes, held: the posts logging, one after another, and
 // the logging held meanwhile (null: none); wallet: what pays its calls
 type Chat = {
+  status?: DeviceStatus; // the latest device's report, for the web's status line
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -1118,7 +1119,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1344,6 +1345,9 @@ export namespace Chat {
       case "mode": {
         return Chat.remode(chat, msg.mode);
       }
+      case "status": {
+        return Chat.reported(chat, device, msg);
+      }
       case "plan": {
         return Chat.verdict(chat, id, msg.yes === true, msg.mode, msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
       }
@@ -1475,6 +1479,23 @@ export namespace Chat {
       Chat.push(chat, null, "user", text, [], false, id);
       Chat.take(chat, { id: at, end: chat.mem.count });
     });
+  }
+
+  // a device's report for the status line (Device.device_status), only
+  // a device's (a terminal or `legion device`), its fields checked; kept
+  // as the latest, told every view when it changes
+  export function reported(chat: Chat, device: string, msg: any): Answer {
+    const text = (x: unknown) => typeof x === "string" && x.length <= 200;
+    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && (msg.spend === null || Number.isFinite(msg.spend)) && typeof msg.stale === "boolean";
+    if (device === "" || !ok) {
+      return { error: device === "" ? "Only a device reports its status." : "A status needs dir, branch, spend and stale." };
+    }
+    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale };
+    if (JSON.stringify(status) !== JSON.stringify(chat.status ?? null)) {
+      chat.status = status;
+      Chat.change(chat);
+    }
+    return {};
   }
 
   // the user sets the chat's mode (Modes.ts): a note Unii reads, no turn

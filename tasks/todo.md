@@ -355,6 +355,13 @@ to a device (it knows the mode and has the models); the device's hooks still run
       harmless). Suite 231 pass, 3 known fails; tsc 5 → 5. Invariants for review: the gate is on the
       server, before any job/MCP call; an unknown or missing mode reads as auto, never full;
       rejecting a plan never leaves plan mode; only the orchestrator files plans.
+- [x] S1 (user: "no LiteLLM cost on the web; same info as the TUI") the web's status line: each device
+      reports its folder, branch and today's spend (Device.device_status, shared by the TUI and
+      `legion device`; on connect, then every minute / on change); the server keeps the latest (only a
+      device's, fields checked) in the state; View.status_text is the one line both views draw (now
+      with the mode). Proof: View/Device/Server tests; 2/2 mutants killed; suite 234 pass, 3 known
+      fails; tsc: one more TS2339 on setInterval().unref() (DOM-lib noise, as Term.ts's). By hand
+      still: the line in the live web UI.
 - [ ] M2 auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
       the agent's task, the call → allow, or refuse with a reason (the agent sees it); no answer
       (error, timeout, bad reply) → the call waits for the user's yes/no in Needs you. → verify:

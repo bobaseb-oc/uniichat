@@ -262,6 +262,33 @@ console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty,
 process.exit(0);
 `;
 
+// A device's status (Device.device_status): its folder, branch and today's
+// spend, kept as the latest and told every view in the state; only from a
+// device, its fields checked
+const STATUS = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const none = Chat.state(chat).status;
+const web = await Chat.act(chat, "s0", { $: "status", dir: "x", branch: null, spend: null, stale: false }, "");
+const ok = await Chat.act(chat, "s1", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, junk: 1 }, "mac");
+const kept = Chat.state(chat).status;
+const bad = await Chat.act(chat, "s2", { $: "status", dir: 5, branch: "main", spend: "lots", stale: false }, "mac");
+console.log(JSON.stringify({ none, web: "error" in web, ok, kept, bad: "error" in bad, after: Chat.state(chat).status }));
+process.exit(0);
+`;
+
+test("a device's status is kept and told in the state; only a device's, its fields checked", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/status.ts", STATUS);
+  const proc = Bun.spawn([process.execPath, dir + "/status.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  const mac = { device: "mac", dir: "uniichat", branch: "main", spend: 0.25, stale: false };
+  expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac });
+});
+
 // The modes: the user switches the mode (a note, no turn); a plan filed
 // in plan mode is in the state; approved, the mode becomes the one picked
 // and the orchestrator is told (a turn); rejected, it stays plan mode and

@@ -72,6 +72,7 @@ export type State = {
   importing : Progress | null;
   questions?: Question[]; // the orchestrator's, open (Tools.question)
   mode?     : Perm;       // the chat's permission mode (Modes.ts)
+  status?   : DeviceStatus | null; // the latest device's report (Device.device_status)
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
 };
 
@@ -79,6 +80,10 @@ export type State = {
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
 export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+// a device's report for the status line (Device.device_status): its
+// name, the folder Unii works in there, its branch, today's spend (stale)
+export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean };
+
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
 // chat message count when asked, when
@@ -195,6 +200,7 @@ export type Client =
   | { $: "bang"; command: string } // the person's !command, run with the shell on a device
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
+  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
 // an act not answered: with its id, the socket it went by, what its
@@ -869,6 +875,36 @@ export function view_pill(v: View): string {
   }
   const need = view_needs(v).length + asked;
   return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
+}
+
+// what the status line says (as Claude Code's), in the terminal and on
+// the web: offline first, the folder Unii works in and its branch, its
+// model, the agents at work, today's LiteLLM spend (Cost.ts; * stale),
+// the mode, the orchestrator's questions open
+export type StatusLine = { up: boolean; dir: string; branch: string | null; model: string; working: number; spend: { spend: number | null; stale: boolean }; questions?: number; mode?: Perm };
+
+export function status_text(s: StatusLine): string {
+  const usd = (n: number) => (n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2));
+  return [
+    ...(s.up ? [] : ["offline"]),
+    s.dir + (s.branch === null ? "" : " ⎇ " + s.branch),
+    s.model,
+    ...(s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"]),
+    ...(s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"]),
+    ...(s.mode === undefined ? [] : [s.mode + " mode"]),
+    ...(!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]),
+  ].join(" · ");
+}
+
+// the web's status line: from the latest device's report (Device.ts), the
+// pick's model, the crew, the mode, the questions; no report yet: ""
+export function view_status(v: View): string {
+  const s = v.status;
+  if (s === undefined || s === null) {
+    return "";
+  }
+  const spend = { spend: s.spend, stale: s.stale };
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode });
 }
 
 // the orchestrator's questions still open, oldest first

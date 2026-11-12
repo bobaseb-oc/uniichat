@@ -1360,6 +1360,26 @@ function view_pill(v) {
   const need = view_needs(v).length + asked;
   return v.crew.filter((c) => c.status === "working").length + " working" + (need > 0 ? ", " + need + " need you" : "");
 }
+function status_text(s) {
+  const usd = (n) => n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2);
+  return [
+    ...s.up ? [] : ["offline"],
+    s.dir + (s.branch === null ? "" : " ⎇ " + s.branch),
+    s.model,
+    ...s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"],
+    ...s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"],
+    ...s.mode === undefined ? [] : [s.mode + " mode"],
+    ...!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]
+  ].join(" · ");
+}
+function view_status(v) {
+  const s = v.status;
+  if (s === undefined || s === null) {
+    return "";
+  }
+  const spend = { spend: s.spend, stale: s.stale };
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode });
+}
 function view_questions(v) {
   return [...v.questions ?? []].sort((a, b) => a.id - b.id);
 }
@@ -2655,6 +2675,7 @@ function bars() {
   const crew = v.crew.length > 0;
   $("#tabs").hidden = crew || tabs.length < 2;
   markup($("#tabs"), crew ? [] : tabs_html(tabs));
+  $("#status").textContent = P.guest ? "" : view_status(v);
   crew_bars();
   import_bar();
 }
