@@ -650,13 +650,20 @@ export function view_crew(v: View, now: number): CrewRow[] {
   const add = (parent: string, depth: number) => {
     for (const c of kids(parent)) {
       if (rows.length < v.crew.length && !rows.some((r) => r.name === c.name)) {
-        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + c.name + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
+        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + view_label(c) + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
         add(c.name, depth + 1);
       }
     }
   };
   add("main", 0);
   return rows;
+}
+
+// an agent as a line of text says it: its title (its goal) and name, or
+// its name, then its repos
+export function view_label(c: Crew): string {
+  const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";
+  return (c.title === undefined ? c.name : c.title + " (" + c.name + ")") + repos;
 }
 
 // what the person is alerted to since the state last asked (a client

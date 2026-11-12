@@ -179,6 +179,12 @@ body.crewmode #tabs { display: none; }
 #crew .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
 #crew .x:hover { color: var(--ink); background: var(--hover); }
 #crew .x.yes:hover { color: var(--add); }
+/* an agent's repos (Html.who_html): chips after its title */
+.repo { flex: none; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--block); color: var(--mid); font: 11.5px/18px var(--mono); }
+#crew .focus .repo { display: inline-block; }
+/* a tile's repos: a row of their own under its title */
+.tile .repos { display: flex; flex-wrap: wrap; gap: 4px; }
+.tile .repos .repo { margin-left: 0; }
 /* the focus's lane (Html.lane_html): a mark per event at its time */
 #crew .lane { position: relative; height: 18px; margin: -4px 0 12px; border-radius: 9px; background: var(--block); }
 #crew .mk { position: absolute; top: 3px; width: 6px; height: 12px; margin-left: -3px; padding: 0; border-radius: 3px; background: var(--mid); }

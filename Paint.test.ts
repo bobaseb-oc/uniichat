@@ -62,3 +62,10 @@ test("the full-screen Crew: head, needs, tree with its selection, within the scr
   expect(short.length).toBeLessThanOrEqual(8);
   expect(short.some((l) => l.startsWith("▸ ") && l.includes("Mgr7"))).toBe(true);
 });
+
+test("/crew full shows the title, the name and the repos", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("FireAnt", "main", "working"), title: "Fix login tests", repos: ["auth-api"] }] });
+  const lines = Paint.crew_full(v, 90, 20, "FireAnt", 0).map(text);
+  expect(lines.find((l) => l.startsWith("▸ "))).toContain("Fix login tests (FireAnt) [auth-api]");
+});

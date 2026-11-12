@@ -127,6 +127,19 @@ function acts_html(c: View.Crew): string {
   }
 }
 
+// an agent's label: its title (its goal) as the main line, else its
+// name; its repos as chips; and what goes before what it is (its name,
+// when the title stands for it)
+function who_html(c: View.Crew, chips = true): string {
+  return `<b>${esc(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
+}
+function repos_html(c: View.Crew): string {
+  return (c.repos ?? []).map((r) => `<span class="repo">${esc(r)}</span>`).join("");
+}
+function also(c: View.Crew): string {
+  return c.title === undefined ? "" : c.name + " · ";
+}
+
 // the link that puts an agent in focus (#crew/<name>)
 function focus_href(name: string): string {
   return ` href="${esc(View.view_hash("crew", name))}"`;
@@ -141,8 +154,9 @@ export function tree_html(v: View.View, now: number): string[] {
     const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
     const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
     const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
-    const what = `<span class="st">${View.CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
-    const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
+    const what = `<span class="st">${View.CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc(info)}</span>`;
+    const repos = (r.repos ?? []).length === 0 ? "" : " · " + r.repos!.join(", ");
+    const title = esc(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
     return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
   });
 }
@@ -162,10 +176,11 @@ function line_html(v: View.View, c: View.Crew): string {
 export function grid_html(v: View.View, now: number): string[] {
   return View.view_tiles(v, now).map((t) => {
     const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
-    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span><b>${esc(t.name)}</b><span class="meta">${esc(t.tier + " · " + t.model)}</span></a>`;
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${View.CREW[t.status]}</span>${who_html(t, false)}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const repos = repos_html(t);
     const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
     const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
-    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${repos === "" ? "" : `<div class="repos">${repos}</div>`}${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
   });
 }
 
@@ -190,7 +205,8 @@ export function lane_html(v: View.View, now: number): string {
 export function needs_html(v: View.View): string[] {
   return View.view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
-    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.name)}</b> ${why}</a>${acts_html(c)}</div>`;
+    const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
   });
 }
 
@@ -206,7 +222,7 @@ export function focus_html(v: View.View): string {
   if (c === undefined) {
     return `<div class="focus"><b>${esc(name)}</b></div>`;
   }
-  return `<div class="focus ${c.status}"><b>${esc(c.name)}</b> <span class="meta">${esc(c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
 }
 
 // Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,

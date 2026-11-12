@@ -243,9 +243,16 @@ fly, and an agent can relabel itself.
       the Claude worker's default repo; mutants (anyone labels anyone, no caps, dupes kept, spawn ignores
       labels, no default repo, empty label accepted) each 24 pass 1 fail (the first "anyone" try hit
       zoom's same text and didn't parse: redone on the label line, checked with Bun.Transpiler).
-- [ ] L2. Views: the title as the main line, repo chips, the name under it (web tree, tiles, focus,
+- [x] L2. Views: the title as the main line, repo chips, the name under it (web tree, tiles, focus,
       needs; terminal panel and /crew full); the demo crew labelled. Proof: View/Html/Paint tests, a
       demo-crew render.
+      Done: Html.who_html/repos_html (title or name, repo chips), tiles get a row of repo chips, the
+      focus card and needs lane lead with the title; the narrow tree shows the title and roll-up, its
+      name and repos in the row's tooltip (the first render showed chips crowding out the roll-up);
+      View.view_label for the terminal ("Fix login tests (FireAnt) [auth-api]"), used by the panel and
+      /crew full; Demo.ts labelled. Proof: View/Html/Paint 35/35; mutants (name not title, repo raw,
+      terminal no title, tile no repos, tree tooltip no repos) killed; suite 199 pass, 3 known fails;
+      headless renders of the labelled demo crew checked.
 
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

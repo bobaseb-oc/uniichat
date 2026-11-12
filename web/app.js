@@ -1,16 +1,29 @@
 // Demo.ts
 var STATUSES = ["working", "working", "done", "failed", "waiting", "working", "stopped"];
+var GOALS = [
+  ["Fix flaky login tests", ["auth-api", "web"]],
+  ["Ship the export to CSV", ["reports"]],
+  ["Upgrade to Bun 1.4", ["legion"]],
+  ["Reconcile the Q3 breaks", ["bank-recon"]],
+  ["Review rules from merged PRs", ["shared-skills"]],
+  ["Docs for the Crew view", ["legion", "docs"]],
+  ["Triage the open bugs", ["web"]],
+  ["Cut the 2.10 release", ["bank-recon", "infra"]]
+];
+var PARTS = ["Reproduce it", "Write the failing test", "Fix it", "Review the diff"];
 function demo_crew(now) {
   const crew = [];
   for (let m = 0;m < 8; m++) {
-    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000 });
+    const [title, repos] = GOALS[m];
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
     for (let w = 0;w < 5; w++) {
-      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000 });
+      const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
+      crew.push({ name: "W" + m + "-" + w, parent: "Mgr" + m, tier: "worker", model: "sonnet-5.5", status: STATUSES[(m + w) % STATUSES.length], since: now - (w + 1) * 9000, ...part });
     }
   }
   crew.push({ name: "Sub3", parent: "Mgr3", tier: "manager", model: "opus-5.5", status: "waiting", since: now - 30000 });
   crew.push({ name: "W3-sub", parent: "Sub3", tier: "worker", model: "haiku-5.5", status: "working", since: now - 5000 });
-  crew.push({ name: "Claude1", parent: "main", tier: "claude", model: "claude-code", status: "asking", since: now });
+  crew.push({ name: "Claude1", parent: "main", tier: "claude", model: "claude-code", status: "asking", since: now, title: "Refactor the device jobs", repos: ["legion"] });
   return crew;
 }
 function demo_pulses(crew) {
@@ -1211,13 +1224,17 @@ function view_crew(v, now) {
   const add = (parent, depth) => {
     for (const c of kids(parent)) {
       if (rows.length < v.crew.length && !rows.some((r) => r.name === c.name)) {
-        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + c.name + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
+        rows.push({ ...c, depth, text: "  ".repeat(depth) + CREW[c.status] + " " + view_label(c) + " · " + c.tier + " · " + c.model + " · " + ago(now - c.since) });
         add(c.name, depth + 1);
       }
     }
   };
   add("main", 0);
   return rows;
+}
+function view_label(c) {
+  const repos = c.repos === undefined || c.repos.length === 0 ? "" : " [" + c.repos.join(", ") + "]";
+  return (c.title === undefined ? c.name : c.title + " (" + c.name + ")") + repos;
 }
 function view_alerts(v, now) {
   const was = v.heard;
@@ -1652,6 +1669,15 @@ function acts_html(c) {
       return x("×", "dismiss", { $: "Dismiss", name: c.name });
   }
 }
+function who_html(c, chips = true) {
+  return `<b>${esc(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
+}
+function repos_html(c) {
+  return (c.repos ?? []).map((r) => `<span class="repo">${esc(r)}</span>`).join("");
+}
+function also(c) {
+  return c.title === undefined ? "" : c.name + " · ";
+}
 function focus_href(name) {
   return ` href="${esc(view_hash("crew", name))}"`;
 }
@@ -1661,8 +1687,9 @@ function tree_html(v, now) {
     const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
     const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
     const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
-    const what = `<span class="st">${CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
-    const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
+    const what = `<span class="st">${CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc(info)}</span>`;
+    const repos = (r.repos ?? []).length === 0 ? "" : " · " + r.repos.join(", ");
+    const title = esc(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
     return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
   });
 }
@@ -1675,10 +1702,11 @@ function line_html(v, c) {
 function grid_html(v, now) {
   return view_tiles(v, now).map((t) => {
     const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
-    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span><b>${esc(t.name)}</b><span class="meta">${esc(t.tier + " · " + t.model)}</span></a>`;
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const repos = repos_html(t);
     const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
     const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
-    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
+    return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${repos === "" ? "" : `<div class="repos">${repos}</div>`}${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
   });
 }
 function lane_html(v, now) {
@@ -1696,7 +1724,8 @@ function lane_html(v, now) {
 function needs_html(v) {
   return view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
-    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.name)}</b> ${why}</a>${acts_html(c)}</div>`;
+    const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
   });
 }
 function focus_html(v) {
@@ -1708,7 +1737,7 @@ function focus_html(v) {
   if (c === undefined) {
     return `<div class="focus"><b>${esc(name)}</b></div>`;
   }
-  return `<div class="focus ${c.status}"><b>${esc(c.name)}</b> <span class="meta">${esc(c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}</div>`;
 }
 function mode_html(mode, pill) {
   const here = (m) => m === mode ? ` class="here"` : "";

@@ -307,3 +307,13 @@ test("full-screen Crew keys", () => {
   expect(key("A", "q").done).toBe(true);
   expect(key("A", "z")).toMatchObject({ sel: "A", acts: [], done: false });
 });
+
+// the terminal's crew rows say the title first, the name after, and the
+// repos
+test("a crew row's text: title, name, repos", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("FireAnt", "main", "worker", "working"), title: "Fix login tests", repos: ["auth-api", "web"] }, crew("PlainOwl", "main", "worker", "done")] });
+  const [fire, plain] = View.view_crew(v, 0);
+  expect(fire.text).toStartWith("● Fix login tests (FireAnt) [auth-api, web] · worker");
+  expect(plain.text).toStartWith("✓ PlainOwl · worker");
+});

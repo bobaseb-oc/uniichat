@@ -148,3 +148,28 @@ test("the lane: marks placed and titled, messages jump to their row", () => {
   View.view_act(v, { $: "Goto", name: null });
   expect(Html.lane_html(v, 0)).toBe("");
 });
+
+// Labels: the title (the agent's goal) is the main line, its repos chips,
+// its name under it; no title, the name; all escaped
+test("labels: title first, repo chips, the name under it", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [
+    { ...crew("FireAnt", "main", "working"), title: "Fix <flaky> login tests", repos: ["auth-api", "w&b"] },
+    crew("PlainOwl", "main", "failed"),
+  ] });
+  const [plain, fire] = Html.tree_html(v, 0);
+  expect(fire).toContain("<b>Fix &lt;flaky&gt; login tests</b>");
+  // the tree is narrow: the name and repos in the row's tooltip
+  expect(fire).toMatch(/title="FireAnt · manager · .* · auth-api, w&amp;b"/);
+  expect(plain).toContain("<b>PlainOwl</b>");
+  expect(plain).not.toContain('class="repo"');
+  const tile = Html.grid_html(v, 0).find((t) => t.includes("FireAnt"))!;
+  expect(tile).toContain("<b>Fix &lt;flaky&gt; login tests</b>");
+  expect(tile).toContain('<div class="repos"><span class="repo">auth-api</span><span class="repo">w&amp;b</span></div>');
+  View.view_act(v, { $: "Goto", name: "FireAnt" });
+  expect(Html.focus_html(v)).toContain("<b>Fix &lt;flaky&gt; login tests</b>");
+  expect(Html.focus_html(v)).toContain('<span class="repo">auth-api</span>');
+  View.view_hear(v, { $: "state", ...v, crew: [{ ...crew("FireAnt", "main", "failed"), title: "Fix login" }] });
+  expect(Html.needs_html(v)[0]).toContain("<b>Fix login</b>");
+  expect(Html.needs_html(v)[0]).toContain("FireAnt");
+});
