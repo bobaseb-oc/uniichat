@@ -256,3 +256,35 @@ test("the orchestrator can't spawn a Claude Code worker; a manager can", async (
   expect(out.text).toContain("manager");
   expect([...tools.agents.keys()]).toEqual(["Mgr"]);
 });
+
+// plan mode (Modes.ts): only reading reaches a device; writes, edits,
+// shells that aren't read-only, computer tasks, MCP tools and Claude Code
+// workers are refused, saying so; every agent's devices block says the
+// mode. Other modes send them on.
+test("plan mode refuses what can change things, before any device; the devices block says the mode", async () => {
+  const mem: any = { mode: "plan" };
+  const tools = Tools.serve(mem, { change: () => {} } as any);
+  const sub = { name: "Mgr", parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set("Mgr", sub);
+  const call = (who: string, name: string, args: object) => Tools.call(tools, who, name, args, new AbortController().signal, "x");
+  for (const [name, args] of [
+    ["write", { device: "mac", path: "a", content: "x" }],
+    ["edit", { device: "mac", edits: [{ path: "a", old: "x", new: "y" }] }],
+    ["shell", { device: "mac", command: "rm -rf build" }],
+    ["computer", { device: "mac", task: "click" }],
+    ["mcp__jira__create", {}],
+  ] as const) {
+    const out = await call("main", name, args);
+    expect([name, out.fail, out.text]).toEqual([name, true, expect.stringContaining("plan mode")]);
+  }
+  expect((await call("Mgr", "spawn", { tasks: ["code it"], as: "claude", device: "mac" })).text).toContain("plan mode");
+  // reading goes on to the device (none here: refused for that, not the mode)
+  for (const [name, args] of [["read", { device: "mac", path: "a" }], ["shell", { device: "mac", command: "git status" }], ["grep", { device: "mac", pattern: "x" }]] as const) {
+    const out = await call("main", name, args);
+    expect([name, out.text]).toEqual([name, expect.not.stringContaining("plan mode")]);
+  }
+  expect(Tools.devices(tools).text).toContain("Mode: plan mode");
+  mem.mode = "full";
+  expect((await call("main", "write", { device: "mac", path: "a", content: "x" })).text).not.toContain("plan mode");
+  expect(Tools.devices(tools).text).toContain("Mode: full mode");
+});

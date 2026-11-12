@@ -528,3 +528,30 @@ test("ask: the orchestrator files questions, kept across a reload; close withdra
   Tools.close(later);
   Memory.stop(again);
 }));
+
+// plan mode's way out: the orchestrator files its plan (plan), kept with
+// the chat till the user answers; only in plan mode, only the orchestrator
+test("plan: the orchestrator files its plan in plan mode, kept across a reload; not otherwise, not agents", () => faked(async () => {
+  const dir = DIR + "/plan";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const plan = (who: string, args: object) => Tools.call(tools, who, "plan", args, new AbortController().signal, "x");
+  expect(mem.mode).toBe("auto");
+  expect((await plan("main", { plan: "1. read\n2. fix" })).text).toContain("not in plan mode");
+  mem.mode = "plan";
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("plan");
+  expect((await plan("main", { plan: "  " })).fail).toBe(true);
+  const filed = await plan("main", { plan: " 1. read the tests\n2. fix the race " });
+  expect(filed).toEqual({ text: "Filed your plan for the user's approval; their answer reaches you as a message. Until then, only reading.", fail: false });
+  expect(mem.plan?.text).toBe("1. read the tests\n2. fix the race");
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("plan");
+  expect((await plan(name, { plan: "mine" })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.save(mem);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect([again.mode, again.plan?.text]).toEqual(["plan", "1. read the tests\n2. fix the race"]);
+  Memory.stop(again);
+}));

@@ -332,6 +332,36 @@ it; shown in a web side pane beside Chat, in the Crew "needs you" lane, and in t
       (view_questions_note, view_answer, view_drop). Proof: View/Paint tests; 4/4 mutants killed; suite
       225 pass, 3 known fails; tsc 2 → 2; Term.ts builds. By hand still: the commands in a live TUI.
 
+## Permission modes: plan / auto / full (feat/crew-ui) - RED ZONE, drafts until the user signs off
+Intent: Claude Code's plan and auto modes for Legion's agents, chat-wide. Decided with the user
+2026-11-12: modes plan / auto / full (full = today: hooks only; new chats auto); plan mode's shell is a
+read-only allowlist; when auto's reviewer can't answer, the call waits for the user's yes/no; Shift+Tab
+cycles the mode (speed keeps /speed and the pick menu). The gate runs on the server before a job goes
+to a device (it knows the mode and has the models); the device's hooks still run after it.
+- [x] M1 (DRAFT, awaiting sign-off) plan mode: Modes.ts (the mode type; readonly(cmd): the allowlist, quotes-aware, no redirects,
+      substitutions or writers; which tools a mode allows); the mode kept with the chat (view.json),
+      in the state, set by a "mode" act; Tools.call refuses what plan mode doesn't allow (write, edit,
+      a non-read-only shell, computer, Claude Code workers) saying so; the orchestrator's `plan` tool
+      files its plan for approval; approve: the mode the user picks, the orchestrator told; reject
+      with feedback: stays plan, the feedback a message. → verify: Modes.test (allowlist cases incl.
+      bypass attempts), Tools/Server tests, mutants.
+      Proof: Modes.test (14 read-only lines pass; 36 refused incl. $() in double quotes, backticks,
+      <(), redirects, &, newline, env/path, find -exec/-delete, rg --pre, sort -o, tree -o, uniq out,
+      git commit/push/-c/--output); Tools.test (plan refuses write, edit, mutating shell, computer, MCP,
+      Claude Code workers before any device; reading goes on; the devices block says the mode);
+      agents.test (plan tool: main only, plan mode only, kept across a reload); Server fixture (switch
+      = a note, no turn; approve = the picked mode + a turn; reject = plan mode + feedback + a turn).
+      Mutants: 11 killed; 4 equivalent (env/path/git -c also fail the list check; fd>/dev/null is
+      harmless). Suite 231 pass, 3 known fails; tsc 5 → 5. Invariants for review: the gate is on the
+      server, before any job/MCP call; an unknown or missing mode reads as auto, never full;
+      rejecting a plan never leaves plan mode; only the orchestrator files plans.
+- [ ] M2 auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
+      the agent's task, the call → allow, or refuse with a reason (the agent sees it); no answer
+      (error, timeout, bad reply) → the call waits for the user's yes/no in Needs you. → verify:
+      faked-model tests (allow, refuse, error → asks, yes runs, no refuses), mutants.
+- [ ] M3 views: mode chip (web header, terminal status), Shift+Tab and /mode, the plan card
+      (approve as auto/full, or reject with feedback), pending calls in Needs you and /approve-call.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

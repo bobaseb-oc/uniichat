@@ -34,6 +34,7 @@ import { COMPUTER, INT, STR, TOOLS, spec, type Job, type Spec } from "./Machine.
 import { Lsp, OPS } from "./Lsp.ts";
 import { Mcp } from "./Mcp.ts";
 import { Memory, type Seen } from "./Memory.ts";
+import { ABOUT, Modes } from "./Modes.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
@@ -364,6 +365,8 @@ const ASK_OPTIONS = 6;
 const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: anything you need their decision or input on, one question each, said in full (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
   question: STR, options: { type: "array", items: STR }, close: INT,
 }, []);
+// plan mode's way out (Modes.ts), as Claude Code's ExitPlanMode
+const PLAN = spec("plan", "In plan mode: file your plan for the user's approval, once you (and your managers, reading) know enough. Say it whole: the steps, who does each, what changes where, how it will be checked. The user approves it (the mode they pick comes next, and you go ahead) or sends it back with their feedback.", { plan: STR }, ["plan"]);
 const BOSS = boss(true);
 const MANAGES = boss(false);
 const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
@@ -421,7 +424,8 @@ export namespace Tools {
     const home = (d: Device) => [...d.terms.values()][0]?.home;
     const line = ([name, d]: [string, Device]) => "- " + name + (Tools.hands(d) ? " (computer use)" : "") + ", work dir " + work(d) + (home(d) ? ", home repo " + home(d) : "");
     const lines = Tools.opened(tools).map(line);
-    return { text: "Devices open now:\n" + (lines.length === 0 ? DEVICES_NONE : lines.join("\n")) + "\n\n", mark: false };
+    const mode = "Mode: " + ABOUT[Modes.read(tools.mem?.mode)] + ".\n";
+    return { text: mode + "Devices open now:\n" + (lines.length === 0 ? DEVICES_NONE : lines.join("\n")) + "\n\n", mark: false };
   }
 
   // the master's agents at work now, at the start of each of its calls'
@@ -506,7 +510,7 @@ export namespace Tools {
 
   export function list(tools: Tools, who: string): Spec[] {
     if (who === "main") {
-      return [...OWN, ASK, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
+      return [...OWN, ASK, PLAN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
     const role = tools.agents.get(who)?.role;
     if (role?.$ === "hands") {
@@ -518,8 +522,27 @@ export namespace Tools {
     return [...OWN, TODO, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
+  // why the chat's mode refuses a call; null: it may go on
+  export function moded(tools: Tools, name: string, args: any): string | null {
+    const mode = Modes.read(tools.mem?.mode);
+    if (mode !== "plan") {
+      return null;
+    }
+    if (name === "spawn") {
+      return args?.as === "claude" ? "In plan mode only reading is allowed, until the user approves a plan: no Claude Code workers." : null;
+    }
+    const touches = name === "computer" || name.startsWith("mcp__") || TOOLS.some((t) => t.name === name);
+    return touches ? Modes.allows(mode, name, args) : null;
+  }
+
   // id: a job's, if it starts one
   export async function call(tools: Tools, who: string, name: string, args: any, signal: AbortSignal, id: string): Promise<Out> {
+    // the chat's mode first (Modes.ts): plan mode lets only reading reach
+    // a device, an MCP server or a Claude Code worker
+    const refused = Tools.moded(tools, name, args);
+    if (refused !== null) {
+      return { text: refused, fail: true };
+    }
     if (name.startsWith("mcp__")) {
       return Mcp.call(MCP, name, args, signal);
     }
@@ -537,6 +560,9 @@ export namespace Tools {
         }
         const imgs = n === 1 && at === 0 ? Memory.images(to.mem, to.id) : [];
         return { text: Memory.zoom(to.mem, to.id, n, at), fail: false, imgs };
+      }
+      case "plan": {
+        return Tools.plan(tools, who, String(args.plan ?? ""));
       }
       case "ask": {
         return Tools.question(tools, who, args);
@@ -970,6 +996,26 @@ export namespace Tools {
     }
     tools.hooks.change();
     return { text: name + ": " + [agent.title ?? "(no title)", (agent.repos ?? []).join(", ")].filter((x) => x !== "").join(" · "), fail: false };
+  }
+
+  // the orchestrator's plan filed for the user's approval, in plan mode
+  // (one at a time: a new one replaces it), kept with the chat
+  export function plan(tools: Tools, who: string, text: string): Out {
+    const mem = tools.mem;
+    if (who !== "main") {
+      return { text: "Only Unii files a plan: send yours to Unii in your report.", fail: true };
+    }
+    if (Modes.read(mem.mode) !== "plan") {
+      return { text: "You are not in plan mode: go ahead with the work.", fail: true };
+    }
+    const plan = text.trim().slice(0, 20_000);
+    if (plan === "") {
+      return { text: "Give the plan.", fail: true };
+    }
+    mem.plan = { text: plan, date: new Date().toISOString() };
+    Memory.save(mem);
+    tools.hooks.change();
+    return { text: "Filed your plan for the user's approval; their answer reaches you as a message. Until then, only reading.", fail: false };
   }
 
   // the orchestrator's question filed for the user (or one withdrawn:

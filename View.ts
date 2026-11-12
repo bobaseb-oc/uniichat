@@ -10,6 +10,7 @@
 // and comes again before a message in another 3-hour window.
 
 import type { Kind, Vendor } from "./AskAI.ts";
+import type { Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
 import * as Md from "./Md.ts";
@@ -70,6 +71,8 @@ export type State = {
   credits   : number | null;
   importing : Progress | null;
   questions?: Question[]; // the orchestrator's, open (Tools.question)
+  mode?     : Perm;       // the chat's permission mode (Modes.ts)
+  plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
@@ -190,7 +193,9 @@ export type Client =
   | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
   | { $: "guess"; body: Body } // an import's cost
   | { $: "bang"; command: string } // the person's !command, run with the shell on a device
-  | { $: "answer"; q: number; text?: string }; // open question q's answer; no text: dismissed (not "id": an act's own)
+  | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
+  | { $: "mode"; mode: Perm } // the chat's permission mode set
+  | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
 // an act not answered: with its id, the socket it went by, what its
 // answer does, what a message said (shown while offline: view_tail)

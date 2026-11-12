@@ -262,6 +262,71 @@ console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty,
 process.exit(0);
 `;
 
+// The modes: the user switches the mode (a note, no turn); a plan filed
+// in plan mode is in the state; approved, the mode becomes the one picked
+// and the orchestrator is told (a turn); rejected, it stays plan mode and
+// the orchestrator gets the feedback (a turn); no plan: refused
+const MODE = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+const { Memory } = await import(${JSON.stringify(import.meta.dir + "/Memory.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const asks = [];
+AskAI.ask = (ask, on) => {
+  const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  asks.push(sink);
+  call.send = () => {};
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 200 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const msgs = () => Array.from({ length: chat.mem.count }, (_, i) => Memory.message(chat.mem, i));
+// the switch on a chat of its own (its note would hold this one's turns
+// for summaries this test never builds)
+const other = Chat.open({ id: "u2", name: "c@d.e" });
+Chat.chats.set("u2", other);
+const first = Chat.state(other).mode;
+const bad = await Chat.act(other, "m0", { $: "mode", mode: "nope" }, "");
+const none = await Chat.act(other, "p0", { $: "plan", yes: true }, "");
+await Chat.act(other, "m1", { $: "mode", mode: "plan" }, "");
+const last = Memory.message(other.mem, other.mem.count - 1);
+const switched = [Chat.state(other).mode, asks.length, last.kind, last.text];
+chat.mem.mode = "plan";
+await Tools.call(chat.tools, "main", "plan", { plan: "1. fix it" }, new AbortController().signal, "t");
+const shown = Chat.state(chat).plan?.text;
+await Chat.act(chat, "p1", { $: "plan", yes: false, text: "test first" }, "");
+await until(() => asks.length === 1);
+const rejected = [Chat.state(chat).mode, Chat.state(chat).plan, msgs().filter((m) => m.kind === "user").at(-1).text];
+asks[0].end({ ok: true, text: "ok", left: [] });
+await until(() => !chat.busy);
+await Tools.call(chat.tools, "main", "plan", { plan: "1. test\\n2. fix" }, new AbortController().signal, "t2");
+await Chat.act(chat, "p2", { $: "plan", yes: true, mode: "full" }, "");
+await until(() => asks.length === 2);
+const approved = [Chat.state(chat).mode, Chat.state(chat).plan, msgs().filter((m) => m.kind === "user").at(-1).text];
+console.log(JSON.stringify({ first, bad: "error" in bad, none, switched, shown, rejected, approved }));
+process.exit(0);
+`;
+
+test("the user switches the mode, and approves or rejects the orchestrator's plan", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/mode.ts", MODE);
+  const proc = Bun.spawn([process.execPath, dir + "/mode.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({
+    first: "auto", bad: true, none: { error: "No plan is waiting for approval." },
+    switched: ["plan", 0, "note", "The user switched to plan mode: agents only read, until you approve a plan."],
+    shown: "1. fix it",
+    rejected: ["plan", null, "The user didn't approve your plan: test first\nStill in plan mode: revise it and file it again with plan."],
+    approved: ["full", null, "The user approved your plan; now in full mode: every call runs (hooks only). Go ahead with it."],
+  });
+});
+
 // The question backlog: the orchestrator's open questions in the state;
 // an answer is the user's message quoting the question, and a turn; no
 // text dismisses it (a note, no turn); an unknown one is refused

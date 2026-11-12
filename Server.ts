@@ -42,6 +42,7 @@ import { Mail } from "./Mail.ts";
 import * as Import from "./Import.ts";
 import { Mcp } from "./Mcp.ts";
 import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.ts";
+import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
@@ -1117,7 +1118,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1340,6 +1341,12 @@ export namespace Chat {
         Chat.note(chat, "name" in begun ? "Started " + begun.name + " (by the user): " + task : "No agent started: " + begun.why);
         return {};
       }
+      case "mode": {
+        return Chat.remode(chat, msg.mode);
+      }
+      case "plan": {
+        return Chat.verdict(chat, id, msg.yes === true, msg.mode, msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
+      }
       case "answer": {
         return Chat.reply(chat, id, Number(msg.q), msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
       }
@@ -1457,11 +1464,57 @@ export namespace Chat {
       Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
       return {};
     }
-    await Chat.writing(chat, async () => {
+    await Chat.said(chat, id, "Answer to your question " + n + " (" + q.text + "):\n" + text);
+    return {};
+  }
+
+  // a message logged as the user's, which Unii answers in a turn
+  export function said(chat: Chat, id: string, text: string): Promise<void> {
+    return Chat.writing(chat, async () => {
       const at = chat.mem.count;
-      Chat.push(chat, null, "user", "Answer to your question " + n + " (" + q.text + "):\n" + text, [], false, id);
+      Chat.push(chat, null, "user", text, [], false, id);
       Chat.take(chat, { id: at, end: chat.mem.count });
     });
+  }
+
+  // the user sets the chat's mode (Modes.ts): a note Unii reads, no turn
+  export function remode(chat: Chat, to: unknown): Answer {
+    if (!MODES.includes(to as Mode)) {
+      return { error: "No mode " + String(to) + "; one of " + MODES.join(", ") + "." };
+    }
+    const mode = to as Mode;
+    if (mode !== chat.mem.mode) {
+      chat.mem.mode = mode;
+      chat.mem.plan = mode === "plan" ? chat.mem.plan : null;
+      Memory.save(chat.mem);
+      Chat.change(chat);
+      Chat.note(chat, "The user switched to " + ABOUT[mode] + ".");
+    }
+    return {};
+  }
+
+  // the user's answer to the plan waiting (Tools.plan): approved, the
+  // mode they picked (by default auto); sent back, still plan mode, their
+  // feedback; either way a message Unii answers in a turn (refused as a
+  // post is, short of credit)
+  export async function verdict(chat: Chat, id: string, yes: boolean, to: unknown, text: string): Promise<Answer> {
+    const plan = chat.mem.plan;
+    if (plan === null) {
+      return { error: "No plan is waiting for approval." };
+    }
+    const mode: Mode = yes ? (to === "full" ? "full" : "auto") : "plan";
+    const refused = await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    chat.mem.plan = null;
+    chat.mem.mode = mode;
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    const said = yes
+      ? "The user approved your plan; now in " + ABOUT[mode] + ". Go ahead with it." + (text === "" ? "" : "\nThey add: " + text)
+      : "The user didn't approve your plan: " + (text || "no reason given") + "\nStill in plan mode: revise it and file it again with plan.";
+    await Chat.said(chat, id, said);
     return {};
   }
 
