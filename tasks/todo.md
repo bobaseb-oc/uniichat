@@ -518,7 +518,7 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       org's SSO), so the digest of OnCorps repos is empty until it is. Mutants 11/11; suite 296 pass, 3
       known (one run had 7 failsafe.test failures that didn't recur, alone or in the suite: its timers
       run 1000x fast, a load flake).
-- [ ] C8 RED ZONE, DRAFT for the user's design and sign-off (user chose 2026-11-12: Google sign-in):
+- [x] C8 RED ZONE, DRAFT built 2026-11-12 to the design below, awaiting the user's code review before merge (user chose Google sign-in; decided: they register the OAuth client, drive.readonly is fine, meeting text may go to the gateway for summaries):
       Up next (calendar) and meeting transcripts. Design:
       - Sign-in: Google OAuth 2.0 for a desktop app (installed-app flow, PKCE, loopback redirect on
         127.0.0.1), run on the device by `legion google-login` (as `legion mcp-login`); an OAuth client
@@ -535,9 +535,20 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
         → nothing shown, never a partial page.
       Invariants for review: no token leaves the device; scopes read-only; nothing written to Google;
       nothing sent to a model but on a click; logout revokes.
-      Open (the user's): who registers the OAuth client (IT?); whether drive.readonly (all of Drive)
-      is acceptable or the Meet Recordings folder only (drive.file can't read it); whether meeting
-      text may go to the gateway at all.
+      Built: Google.ts (login/token/refresh/logout/events/docs/text on Auth's Keychain, callback and
+      grant checks), local/google-login.ts + `legion google-login [client.json]` / `google-logout`;
+      the device reads events and Docs with each inbox (both or neither); the server takes a Doc's text
+      only from a device, only for a Doc it asked for (a view's Summarize of a listed Doc), summarizes
+      it with the compactor and keeps the summary (50 newest), never the text; Home's Up next,
+      #transcripts (summary or Summarize, Open full transcript). Proof: Google.test 6/6 against a fake
+      Google (S256, offline, read-only scopes, state refused, fewer scopes refused and nothing kept,
+      non-https refused, one refresh for many askers, failed refresh says sign in again, logout revokes
+      then deletes, no attendee address asked, Meet/Docs links only, ids checked, text cut); Device,
+      Inbox, Server (asked/unasked/view-sent text, summary kept not text, not read twice, failure said)
+      and Pages tests; e2e on demo data (Up next, list, pick, Summarize refused clears). Mutants 18/18
+      after 2 tests added (fail closed when only Docs fail; no second read). Found by tsc: a new
+      SUMMARIES constant shadowed View's wait (lesson recorded). Suite (bun run test, --isolate) 308
+      pass, 2 known. Not run live: a real Google sign-in (needs the user's client).
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).

@@ -211,7 +211,7 @@ test("the palette: pages, commands, agents and inbox PRs; the words typed filter
   v.crew = [agent("Mgr", "working", { title: "Fix flaky login" })];
   v.inbox = inbox({ reviews: [pr({ number: 5, title: "Add custodians" })] });
   const all = Cockpit.palette(v, "");
-  expect(all.slice(0, 6).map((i) => i.label)).toEqual(["Home", "Inbox", "Chat", "Crew", "Routines", "Digest"]);
+  expect(all.slice(0, 7).map((i) => i.label)).toEqual(["Home", "Inbox", "Chat", "Crew", "Routines", "Digest", "Transcripts"]);
   expect(all.some((i) => i.label === "New agent…")).toBe(true);
   expect(all.find((i) => i.label === "Fix flaky login")!.go).toEqual({ href: "#crew/Mgr" });
   expect(all.find((i) => i.label === "Add custodians")!.go).toEqual({ open: "https://github.com/o/r/pull/5" });

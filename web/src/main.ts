@@ -119,6 +119,8 @@ const C = {
   before  : null as Record<string, string> | null,
   stamped : -1,
   pal     : 0, // the palette's pick
+  doc     : null as string | null, // the transcript picked
+  reading : new Map<string, number>(), // transcripts asked to be summarized, not yet: since when
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -394,8 +396,19 @@ function act(a: View.Act): void {
   }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
+  // a transcript asked to be summarized: waited on, unless refused
+  if (a.$ === "Transcript") {
+    C.reading.set(a.id, Date.now());
+  }
+  const refused = (out: View.Answer) => {
+    if (a.$ === "Transcript" && out.error !== undefined) {
+      C.reading.delete(a.id);
+    }
+    View.link_note(v, out);
+    draw(true);
+  };
   for (const msg of View.view_act(v, a)) {
-    View.link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
+    View.link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : refused, said);
   }
   if (a.$ === "Goto") {
     crew_sync();
@@ -1192,7 +1205,7 @@ function crew_keys(ev: KeyboardEvent): void {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest" } as Record<string, string>)[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" } as Record<string, string>)[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -1220,6 +1233,12 @@ function page_bars(mode: View.Mode): boolean {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "transcripts") {
+    $("#picks").hidden = true;
+    // summarized, or no word in 3 minutes (a device's failure is a note): no longer waited on
+    [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180e3).forEach(([id]) => C.reading.delete(id));
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.transcripts_html(v, C.doc, new Set(C.reading.keys())));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -1405,6 +1424,10 @@ function page_click(ev: MouseEvent): void {
     C.filter = space;
     $<HTMLInputElement>("#pfilter").value = space;
     location.hash = "#inbox";
+  }
+  const doc = el.closest<HTMLElement>("[data-doc]")?.dataset.doc;
+  if (doc !== undefined) {
+    C.doc = doc;
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));

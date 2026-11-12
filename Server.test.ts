@@ -318,7 +318,7 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   fs.writeFileSync(dir + "/inbox.ts", INBOX);
   const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
-  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [] };
+  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [], google: null };
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 
@@ -469,6 +469,62 @@ test("the digest's themes: one compactor call, its JSON checked, asked again onl
   expect(Object.keys(out.themes[0])).toEqual(["ann"]);
   expect(out.themes[0].ann[0]).toBe("Login fixes (#1, #2)");
   expect(out.themes[0].ann[1].length).toBe(200);
+});
+
+// A meeting transcript summarized (RED ZONE draft, Google.ts): the user
+// asks for a Doc the inbox lists; the devices are asked to read it; only
+// an asked-for Doc's text is taken, from a device; the compactor
+// summarizes it; the summary (not the text) kept and told; a device's
+// failure said; asked again: the summary kept
+const TRANSCRIPT = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set(), seen: new Set() } });
+const asks = [];
+const notes = [];
+const note = Chat.note;
+Chat.note = (c, t) => { notes.push(t); return note(c, t); };
+AskAI.ask = (ask) => { asks.push(ask.blocks.map((b) => b.text).join("")); return { send() {}, stop() {}, done: Promise.resolve({ ok: true, text: "## Overview\\nThey decided.", left: [] }) }; };
+const doc = { id: "doc_1234567890", title: "Standup - Transcript", at: "", url: "https://docs.google.com/document/d/doc_1234567890" };
+const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [], google: { events: [], docs: [doc] } };
+await Chat.act(chat, "i", { $: "inbox", inbox }, "mac");
+const unknown = await Chat.act(chat, "t0", { $: "transcript", id: "doc_other12345" }, "");
+const unasked = await Chat.act(chat, "t1", { $: "transcript", id: doc.id, text: "words" }, "mac");
+const ask = await Chat.act(chat, "t2", { $: "transcript", id: doc.id }, "");
+const read = sent.filter((m) => m.$ === "read");
+const viewtext = await Chat.act(chat, "t3", { $: "transcript", id: doc.id, text: "a view's words" }, "");
+const reply = await Chat.act(chat, "t4", { $: "transcript", id: doc.id, text: "Ann: we ship Friday." }, "mac");
+await Bun.sleep(20);
+const summary = sent.filter((m) => m.$ === "summary");
+const again = await Chat.act(chat, "t5", { $: "transcript", id: doc.id }, "");
+const reads = sent.filter((m) => m.$ === "read").length;
+const fs = await import("node:fs");
+const saved = JSON.parse(fs.readFileSync(chat.mem.dir + "/view.json", "utf8")).summaries;
+await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, google: { events: [], docs: [doc, { ...doc, id: "doc_0987654321" }] } } }, "mac");
+await Chat.act(chat, "t6", { $: "transcript", id: "doc_0987654321" }, "");
+const failed = await Chat.act(chat, "t7", { $: "transcript", id: "doc_0987654321", error: "Google: HTTP 403." }, "mac");
+console.log(JSON.stringify({ unknown: "error" in unknown, unasked: "error" in unasked, ask, read, viewtext: "error" in viewtext, reply, summary, again, asks, saved, failed, reads, notes, stored: JSON.stringify(saved).includes("we ship Friday") }));
+process.exit(0);
+`;
+
+test("a transcript summarized: only a listed Doc, read by a device when asked, summarized, the summary kept (not the text)", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/transcript.ts", TRANSCRIPT);
+  const proc = Bun.spawn([process.execPath, dir + "/transcript.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ unknown: true, unasked: true, ask: {}, read: [{ $: "read", id: "doc_1234567890" }], viewtext: true, reply: {}, again: {}, stored: false });
+  expect(out.asks.length).toBe(1);
+  expect(out.asks[0]).toContain("Ann: we ship Friday.");
+  expect(out.summary).toEqual([{ $: "summary", id: "doc_1234567890", summary: { title: "Standup - Transcript", text: "## Overview\nThey decided.", at: expect.any(Number) } }]);
+  expect(out.saved.doc_1234567890.text).toBe("## Overview\nThey decided.");
+  expect(out.failed).toEqual({});
+  expect(out.reads).toBe(1); // summarized: asked again, not read again
+  expect(out.notes.some((n: string) => n.includes("Google: HTTP 403."))).toBe(true);
 });
 
 // A call waiting for the user (auto's reviewer couldn't check it): in the
@@ -693,4 +749,13 @@ test("every view hears an agent's pulse, a burst as one; a view's watch replaces
   expect(out.da).toBe(20);
   expect(out.db).toBe(0);
   expect(out.after).toBe(0);
+});
+
+// the wait while a turn waits on summaries is View's SUMMARIES ("summaries"),
+// never shadowed (a constant of the same name once made it a number)
+test("the summaries wait reads as View's SUMMARIES", async () => {
+  const { SUMMARIES } = await import("./View.ts");
+  const src = fs.readFileSync(import.meta.dir + "/Server.ts", "utf8");
+  expect(SUMMARIES).toBe("summaries");
+  expect(src.match(/\bconst SUMMARIES\b/g)).toBe(null);
 });

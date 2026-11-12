@@ -667,3 +667,18 @@ body.focus .hcols { grid-template-columns: 1fr; }
 .dauthor li { margin: 2px 0; }
 .dauthor a { text-decoration: none; }
 .dauthor a:hover { text-decoration: underline; }
+
+/* Up next and Transcripts (Google.ts): a list beside the picked one */
+.hside .next { display: flex; gap: 8px; align-items: center; padding: 3px 4px; }
+.hside .next .when { display: flex; flex-direction: column; width: 4.2em; font: 12px var(--mono); }
+.hside .next .when .meta { font: 11px var(--sans); }
+.hside .next .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcols { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
+.tlist { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--hair); padding-right: 10px; }
+.tdoc { display: flex; flex-direction: column; padding: 6px 8px; border-radius: 8px; text-align: left; }
+.tdoc:hover, .tdoc.here { background: var(--block); }
+.tdoc .meta { font-size: 11.5px; }
+.tbody h3 { margin: 0; font-size: 17px; }
+.tbody .acts { margin: 8px 0; }
+.tsum { line-height: 1.55; }
+@media (max-width: 900px) { .tcols { grid-template-columns: 1fr; } .tlist { border-right: 0; } }

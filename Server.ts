@@ -105,6 +105,7 @@ type Chat = {
   status?: DeviceStatus; // the latest device's report, for the web's status line
   inbox?: Inbox.Inbox;   // the latest device's inbox (Device.device_inbox), checked
   themes?: Themes;       // the digest's themes (Chat.themes), for the digest they were made of
+  reading?: Set<string>; // transcript Docs asked of the devices (Chat.transcript), whose text is taken
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -1173,6 +1174,9 @@ export namespace Chat {
     if (chat.themes !== undefined) {
       Chat.send(sock, { $: "themes", themes: chat.themes });
     }
+    for (const [id, summary] of Object.entries(chat.mem.summaries)) {
+      Chat.send(sock, { $: "summary", id, summary });
+    }
     Chat.show(chat, sock);
     Chat.send(sock, { $: "live", live: chat.live });
     if (host === null) {
@@ -1378,6 +1382,9 @@ export namespace Chat {
       }
       case "themes": {
         return Chat.themes(chat);
+      }
+      case "transcript": {
+        return Chat.transcript(chat, device, msg);
       }
       case "fetch": {
         Chat.all(chat, { $: "fetch" });
@@ -1597,6 +1604,67 @@ export namespace Chat {
     chat.themes = { key, by };
     Chat.all(chat, { $: "themes", themes: chat.themes });
     return {};
+  }
+
+  // Meeting transcripts (RED ZONE draft, Google.ts)
+  // -----------------------------------------------
+  // A view asks for a Doc the inbox lists to be summarized; the devices
+  // are asked to read it (only they hold the Google grant); only an
+  // asked-for Doc's text is taken, only from a device; the compactor
+  // summarizes it; the summary is kept with the chat (never the text) and
+  // told every view. The user chose (2026-11-12) to let meeting text go to
+  // the LiteLLM gateway for this.
+
+  const SUMMARY = "Summarize this meeting transcript for its attendee: one sentence on what the meeting settled, then short sections (a heading each) of bullets with the decisions and the context behind them, then a 'Next steps' section of bullets with each owner's name in parentheses first. Plain Markdown, under 400 words. Only what the transcript says.";
+  const SUMMARY_TEXT = 6000;
+  const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
+
+  export async function transcript(chat: Chat, device: string, msg: any): Promise<Answer> {
+    const id = typeof msg.id === "string" ? msg.id : "";
+    const doc = chat.inbox?.google?.docs.find((d) => d.id === id);
+    if (doc === undefined) {
+      return { error: "No such transcript in the inbox." };
+    }
+    chat.reading ??= new Set();
+    if (device === "") {
+      if (msg.text !== undefined || msg.error !== undefined) {
+        return { error: "Only a device reads a transcript." };
+      }
+      if (chat.mem.summaries[id] === undefined && !chat.reading.has(id)) {
+        chat.reading.add(id);
+        Chat.all(chat, { $: "read", id });
+      }
+      return {};
+    }
+    if (!chat.reading.delete(id)) {
+      return { error: "That transcript wasn't asked for." };
+    }
+    if (typeof msg.text !== "string") {
+      Chat.note(chat, "Couldn't read " + JSON.stringify(doc.title) + ": " + String(msg.error ?? "no text").slice(0, 200));
+      return {};
+    }
+    void Chat.summarize(chat, doc, msg.text.slice(0, 200_000));
+    return {};
+  }
+
+  // a transcript's text summarized by the compactor, the summary kept
+  export async function summarize(chat: Chat, doc: { id: string; title: string }, text: string): Promise<void> {
+    let end: { ok: boolean; text: string } | null = null;
+    try {
+      const call = AskAI.ask({ ...Pick.ask(config.COMPACTOR), system: SUMMARY, blocks: [{ text: doc.title + "\n\n" + text, mark: false }], searches: 0, server: "", bill: chat.mem.pay?.("chat", "transcript") }, () => {});
+      end = await call.done.catch(() => null);
+    } catch {
+      end = null;
+    }
+    if (end === null || !end.ok || end.text.trim() === "") {
+      Chat.note(chat, "The summary of " + JSON.stringify(doc.title) + " didn't come" + (end?.ok === false ? ": " + end.text.slice(0, 200) : "") + ".");
+      return;
+    }
+    const summary = { title: doc.title, text: end.text.trim().slice(0, SUMMARY_TEXT), at: Date.now() };
+    const kept = Object.entries({ ...chat.mem.summaries, [doc.id]: summary }).sort((a, b) => b[1].at - a[1].at).slice(0, SUMMARIES_KEPT);
+    chat.mem.summaries = Object.fromEntries(kept);
+    Memory.save(chat.mem);
+    Chat.all(chat, { $: "summary", id: doc.id, summary });
   }
 
   // Routines

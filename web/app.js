@@ -68,6 +68,18 @@ The ` + title.toLowerCase() + `.
     merged: 28,
     today: 1,
     errors: [],
+    google: {
+      events: [["Ryan & Jenny | Weekly 1:1", 1, "abc-defg-hij"], ["Agent Attribution Options", 2, "klm-nopq-rst"], ["Ryan / Isha", 2.5, ""]].map(([title, h, meet], k) => {
+        const start = new Date(now + h * 3600000);
+        return { id: "ev" + k, title, start: start.toISOString(), end: new Date(start.getTime() + 30 * 60000).toISOString(), meet: meet === "" ? "" : "https://meet.google.com/" + meet, people: 2 + k };
+      }),
+      docs: [["Determinism Attribution and Auto-Close", 26], ["DevOps AI Studio Priorities Debate", 3], ["Daily CTL Sync", 7]].map(([title, h], k) => ({
+        id: "demo_doc_" + k,
+        title: title + " - Transcript",
+        at: at(h),
+        url: "https://docs.google.com/document/d/demo_doc_" + k
+      }))
+    },
     digest: {
       repos: ["acme/agent-foundations"],
       merged: [
@@ -1200,7 +1212,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var PAGES = ["home", "inbox", "routines", "digest"];
+var PAGES = ["home", "inbox", "routines", "digest", "transcripts"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1261,6 +1273,7 @@ function view_new() {
     alerted: new Map,
     inbox: null,
     themes: null,
+    summaries: new Map,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1286,6 +1299,13 @@ function view_hear(v, msg) {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "summary": {
+      v.summaries.set(msg.id, msg.summary);
+      return [];
+    }
+    case "read": {
       return [];
     }
     case "zoom":
@@ -1469,6 +1489,9 @@ function view_act(v, act) {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Transcript": {
+      return [{ $: "transcript", id: act.id }];
     }
     case "Routine": {
       const { $, ...op } = act;
@@ -1713,7 +1736,7 @@ function view_questions(v) {
   return [...v.questions ?? []].sort((a, b) => a.id - b.id);
 }
 function view_route(hash) {
-  const m = /^#(chat|crew|home|inbox|routines|digest)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }
@@ -2497,6 +2520,7 @@ var PAGE_ITEMS = [
   { label: "Crew", hint: "page · g c", go: { href: "#crew" } },
   { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
+  { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
@@ -2507,7 +2531,7 @@ var PAGE_ITEMS = [
 function palette(v, q) {
   const agents = v.crew.map((c) => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
   const prs = [...v.inbox?.reviews ?? [], ...v.inbox?.mine ?? []].map((p) => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
-  const spaces = side_spaces(v).map((s) => ({ label: s.repo, hint: "space · its inbox", go: { space: s.repo } }));
+  const spaces = side_spaces(v).map((s) => ({ label: s.repo, hint: "space · a repo", go: { space: s.repo } }));
   const all = [...PAGE_ITEMS, ...agents, ...prs, ...spaces];
   const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
   if (words.length === 0) {
@@ -2521,6 +2545,14 @@ function digest_groups(prs) {
   const by = new Map;
   prs.forEach((p) => by.set(p.author, [...by.get(p.author) ?? [], p]));
   return [...by.entries()].map(([author, list]) => ({ author, prs: list })).sort((a, b) => b.prs.length - a.prs.length || a.author.localeCompare(b.author));
+}
+function up_next(v, now) {
+  const today = new Date(now).toDateString();
+  const p = (n) => String(n).padStart(2, "0");
+  return (v.inbox?.google?.events ?? []).filter((e) => Date.parse(e.end || e.start) > now).sort((a, b) => Date.parse(a.start) - Date.parse(b.start)).map((e) => {
+    const d = new Date(e.start);
+    return { title: e.title, day: d.toDateString() === today ? "today" : "tomorrow", time: e.start.length <= 10 ? "all day" : p(d.getHours()) + ":" + p(d.getMinutes()), meet: e.meet, people: e.people };
+  });
 }
 
 // web/src/Pages.ts
@@ -2610,7 +2642,11 @@ function home_html(v, now) {
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
   const apps = home_apps(v);
   const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
-  const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  const signed = v.inbox?.errors.find((e) => e.startsWith("google:"));
+  const next = up_next(v, now.getTime());
+  const meet = (url) => url === "" ? "" : `<a class="pbtn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
+  const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? next.map((e) => `<div class="next"><span class="when">${esc(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>` : `<p class="meta">${esc(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
+  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
 var SPACES = 12;
@@ -2625,7 +2661,8 @@ function side_html(v, mode, now) {
     ["chat", "Chat", (v.questions ?? []).length],
     ["crew", "Crew", working],
     ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length],
-    ["digest", "Digest", 0]
+    ["digest", "Digest", 0],
+    ["transcripts", "Transcripts", 0]
   ];
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
   const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
@@ -2674,6 +2711,25 @@ function digest_html(v) {
   });
   const open2 = digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
   return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open2.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
+}
+function transcripts_html(v, sel, reading) {
+  const g = v.inbox?.google ?? null;
+  const head = `<div class="phead"><h2>Transcripts</h2><p class="meta">Recorded calls: last 14 days</p><button class="pbtn"${act_html2({ $: "Fetch" })}>Refresh</button></div>`;
+  if (g === null) {
+    const why = v.inbox?.errors.find((e) => e.startsWith("google:")) ?? "google: run legion google-login on your device";
+    return [head, `<p class="meta">${esc(why.replace(/^google: /, "Google: "))}</p>`];
+  }
+  const day = (at) => new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const list = g.docs.map((d) => `<button class="tdoc${d.id === sel ? " here" : ""}" data-doc="${esc(d.id)}"><span class="meta">${esc(day(d.at))}</span><span class="t">${esc(d.title)}</span>${v.summaries.has(d.id) ? `<span class="meta">summarized</span>` : ""}</button>`).join("") || `<p class="meta">No transcripts in the last 14 days.</p>`;
+  const doc = g.docs.find((d) => d.id === sel);
+  let body = `<p class="meta">Pick a transcript.</p>`;
+  if (doc !== undefined) {
+    const s = v.summaries.get(doc.id);
+    const open2 = doc.url === "" ? "" : `<a class="pbtn" href="${esc(doc.url)}" target="_blank" rel="noopener noreferrer">Open full transcript</a>`;
+    const what = s !== undefined ? `<div class="tsum">${md_parse(s.text).map(block_html).join("")}</div>` : reading.has(doc.id) ? `<p class="meta">Reading and summarizing…</p>` : `<button class="pbtn"${act_html2({ $: "Transcript", id: doc.id })} title="its text goes to the compactor's model, once">Summarize</button>`;
+    body = `<h3>${esc(doc.title)}</h3><p class="meta">${esc(day(doc.at))}</p><div class="acts">${open2}</div>${what}`;
+  }
+  return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }
 
 // web/src/main.ts
@@ -2724,7 +2780,9 @@ var C = {
   page: "",
   before: null,
   stamped: -1,
-  pal: 0
+  pal: 0,
+  doc: null,
+  reading: new Map
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2955,8 +3013,18 @@ function act(a) {
   }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
+  if (a.$ === "Transcript") {
+    C.reading.set(a.id, Date.now());
+  }
+  const refused = (out) => {
+    if (a.$ === "Transcript" && out.error !== undefined) {
+      C.reading.delete(a.id);
+    }
+    link_note(v, out);
+    draw(true);
+  };
   for (const msg of view_act(v, a)) {
-    link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
+    link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : refused, said);
   }
   if (a.$ === "Goto") {
     crew_sync();
@@ -3592,7 +3660,7 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -3611,6 +3679,11 @@ function page_bars(mode) {
   }
   if (mode === "inbox") {
     inbox_bars();
+  } else if (mode === "transcripts") {
+    $("#picks").hidden = true;
+    [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180000).forEach(([id]) => C.reading.delete(id));
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), transcripts_html(v, C.doc, new Set(C.reading.keys())));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -3770,6 +3843,10 @@ function page_click(ev) {
     C.filter = space;
     $("#pfilter").value = space;
     location.hash = "#inbox";
+  }
+  const doc = el.closest("[data-doc]")?.dataset.doc;
+  if (doc !== undefined) {
+    C.doc = doc;
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));

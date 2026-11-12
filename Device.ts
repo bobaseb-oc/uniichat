@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as Cost from "./Cost.ts";
+import { Google } from "./Google.ts";
 import * as Inbox from "./Inbox.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as View from "./View.ts";
@@ -89,6 +90,24 @@ const INBOX_WAIT = 30_000;
 // a command run for the inbox: its exit code and its output (stdout, else
 // stderr); a test's fake
 export type Exec = (cmd: string[]) => Promise<{ code: number; out: string }>;
+
+// what the device reads from Google (Google.ts, RED ZONE draft): the
+// user's grant from the Keychain each time; a test's fake
+export type Reads = { events: (now: Date) => Promise<Google.Event[]>; docs: (now: Date) => Promise<Google.Doc[]>; text: (id: string) => Promise<string> };
+export const reads: Reads = {
+  events : async (now) => Google.events(await Google.token(Google.store()), now),
+  docs   : async (now) => Google.docs(await Google.token(Google.store()), now),
+  text   : async (id) => Google.text(await Google.token(Google.store()), id),
+};
+
+// a transcript's text the server asked for (its Summarize), or why not
+export async function device_transcript(id: string, g: Reads = reads): Promise<View.Client> {
+  try {
+    return { $: "transcript", id, text: await g.text(id) };
+  } catch (err: any) {
+    return { $: "transcript", id, error: String(err?.message ?? err).slice(0, 200) };
+  }
+}
 
 // a command run here, read-only, never longer than INBOX_WAIT; missing: 127
 export const exec: Exec = async (cmd) => {
@@ -198,7 +217,7 @@ export function device_spaces(rules: Rules, now: number): { spaces: Space[]; lis
 // this device's inbox (Inbox.ts) read with the user's own CLIs, read-only:
 // gh (PRs, notifications), acli (Jira), git (each space's worktrees with
 // changes, or merged); what fails is said in errors, the rest kept
-export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<View.Client> {
+export async function device_inbox(rules: Rules, run: Exec, now: Date, g: Reads = reads): Promise<View.Client> {
   const errors: string[] = [];
   const said = (tool: string, r: { out: string }) => errors.push(tool + ": " + (r.out.trim().split("\n")[0] || "failed").slice(0, 200));
   const json = (r: { code: number; out: string }, tool: string): any => {
@@ -218,6 +237,11 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
   const worktreed = listed ? spaces : spaces.filter((s) => fs.existsSync(s.path + "/.git/worktrees"));
   const active = spaces.filter((s) => listed || device_active(s, now.getTime()));
   const jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC";
+  // Google's: both read, or none (fail closed), the reason said
+  const google = Promise.all([g.events(now), g.docs(now)]).then(([events, docs]) => ({ events, docs }), (err) => {
+    errors.push("google: " + String(err?.message ?? err).split("\n")[0].slice(0, 200));
+    return null;
+  });
   const [gql, notes, jira, clean, digest] = await Promise.all([
     run(["gh", "api", "graphql", "-f", "query=" + Inbox.QUERY, ...vars]),
     run(["gh", "api", "notifications?participating=true&per_page=30"]),
@@ -234,6 +258,7 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date): Promise<
     at: now.getTime(), login: gh.login, reviews: gh.reviews, mine: gh.mine, merged: gh.merged, today: gh.today,
     tickets: tickets === null ? null : Inbox.inbox_tickets(tickets), clean, notes: Inbox.inbox_notes(json(notes, "gh") ?? []), errors, digest,
     spaces: active.slice(0, Inbox.MOST).map((s) => path.basename(s.path)),
+    google: await google,
   };
   return { $: "inbox", inbox };
 }
@@ -311,6 +336,9 @@ export function device_open(url: string, auth: Record<string, string>, query: st
       }
       if (msg.$ === "fetch") {
         void inbox();
+      }
+      if (msg.$ === "read") {
+        void device_transcript(msg.id).then(send);
       }
     },
     lost,

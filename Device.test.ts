@@ -156,7 +156,9 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
     }
     return { code: 1, out: "" };
   };
-  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: ["/s"] }, exec, new Date(2026, 10, 12)) as any;
+  // no Google here (Google's own test below; never the real Keychain)
+  const nog: Device.Reads = { events: async () => [], docs: async () => [], text: async () => "" };
+  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: ["/s"] }, exec, new Date(2026, 10, 12), nog) as any;
   expect(msg.$).toBe("inbox");
   const inbox = msg.inbox;
   expect(inbox.login).toBe("me");
@@ -176,12 +178,12 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   expect(ran.every((c) => ["gh", "acli", "git"].includes(c[0]))).toBe(true);
   expect(ran.some((c) => c.filter((a) => !a.startsWith("query=")).join(" ").match(/\b(push|commit|create|edit|delete|POST)\b/))).toBe(false);
   // gh missing: said, the rest still read
-  const none = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, async (cmd) => (cmd[0] === "gh" ? { code: 127, out: "not found" } : exec(cmd)), new Date()) as any;
+  const none = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, async (cmd) => (cmd[0] === "gh" ? { code: 127, out: "not found" } : exec(cmd)), new Date(), nog) as any;
   expect(none.inbox.errors.some((e: string) => e.startsWith("gh: "))).toBe(true);
   expect(none.inbox.mine).toEqual([]);
   // no space on GitHub: no digest, and its search not run
   ran.length = 0;
-  const bare = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, exec, new Date()) as any;
+  const bare = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, exec, new Date(), nog) as any;
   expect(bare.inbox.digest).toBe(null);
   expect(ran.some((c) => c.join(" ").includes("query digest"))).toBe(false);
 });
@@ -216,4 +218,27 @@ test("spaces are found under the roots, newest first; active ones by their git f
   expect(home.map((s) => s.path.slice(root.length + 1))).toEqual(["old", "team/b", "a"]);
   expect(Device.device_roots(undefined)).toEqual(["/Volumes/dev/git", os.homedir() + "/.claude"]);
   expect(Device.device_roots(" ~/x , /y ")).toEqual([os.homedir() + "/x", "/y"]);
+});
+
+// Google (RED ZONE draft, Google.ts): the device reads today's and
+// tomorrow's events and the transcript Docs with the user's grant; signed
+// out or failing: nothing from Google, the reason said (fail closed); a
+// transcript's text only when the server asks for that Doc
+test("Google on the device: events and Docs with the inbox; signed out said; a transcript read only when asked", async () => {
+  const quiet: Device.Exec = async () => ({ code: 1, out: "" });
+  const g: Device.Reads = {
+    events: async () => [{ id: "e1", title: "Weekly", start: "2026-11-12T13:30:00Z", end: "", meet: "https://meet.google.com/abc", people: 3 }],
+    docs: async () => [{ id: "doc_1234567890", title: "Standup - Transcript", at: "", url: "https://docs.google.com/document/d/doc_1234567890" }],
+    text: async (id) => "said in " + id,
+  };
+  const m = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), g) as any;
+  expect(m.inbox.google).toEqual({ events: await g.events(new Date()), docs: await g.docs(new Date()) });
+  const out = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), { ...g, events: async () => { throw new Error("not signed in: legion google-login"); } }) as any;
+  expect(out.inbox.google).toBe(null);
+  expect(out.inbox.errors).toContain("google: not signed in: legion google-login");
+  // one read failing: none of Google's shown (fail closed), not half
+  const half = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), { ...g, docs: async () => { throw new Error("Google: HTTP 403."); } }) as any;
+  expect(half.inbox.google).toBe(null);
+  expect(await Device.device_transcript("doc_1234567890", g)).toEqual({ $: "transcript", id: "doc_1234567890", text: "said in doc_1234567890" });
+  expect(await Device.device_transcript("doc_1234567890", { ...g, text: async () => { throw new Error("Google: HTTP 403."); } })).toEqual({ $: "transcript", id: "doc_1234567890", error: "Google: HTTP 403." });
 });

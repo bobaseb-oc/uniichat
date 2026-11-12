@@ -152,3 +152,13 @@ test("the digest's searches fit GitHub's query length, 5 at most", () => {
   expect(chunks[0].merged.startsWith("repo:OnCorps/some-long-repository-name-0 ")).toBe(true);
   expect(Inbox.digest_chunks(["o/a", "o/b"], new Date(2026, 10, 12))).toEqual([Inbox.digest_vars(["o/a", "o/b"], new Date(2026, 10, 12))]);
 });
+
+test("Google's part of the report checked: Meet and Docs links only, Drive ids only; none: null", () => {
+  const base = { at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+  const google = { events: [{ id: "e1", title: "Weekly", start: "s", end: "e", meet: "https://meet.google.com/abc", people: 3 }], docs: [{ id: "doc_123", title: "T", at: "", url: "https://docs.google.com/document/d/doc_123" }] };
+  expect((Inbox.inbox_check(base) as Inbox.Inbox).google).toBe(null);
+  expect((Inbox.inbox_check({ ...base, google }) as Inbox.Inbox).google).toEqual(google);
+  expect(typeof Inbox.inbox_check({ ...base, google: { ...google, events: [{ ...google.events[0], meet: "https://evil.example/x" }] } })).toBe("string");
+  expect(typeof Inbox.inbox_check({ ...base, google: { ...google, docs: [{ ...google.docs[0], id: "../x" }] } })).toBe("string");
+  expect(typeof Inbox.inbox_check({ ...base, google: { ...google, docs: [{ ...google.docs[0], url: "https://evil.example/doc" }] } })).toBe("string");
+});

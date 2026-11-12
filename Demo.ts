@@ -66,6 +66,15 @@ export function demo_inbox(now: number): Inbox {
   });
   return {
     at: now, login: "you", merged: 28, today: 1, errors: [],
+    google: {
+      events: [["Ryan & Jenny | Weekly 1:1", 1, "abc-defg-hij"], ["Agent Attribution Options", 2, "klm-nopq-rst"], ["Ryan / Isha", 2.5, ""]].map(([title, h, meet], k) => {
+        const start = new Date(now + (h as number) * 3600e3);
+        return { id: "ev" + k, title: title as string, start: start.toISOString(), end: new Date(start.getTime() + 30 * 60e3).toISOString(), meet: meet === "" ? "" : "https://meet.google.com/" + meet, people: 2 + k };
+      }),
+      docs: [["Determinism Attribution and Auto-Close", 26], ["DevOps AI Studio Priorities Debate", 3], ["Daily CTL Sync", 7]].map(([title, h], k) => ({
+        id: "demo_doc_" + k, title: title + " - Transcript", at: at(h as number), url: "https://docs.google.com/document/d/demo_doc_" + k,
+      })),
+    },
     digest: {
       repos: ["acme/agent-foundations"],
       merged: [

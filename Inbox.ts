@@ -45,7 +45,10 @@ export type Inbox = {
   at: number; login: string; reviews: Pr[]; mine: Pr[]; merged: number; today: number;
   tickets: Ticket[] | null; clean: Clean[]; notes: Note[]; errors: string[]; digest?: Digest | null;
   spaces?: string[]; // the device's active repos, newest first (Device.device_discover)
+  google?: { events: Event[]; docs: Doc[] } | null; // the user's calendar and transcripts (Google.ts; null: signed out or failing)
 };
+
+import type { Doc, Event } from "./Google.ts";
 
 // the most kept of a list; a field's and a body's most characters
 export const MOST = 100;
@@ -264,6 +267,23 @@ function pr(p: any): Pr {
   };
 }
 
+// a link only to that site's pages (or none)
+function site(x: unknown, at: string): string {
+  const s = link(x);
+  if (s !== "" && !s.startsWith(at)) {
+    throw new Bad("a link isn't " + at);
+  }
+  return s;
+}
+// a Drive file id
+function drive(x: unknown): string {
+  const s = str(x, 200);
+  if (!/^[\w-]+$/.test(s)) {
+    throw new Bad("not a Drive file id");
+  }
+  return s;
+}
+
 function dpr(p: any): DigestPr {
   return { repo: str(p?.repo), number: num(p?.number), title: str(p?.title), url: link(p?.url), author: str(p?.author), at: str(p?.at, 60) };
 }
@@ -284,6 +304,10 @@ export function inbox_check(x: any): Inbox | string {
       notes: list(x.notes, (n) => ({ kind: one(n?.kind, KINDS), title: str(n?.title), repo: str(n?.repo), url: link(n?.url), at: str(n?.at, 60), unread: bool(n?.unread) })),
       errors: list(x.errors, (e) => str(e)),
       spaces: x.spaces === undefined ? [] : list(x.spaces, (r) => str(r, 120)),
+      google: x.google === undefined || x.google === null ? null : {
+        events: list(x.google.events, (e) => ({ id: str(e?.id, 200), title: str(e?.title), start: str(e?.start, 60), end: str(e?.end, 60), meet: site(e?.meet, "https://meet.google.com/"), people: num(e?.people) })),
+        docs: list(x.google.docs, (d) => ({ id: drive(d?.id), title: str(d?.title), at: str(d?.at, 60), url: site(d?.url, "https://docs.google.com/") })),
+      },
       digest: x.digest === undefined || x.digest === null ? null : {
         repos: list(x.digest.repos, (r) => str(r)),
         merged: list(x.digest.merged, dpr), open: list(x.digest.open, dpr),

@@ -159,3 +159,41 @@ test("the digest: merged by author, themes or PRs, open ones, its acts", async (
   expect(themed).toContain("Login &lt;fixes&gt; (#2, #3)");
   expect(themed.slice(themed.indexOf(">ann<"), themed.indexOf(">bo<"))).not.toContain("T2 &lt;x&gt;");
 });
+
+// Google's pages (RED ZONE draft): Up next on Home (today's and tomorrow's
+// events not over, Join for a Meet link); the Transcripts page (the Docs,
+// the one picked: its summary, or Summarize; Open full transcript); signed
+// out: how to sign in; text escaped
+test("Up next and Transcripts", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  const now = new Date(2026, 10, 12, 12, 0);
+  const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+  v.inbox = inbox({ errors: ["google: not signed in: legion google-login"], google: null });
+  expect(Pages.home_html(v, now).join("")).toContain("legion google-login");
+  v.inbox = inbox({ google: {
+    events: [
+      { id: "a", title: "Done <early>", start: at(12, 9), end: at(12, 10), meet: "", people: 2 },
+      { id: "b", title: "Ryan & Jenny <1:1>", start: at(12, 13, 30), end: at(12, 14), meet: "https://meet.google.com/abc", people: 2 },
+      { id: "c", title: "Board prep", start: at(13, 10), end: at(13, 11), meet: "", people: 5 },
+    ],
+    docs: [{ id: "doc_1", title: "Standup <x> - Transcript", at: "2026-11-11T10:00:00Z", url: "https://docs.google.com/document/d/doc_1" }],
+  } });
+  expect(Cockpit.up_next(v, now.getTime()).map((e) => [e.title, e.day, e.time])).toEqual([["Ryan & Jenny <1:1>", "today", "13:30"], ["Board prep", "tomorrow", "10:00"]]);
+  const home = Pages.home_html(v, now).join("");
+  expect(home).toContain("Ryan &amp; Jenny &lt;1:1&gt;");
+  expect(home).toContain('href="https://meet.google.com/abc"');
+  expect(home).not.toContain("Done &lt;early&gt;");
+  const list = Pages.transcripts_html(v, null, new Set()).join("");
+  expect(list).toContain("Standup &lt;x&gt; - Transcript");
+  expect(list).toContain('data-doc="doc_1"');
+  const picked = Pages.transcripts_html(v, "doc_1", new Set()).join("");
+  expect(picked).toContain(act({ $: "Transcript", id: "doc_1" }));
+  expect(picked).toContain('href="https://docs.google.com/document/d/doc_1"');
+  expect(Pages.transcripts_html(v, "doc_1", new Set(["doc_1"])).join("")).toContain("Reading and summarizing");
+  v.summaries.set("doc_1", { title: "Standup", text: "## Decided\n- ship <Friday>", at: 1 });
+  const done = Pages.transcripts_html(v, "doc_1", new Set()).join("");
+  expect(done).toContain("ship &lt;Friday&gt;");
+  expect(done).not.toContain(act({ $: "Transcript", id: "doc_1" }));
+  expect(View.view_route("#transcripts")).toEqual({ mode: "transcripts", name: null });
+});

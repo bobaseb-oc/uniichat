@@ -126,7 +126,7 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 export type Mode = "chat" | "crew" | Deck;
 // the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
 // (not "Page": an agent's page is)
-export const PAGES = ["home", "inbox", "routines", "digest"] as const;
+export const PAGES = ["home", "inbox", "routines", "digest", "transcripts"] as const;
 export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
@@ -156,6 +156,7 @@ export type View = State & {
   alerted : Map<string, number>;
   inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
   themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
+  summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -184,7 +185,9 @@ export type Server =
   | { $: "job"; id: string; job: unknown }
   | { $: "inbox"; inbox: Inbox | null } // the cockpit's inbox, a device's latest report (Inbox.ts)
   | { $: "fetch" }                        // to devices: read the inbox now
-  | { $: "themes"; themes: { key: string; by: Record<string, string[]> } }; // the digest's themes (Chat.themes)
+  | { $: "themes"; themes: { key: string; by: Record<string, string[]> } } // the digest's themes (Chat.themes)
+  | { $: "read"; id: string }             // to devices: read that transcript Doc (Device.device_transcript)
+  | { $: "summary"; id: string; summary: Summary }; // a transcript's summary (Chat.transcript)
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -223,6 +226,7 @@ export type Client =
   | { $: "fetch" } // the inbox read anew by the devices
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
   | { $: "themes" } // the digest's merged PRs summarized by theme
+  | { $: "transcript"; id: string; text?: string; error?: string } // a view: that transcript summarized; a device: its text, or why not
   | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
   | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
   | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
@@ -242,6 +246,10 @@ export type Link = {
   hear : (msg: Server) => void;
   lost : (up: boolean) => Promise<boolean>;
 };
+
+// a meeting transcript's summary (Chat.transcript): its Doc's title, the
+// summary, when made (ms)
+export type Summary = { title: string; text: string; at: number };
 
 // a routine act (the web's Routines page, the terminal's /routine)
 export type RoutineOp = { op: "add"; routine: Given } | { op: "toggle"; n: number; on: boolean } | { op: "drop" | "run"; n: number };
@@ -269,6 +277,7 @@ export type Act =
   | { $: "Archive"; names: string[] }           // agents out of the crew (Home's Archive, Archive all)
   | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
   | { $: "Themes" }                             // the digest summarized by theme
+  | { $: "Transcript"; id: string }             // a meeting transcript summarized
 
 // what a page draws, top to bottom
 export type Row =
@@ -410,6 +419,7 @@ export function view_new(): View {
     alerted   : new Map(),
     inbox     : null,
     themes    : null,
+    summaries : new Map(),
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -436,6 +446,13 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "summary": {
+      v.summaries.set(msg.id, msg.summary);
+      return [];
+    }
+    case "read": {
       return [];
     }
     case "zoom":
@@ -629,6 +646,9 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Transcript": {
+      return [{ $: "transcript", id: act.id }];
     }
     case "Routine": {
       const { $, ...op } = act;
@@ -1102,7 +1122,7 @@ export function view_drop(v: View, arg: string): Act | string {
 
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew|home|inbox|routines|digest)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }

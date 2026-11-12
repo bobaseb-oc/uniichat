@@ -11,7 +11,8 @@ import * as Cockpit from "../../Cockpit.ts";
 import type { Inbox } from "../../Inbox.ts";
 import * as Routines from "../../Routines.ts";
 import type * as View from "../../View.ts";
-import { esc } from "./Html.ts";
+import { block_html, esc } from "./Html.ts";
+import { md_parse } from "../../Md.ts";
 
 // where File issue goes: Legion's own repo, GitHub's own page (nothing is
 // posted from here)
@@ -135,7 +136,12 @@ export function home_html(v: View.View, now: Date): string[] {
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
   const apps = Cockpit.home_apps(v);
   const app = (href: string, name: string, line: string) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
-  const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>`
+  const signed = v.inbox?.errors.find((e) => e.startsWith("google:"));
+  const next = Cockpit.up_next(v, now.getTime());
+  const meet = (url: string) => url === "" ? "" : `<a class="pbtn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
+  const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? (next.map((e) => `<div class="next"><span class="when">${esc(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>`)
+    : `<p class="meta">${esc(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
+  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}</section>`
     + `<section><h3>Activity</h3>${Cockpit.home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
@@ -157,7 +163,7 @@ export function side_html(v: View.View, mode: View.Mode, now: number): string[] 
   const working = v.crew.filter((c) => c.status === "working").length;
   const pages = [
     ["home", "Home", 0], ["inbox", "Inbox", Cockpit.inbox_badge(v.inbox)], ["chat", "Chat", (v.questions ?? []).length],
-    ["crew", "Crew", working], ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length], ["digest", "Digest", 0],
+    ["crew", "Crew", working], ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length], ["digest", "Digest", 0], ["transcripts", "Transcripts", 0],
   ] as const;
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
   const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
@@ -229,4 +235,33 @@ export function digest_html(v: View.View): string[] {
   });
   const open = Cockpit.digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
   return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
+}
+
+// Transcripts (Google.ts, RED ZONE draft)
+// =======================================
+
+// the transcript Docs of the last 14 days, and the one picked: its
+// summary (Markdown, escaped by Html.block_html), or Summarize (one call
+// to the compactor), or that it's being read and summarized; Open full
+// transcript (Google Docs); signed out: how to sign in
+export function transcripts_html(v: View.View, sel: string | null, reading: Set<string>): string[] {
+  const g = v.inbox?.google ?? null;
+  const head = `<div class="phead"><h2>Transcripts</h2><p class="meta">Recorded calls: last 14 days</p><button class="pbtn"${act_html({ $: "Fetch" })}>Refresh</button></div>`;
+  if (g === null) {
+    const why = v.inbox?.errors.find((e) => e.startsWith("google:")) ?? "google: run legion google-login on your device";
+    return [head, `<p class="meta">${esc(why.replace(/^google: /, "Google: "))}</p>`];
+  }
+  const day = (at: string) => new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const list = g.docs.map((d) => `<button class="tdoc${d.id === sel ? " here" : ""}" data-doc="${esc(d.id)}"><span class="meta">${esc(day(d.at))}</span><span class="t">${esc(d.title)}</span>${v.summaries.has(d.id) ? `<span class="meta">summarized</span>` : ""}</button>`).join("") || `<p class="meta">No transcripts in the last 14 days.</p>`;
+  const doc = g.docs.find((d) => d.id === sel);
+  let body = `<p class="meta">Pick a transcript.</p>`;
+  if (doc !== undefined) {
+    const s = v.summaries.get(doc.id);
+    const open = doc.url === "" ? "" : `<a class="pbtn" href="${esc(doc.url)}" target="_blank" rel="noopener noreferrer">Open full transcript</a>`;
+    const what = s !== undefined ? `<div class="tsum">${md_parse(s.text).map(block_html).join("")}</div>`
+      : reading.has(doc.id) ? `<p class="meta">Reading and summarizing…</p>`
+      : `<button class="pbtn"${act_html({ $: "Transcript", id: doc.id })} title="its text goes to the compactor's model, once">Summarize</button>`;
+    body = `<h3>${esc(doc.title)}</h3><p class="meta">${esc(day(doc.at))}</p><div class="acts">${open}</div>${what}`;
+  }
+  return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }

@@ -283,6 +283,7 @@ const PAGE_ITEMS: Item[] = [
   { label: "Crew", hint: "page · g c", go: { href: "#crew" } },
   { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
+  { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
@@ -315,4 +316,22 @@ export function digest_groups(prs: DigestPr[]): { author: string; prs: DigestPr[
   const by = new Map<string, DigestPr[]>();
   prs.forEach((p) => by.set(p.author, [...(by.get(p.author) ?? []), p]));
   return [...by.entries()].map(([author, list]) => ({ author, prs: list })).sort((a, b) => b.prs.length - a.prs.length || a.author.localeCompare(b.author));
+}
+
+// Up next (Google.ts, RED ZONE draft)
+// ===================================
+
+// today's and tomorrow's events not over yet, soonest first: its day and
+// local time
+export type Next = { title: string; day: "today" | "tomorrow"; time: string; meet: string; people: number };
+export function up_next(v: View, now: number): Next[] {
+  const today = new Date(now).toDateString();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return (v.inbox?.google?.events ?? [])
+    .filter((e) => Date.parse(e.end || e.start) > now)
+    .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+    .map((e) => {
+      const d = new Date(e.start);
+      return { title: e.title, day: d.toDateString() === today ? "today" : "tomorrow", time: e.start.length <= 10 ? "all day" : p(d.getHours()) + ":" + p(d.getMinutes()), meet: e.meet, people: e.people };
+    });
 }
