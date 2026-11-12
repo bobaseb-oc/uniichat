@@ -37,7 +37,7 @@ import { Memory, type Seen } from "./Memory.ts";
 import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Search } from "./Search.ts";
-import type { Crew, Live } from "./View.ts";
+import type { Crew, Live, Pulse, Status } from "./View.ts";
 
 export type { Live };
 
@@ -716,11 +716,32 @@ export namespace Tools {
       const role = a.role;
       const pick = role.$ === "hands" ? tools.hooks.pick() : role.$ === "cli" ? null : Tools.child(role.tier, role.model);
       const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
-      const at = a.call !== null || a.runs === true;
-      const status = a.asks ? "asking" : a.stop ? "stopped" : at ? "working" : Tools.below(tools, a.name).length > 0 ? "waiting" : a.replies.at(-1)?.startsWith("failed: ") ? "failed" : "done";
+      const status = Tools.status(tools, a);
       const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
       return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0 };
     });
+  }
+
+  // how an agent is, as the crew tells it
+  export function status(tools: Tools, a: Agent): Status {
+    const at = a.call !== null || a.runs === true;
+    return a.asks ? "asking" : a.stop ? "stopped" : at ? "working" : Tools.below(tools, a.name).length > 0 ? "waiting" : a.replies.at(-1)?.startsWith("failed: ") ? "failed" : "done";
+  }
+
+  // the most of a line a pulse carries
+  export const PULSE_LINE = 120;
+
+  // an agent's pulse, for every view: its status, what it does now (its
+  // stream's last line; thoughts, only that it thinks), its report's last
+  // line
+  export function pulse(tools: Tools, a: Agent): Pulse {
+    const top = a.live.at(-1);
+    const act = top === undefined ? "" : top.kind === "mind" ? "thinking…" : last_line(top.text);
+    return { $: "pulse", name: a.name, status: Tools.status(tools, a), act, last: last_line(a.replies.at(-1) ?? "") };
+  }
+
+  function last_line(text: string): string {
+    return (text.split("\n").map((l) => l.trim()).filter((l) => l !== "").at(-1) ?? "").slice(0, Tools.PULSE_LINE);
   }
 
   // what an agent is, as Unii's list of those at work says

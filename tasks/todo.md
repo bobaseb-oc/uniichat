@@ -173,8 +173,18 @@ no cost display; desktop only.
       changed files 8 → 8. Headless Chrome render of a demo crew (8 managers, 40 workers) checked: the
       first had no status glyphs (.mark clashed with the logo's class: renamed .st) and roll-ups cut off
       (a folded manager now shows only its roll-up; tier and model in the tooltip).
-- [ ] C2. A pulse per agent for every view (status, current activity, last line); a view can
+- [x] C2. A pulse per agent for every view (status, current activity, last line); a view can
       watch several agents at once (the visible tiles).
+      Done: Tools.pulse/status ({status, act, last}, lines ≤ 120, thoughts as "thinking…"); Chat.pulse sends it
+      to every socket once PULSE (1 s) after an agent's first delta or entry (a burst: one); a socket's
+      `watch` replaces its watch set (known agents, ≤ 16); the web keeps pulses (v.pulses), shows each tree
+      row's activity line, and watches its focus (View.view_watch; C3's tiles join it).
+      Proof: Tools.test.ts pulse test; Server.test.ts pulse/watch test (20 deltas → 1 pulse to each socket,
+      20 deltas only to the watcher, none after watch []); View/Html tests 23/23. Mutants killed: no
+      coalescing, pulse to watchers only, unknown names watched, watch adds (re-run: the first try didn't
+      parse; both versions checked with Bun.Transpiler), always act, watch nothing, first pulse kept.
+      Not killed by a test: the 16 cap (it needs 17 live agents). Suite 182 pass, 3 baseline fails; tsc
+      75 → 75 (one new error, an unknown[] in watch, fixed).
 - [ ] C3. A grid of manager tiles with dots for their workers; a timeline lane per agent;
       the terminal's full-screen Crew mode (/crew full, Esc goes back to scrollback); a demo crew
       (8 managers, 40 workers) for layout and tests.

@@ -240,3 +240,64 @@ test("an agent's events go only to views on its page; a view's tell and dismiss 
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   expect(out).toEqual({ a: [true, true], b: [false, true], told: {}, sent: ["one more thing"], crewed: true, dismissed: {}, after: false });
 });
+
+// Every view hears an agent's pulse (Tools.pulse) as it streams, at most
+// one an agent a PULSE (a burst of deltas: one); only views watching it
+// hear the deltas. A view's watch replaces what it watches: agents known,
+// at most WATCH of them
+const PULSE = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const got = { a: [], b: [] };
+const sock = (k) => ({ send: (m) => got[k].push(JSON.parse(m)), data: { seen: new Set(), watch: new Set() } });
+const [a, b] = [sock("a"), sock("b")];
+chat.socks.add(a);
+chat.socks.add(b);
+const asks = [];
+AskAI.ask = (ask, on) => {
+  const [call, sink] = AskAI.tie(on, ask.bill, () => {}, () => {});
+  asks.push({ ask, sink });
+  return call;
+};
+const until = async (f) => {
+  for (let k = 0; k < 300 && !f(); k++) await Bun.sleep(10);
+  return f();
+};
+const name = Tools.start(chat.tools, "main", { $: "sub", tier: "worker", effort: null, model: null }, "a task");
+await until(() => asks.length === 1);
+Chat.ask(chat, a, { $: "watch", names: [name, "Nobody", ...Array.from({ length: 40 }, (_, k) => name)] });
+const watched = [...a.data.watch];
+got.a.length = 0;
+got.b.length = 0;
+const agent = chat.tools.agents.get(name);
+for (let k = 0; k < 20; k++) Chat.on(chat, agent, { $: "Delta", kind: "work", text: k === 19 ? "\\nlast words" : "x" });
+const pulses = (k) => got[k].filter((m) => m.$ === "pulse");
+await until(() => pulses("b").length > 0);
+await Bun.sleep(1200);
+const deltas = (k) => got[k].filter((m) => m.$ === "delta").length;
+const seen = { watched, pa: pulses("a").length, pb: pulses("b").length, pulse: pulses("b")[0], da: deltas("a"), db: deltas("b") };
+Chat.ask(chat, a, { $: "watch", names: [] });
+got.a.length = 0;
+Chat.on(chat, agent, { $: "Delta", kind: "work", text: "more" });
+console.log(JSON.stringify({ ...seen, after: deltas("a") }));
+process.exit(0);
+`;
+
+test("every view hears an agent's pulse, a burst as one; a view's watch replaces what it watches", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/pulse.ts", PULSE);
+  const proc = Bun.spawn([process.execPath, dir + "/pulse.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.watched).toHaveLength(1);
+  expect(out.pa).toBe(1);
+  expect(out.pb).toBe(1);
+  expect(out.pulse).toMatchObject({ $: "pulse", status: "working", act: "last words", last: "" });
+  expect(out.da).toBe(20);
+  expect(out.db).toBe(0);
+  expect(out.after).toBe(0);
+});

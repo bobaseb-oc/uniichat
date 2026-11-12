@@ -187,3 +187,15 @@ test("Stop stops the agent named", () => {
   const v = team();
   expect(View.view_act(v, { $: "Stop", name: "A" })).toEqual([{ $: "stop", name: "A" }]);
 });
+
+// a pulse is kept by agent, the latest only, and shows on its tree row;
+// the view watches its focus alone (C3's tiles join it)
+test("a pulse is kept per agent; the view watches what it shows", () => {
+  const v = team();
+  View.view_hear(v, { $: "pulse", name: "Solo", status: "done", act: "a", last: "first" });
+  View.view_hear(v, { $: "pulse", name: "Solo", status: "done", act: "b", last: "Tests: 12 pass." });
+  expect(v.pulses.get("Solo")).toMatchObject({ act: "b", last: "Tests: 12 pass." });
+  expect(View.view_watch(v)).toEqual([]);
+  View.view_act(v, { $: "Goto", name: "A" });
+  expect(View.view_watch(v)).toEqual(["A"]);
+});

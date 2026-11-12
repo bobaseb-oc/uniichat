@@ -155,3 +155,25 @@ test("the devices line names a device's home repo, and Unii's tools say they run
   expect(shell("Wkr")).not.toContain("home repo");
   Tools.close(tools);
 });
+
+// An agent's pulse, sent to every view (Server.ts), small: its status,
+// what it does now (its stream's last line: a tool's call, its words, or
+// "thinking"), its report's last line; each line at most PULSE_LINE chars
+test("an agent's pulse: status, its stream's last line, its report's last line", () => {
+  const tools = Tools.serve({} as any, {} as any);
+  const agent = { name: "Ada", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set("Ada", agent);
+  expect(Tools.pulse(tools, agent)).toEqual({ $: "pulse", name: "Ada", status: "done", act: "", last: "" });
+  agent.runs = true;
+  agent.live = [{ kind: "work", text: "Reading the tests.\n\nNow the fix" }];
+  expect(Tools.pulse(tools, agent)).toMatchObject({ status: "working", act: "Now the fix" });
+  agent.live.push({ kind: "mind", text: "secret reasoning" });
+  expect(Tools.pulse(tools, agent).act).toBe("thinking…");
+  agent.live.push({ kind: "tool", text: "shell: bun test\n" });
+  expect(Tools.pulse(tools, agent).act).toBe("shell: bun test");
+  agent.live.push({ kind: "work", text: "x".repeat(500) });
+  expect(Tools.pulse(tools, agent).act).toHaveLength(Tools.PULSE_LINE);
+  agent.runs = false;
+  agent.replies = ["All done.\nTests: 12 pass.\n"];
+  expect(Tools.pulse(tools, agent)).toMatchObject({ status: "done", last: "Tests: 12 pass." });
+});

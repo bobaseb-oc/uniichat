@@ -91,6 +91,8 @@ const P = {
   step  : "" as "" | "start" | "pay" | "send" | "run" | "seen" | "done",
   crew  : false,
   g     : 0,
+  watching : "",
+  watched  : null as WebSocket | null,
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -980,14 +982,28 @@ function crew_bars(): void {
   markup($("#mode"), Html.mode_html(mode, View.view_pill(v)));
   $("#crew").hidden = !P.crew;
   if (!P.crew) {
+    watch();
     return;
   }
   markup($("#crew .needs"), Html.needs_html(v));
   markup($("#crew .card"), [Html.focus_html(v)]);
   markup($("#crew .tree"), Html.tree_html(v, Date.now()));
+  watch();
   const hash = View.view_hash("crew", v.page?.name ?? null);
   if (location.hash !== hash) {
     history.replaceState(null, "", location.pathname + location.search + hash);
+  }
+}
+
+// the server told what's in sight (View.view_watch) when that changes, or
+// the socket did (a new one watches nothing)
+function watch(): void {
+  const names = View.view_watch(v);
+  const key = names.join("\n");
+  if (key !== P.watching || v.ws !== P.watched) {
+    P.watching = key;
+    P.watched = v.ws;
+    View.link_send(v, { $: "watch", names });
   }
 }
 

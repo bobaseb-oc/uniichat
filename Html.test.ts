@@ -123,3 +123,17 @@ test("the focus card: the agent in focus with its actions, or Unii's chat", () =
   expect(Html.focus_html(v)).toContain("<b>Gone</b>");
   expect(Html.focus_html(v)).not.toContain("Stop");
 });
+
+// a row's activity line: at work, what it does now; else its report's
+// last line; escaped
+test("a tree row shows its pulse: what it does at work, its last line done", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Run", "main", "working"), crew("Old", "main", "done")] });
+  View.view_hear(v, { $: "pulse", name: "Run", status: "working", act: "shell: <bun test>", last: "older" });
+  View.view_hear(v, { $: "pulse", name: "Old", status: "done", act: "x", last: "Tests: 12 pass." });
+  const [run, old] = Html.tree_html(v, 0);
+  expect(run).toContain('<div class="line">shell: &lt;bun test&gt;</div>');
+  expect(old).toContain('<div class="line">Tests: 12 pass.</div>');
+  View.view_hear(v, { $: "pulse", name: "Run", status: "working", act: "", last: "" });
+  expect(Html.tree_html(v, 0)[0]).not.toContain('class="line"');
+});

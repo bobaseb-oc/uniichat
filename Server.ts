@@ -165,6 +165,14 @@ const LOCK       = config.DIR + "/lock";
 // often one that gave its chats looks whether its last requests ended
 const HAND       = config.DIR + "/hand";
 const LEAVE      = 500;
+
+// an agent's pulse (Tools.pulse) goes to every view at most once a PULSE
+// ms while it streams; a view watches (hears the deltas of) at most WATCH
+// agents: its focus and tiles in sight
+const PULSE      = 1000;
+const WATCH      = 16;
+// the agents of a chat with a pulse due
+const PULSES     = new WeakMap<object, Set<string>>();
 // how a call ends whose process ended first (a crash)
 const ENDED      = "the server process that ran it ended";
 // a turn's head, as a summary's is "Compaction:": one prompt serves both
@@ -646,6 +654,7 @@ export namespace Chat {
       for (const { i, kind, text } of roots) {
         Chat.to(chat, agent.name, { $: "entry", agent: agent.name, id: i, kind, text });
       }
+      Chat.pulse(chat, agent);
       return { id: roots[0].i, end: roots[roots.length - 1].i + 1 };
     }
     const roots = Memory.push(chat.mem, [{ kind, text, images, more, act }]);
@@ -665,6 +674,9 @@ export namespace Chat {
     if (ev.$ === "Delta") {
       live_push(at.live, ev.kind, ev.text, ev.fresh);
       Chat.to(chat, name, { $: "delta", agent: name, kind: ev.kind, text: ev.text, fresh: ev.fresh });
+      if (agent !== null) {
+        Chat.pulse(chat, agent);
+      }
       return;
     }
     if (ev.kind === "tool" && ev.of !== undefined) {
@@ -1076,6 +1088,24 @@ export namespace Chat {
     chat.socks.forEach((sock) => (agent === undefined || sock.data.watch.has(agent)) && Chat.send(sock, msg));
   }
 
+  // an agent's pulse to every view, once PULSE ms after the first event
+  // since its last: a burst is one, told as it is then
+  export function pulse(chat: Chat, agent: Agent): void {
+    const due = PULSES.get(chat) ?? new Set<string>();
+    PULSES.set(chat, due);
+    if (due.has(agent.name)) {
+      return;
+    }
+    due.add(agent.name);
+    setTimeout(() => {
+      due.delete(agent.name);
+      const now = chat.tools.agents.get(agent.name);
+      if (now !== undefined) {
+        Chat.all(chat, Tools.pulse(chat.tools, now));
+      }
+    }, PULSE);
+  }
+
   export function send(sock: Sock, msg: object): void {
     sock.send(JSON.stringify(msg));
   }
@@ -1181,6 +1211,13 @@ export namespace Chat {
         const parts = Memory.roots(chat.mem.count).map(({ l, i }): Part => [i * 2 ** l, 2 ** l]);
         Chat.teach(chat, sock, parts);
         Chat.send(sock, { $: "root", parts });
+        return {};
+      }
+      // what the view has in sight: those it hears the deltas and
+      // entries of from now (its focus asks for its log: "agent")
+      case "watch": {
+        const names: string[] = Array.isArray(msg.names) ? [...new Set<string>(msg.names.map((n: unknown) => String(n)))] : [];
+        sock.data.watch = new Set(names.filter((n) => Memory.agent(chat.mem, n) !== null).slice(0, WATCH));
         return {};
       }
       case "agent": {

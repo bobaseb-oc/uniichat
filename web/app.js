@@ -930,6 +930,7 @@ function view_new() {
     pages: new Map,
     page: null,
     expanded: new Set,
+    pulses: new Map,
     heard: null,
     alerted: new Map,
     notes: [],
@@ -1001,6 +1002,10 @@ function view_hear(v, msg) {
     }
     case "note": {
       v.notes.push(msg.text);
+      return [];
+    }
+    case "pulse": {
+      v.pulses.set(msg.name, msg);
       return [];
     }
     case "ack": {
@@ -1231,6 +1236,9 @@ function view_tree(v, now) {
 var ROLLUP = ["working", "waiting", "asking", "failed", "stopped", "done"];
 function rollup(crew) {
   return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length]).filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+function view_watch(v) {
+  return v.page === null ? [] : [v.page.name];
 }
 function view_needs(v) {
   return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
@@ -1597,8 +1605,14 @@ function tree_html(v, now) {
     const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
     const what = `<span class="st">${CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
     const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
-    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}</div>`;
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
   });
+}
+function line_html(v, c) {
+  const p = v.pulses.get(c.name);
+  const at = c.status === "working" || c.status === "waiting" || c.status === "asking";
+  const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
+  return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
 }
 function needs_html(v) {
   return view_needs(v).map((c) => {
@@ -1777,7 +1791,9 @@ var P = {
   off: new Set,
   step: "",
   crew: false,
-  g: 0
+  g: 0,
+  watching: "",
+  watched: null
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2490,14 +2506,26 @@ function crew_bars() {
   markup($("#mode"), mode_html(mode, view_pill(v)));
   $("#crew").hidden = !P.crew;
   if (!P.crew) {
+    watch();
     return;
   }
   markup($("#crew .needs"), needs_html(v));
   markup($("#crew .card"), [focus_html(v)]);
   markup($("#crew .tree"), tree_html(v, Date.now()));
+  watch();
   const hash = view_hash("crew", v.page?.name ?? null);
   if (location.hash !== hash) {
     history.replaceState(null, "", location.pathname + location.search + hash);
+  }
+}
+function watch() {
+  const names = view_watch(v);
+  const key = names.join(`
+`);
+  if (key !== P.watching || v.ws !== P.watched) {
+    P.watching = key;
+    P.watched = v.ws;
+    link_send(v, { $: "watch", names });
   }
 }
 function crew_keys(ev) {

@@ -75,6 +75,9 @@ export type State = {
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
 export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number };
+// an agent's pulse (Tools.pulse), told every view as it streams: how it
+// is, what it does now, its report's last line
+export type Pulse = { $: "pulse"; name: string; status: Status; act: string; last: string };
 // asking: a Claude Code worker waiting for the person's approval
 export type Status = "asking" | "working" | "waiting" | "failed" | "stopped" | "done";
 
@@ -115,6 +118,7 @@ export type View = State & {
   pages : Map<string, Page>;
   page  : Page | null;
   expanded : Set<string>;
+  pulses : Map<string, Pulse>;
   heard : Heard | null;
   alerted : Map<string, number>;
   notes : string[];
@@ -138,6 +142,7 @@ export type Server =
   | { $: "live"; agent?: string; live: Live[] }
   | ({ $: "state" } & State)
   | { $: "agent"; name: string; found: boolean }
+  | Pulse
   | { $: "note"; text: string }
   | ({ $: "ack"; id: string } & Answer)
   | { $: "jobs"; ids: string[] }
@@ -166,6 +171,7 @@ export type Client =
   | { $: "zoom"; part: Part }
   | { $: "root" }
   | { $: "agent"; name: string }
+  | { $: "watch"; names: string[] } // the agents in sight, whose deltas it hears
   | { $: "spawn"; task: string } // an agent the person starts (/agent)
   | { $: "tell"; name: string; text: string } // a message to the agent whose page is shown
   | { $: "dismiss"; name: string } // a done agent out of the crew
@@ -334,6 +340,7 @@ export function view_new(): View {
     pages     : new Map(),
     page      : null,
     expanded  : new Set(),
+    pulses    : new Map(),
     heard     : null,
     alerted   : new Map(),
     notes     : [],
@@ -406,6 +413,10 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "note": {
       v.notes.push(msg.text);
+      return [];
+    }
+    case "pulse": {
+      v.pulses.set(msg.name, msg);
       return [];
     }
     case "ack": {
@@ -696,6 +707,12 @@ const ROLLUP: Status[] = ["working", "waiting", "asking", "failed", "stopped", "
 function rollup(crew: Crew[]): string {
   return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length] as const)
     .filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
+}
+
+// the agents the view has in sight, whose deltas it hears (the server
+// tells their pulses to all): its focus
+export function view_watch(v: View): string[] {
+  return v.page === null ? [] : [v.page.name];
 }
 
 // the agents that need the person, those asking first, then the failed

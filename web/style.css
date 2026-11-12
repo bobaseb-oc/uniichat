@@ -173,7 +173,8 @@ body.crewmode #tabs { display: none; }
 #crew .need.failed b { color: var(--del); }
 #crew .focus { margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 10px; }
 #crew .focus .meta { color: var(--mid); }
-#crew .node { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 6px; }
+#crew .node { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; padding: 2px 4px; border-radius: 6px; }
+#crew .node .line { flex-basis: 100%; padding-left: 40px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px/18px var(--mono); color: var(--soft); }
 #crew .node:hover, #crew .node.here { background: var(--block); }
 #crew .node a { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; white-space: nowrap; }
 #crew .node .meta { overflow: hidden; text-overflow: ellipsis; color: var(--mid); }

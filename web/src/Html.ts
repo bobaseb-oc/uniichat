@@ -158,8 +158,17 @@ export function tree_html(v: View.View, now: number): string[] {
     const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
     const what = `<span class="st">${View.CREW[r.status]}</span><b>${esc(r.name)}</b><span class="meta">${esc(info)}</span>`;
     const title = esc(r.tier + " · " + r.model + " · " + r.status + " · " + ago);
-    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}</div>`;
+    return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
   });
+}
+
+// an agent's activity line, by its pulse: at work, what it does now;
+// else its report's last line (none: nothing)
+function line_html(v: View.View, c: View.Crew): string {
+  const p = v.pulses.get(c.name);
+  const at = c.status === "working" || c.status === "waiting" || c.status === "asking";
+  const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
+  return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
 }
 
 // what needs the person (View.view_needs), each with what it waits on
