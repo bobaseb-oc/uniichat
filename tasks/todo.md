@@ -262,7 +262,7 @@ settings (no plugin hooks yet); fail closed only for managed hooks; tools glob, 
 SearXNG search covers finding pages); `!` in the TUI and on the web.
 Constraints: device side only (Machine.ts imports nothing of the server); guard.py runs unchanged (it
 sees Claude Code tool names and input shapes); the `claude` worker is real Claude Code, already guarded.
-- [x] H1 (RED ZONE, DRAFT: committed, awaiting the user's sign-off) Hooks.ts: load PreToolUse/PostToolUse from
+- [x] H1 (RED ZONE: 7c3c5fe, signed off by the user 2026-11-12) Hooks.ts: load PreToolUse/PostToolUse from
       /Library/Application Support/ClaudeCode/managed-settings.json (+ managed-settings.d),
       ~/.claude/settings.json, <repo>/.claude/settings.json and settings.local.json; match by tool regex;
       run each with Claude Code's stdin JSON ({hook_event_name, tool_name, tool_input, cwd, session_id});
@@ -282,8 +282,12 @@ sees Claude Code tool names and input shapes); the `claude` worker is real Claud
       Invariants for review: a managed hook that can't run, an unreadable managed file, a managed
       non-command hook or a bad managed matcher refuse (closed); user/project hooks can't switch off
       managed ones; OC_GUARD_BYPASS is read from the device's env, never the command's.
-- [ ] T1 glob + grep device tools (Machine.ts TOOLS): glob by pattern sorted by mtime; grep via rg if on
+- [x] T1 glob + grep device tools (Machine.ts TOOLS): glob by pattern sorted by mtime; grep via rg if on
       PATH, else a JS walk; output capped like read. → verify: Machine.test.ts cases.
+      Proof: Machine.test.ts glob/grep (rg and the walk, same answers: files, content with context,
+      count, case, glob filter, no match, bad regex; via Machine.run) + Hooks mapping to Glob/Grep; 7/7
+      mutants killed (the "not routed" one after adding the run test); suite 213 pass, 3 known fails;
+      tsc: only missing bun/node type errors. Found: rg's -g lets hidden files back in, so `!.*` goes last.
 - [ ] T2 todo: a per-agent checklist tool (set the whole list), kept on the agent, sent in the crew and
       pulse, drawn in the focus card and /crew full. → verify: Tools/View/Html/Paint tests.
 - [ ] B1 `!cmd` in the TUI: runs Machine.shell in main's dir (no hooks: the user typed it, as in Claude
@@ -293,6 +297,7 @@ sees Claude Code tool names and input shapes); the `claude` worker is real Claud
       "no device" when none. → verify: Server/Device tests + headless click.
 
 ## Later
+- Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
 - SearXNG engines: DuckDuckGo (captcha), Brave and Wikipedia fail; only Google CSE answers. Tune engines in ~/.unii/searxng/settings.yml.

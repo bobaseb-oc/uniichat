@@ -94,6 +94,7 @@ export namespace Hooks {
 
   // a job's tool calls as Claude Code's (one Edit per edit), paths made
   // absolute from its dir; none for tools Claude Code has no name for
+  // (computer; claude, which is Claude Code)
   export function calls(job: Job, cwd: string): Call[] {
     const input = job.input ?? {};
     const file = (p: unknown) => path.resolve(cwd, String(p));
@@ -111,6 +112,14 @@ export namespace Hooks {
       case "edit": {
         const edits: any[] = Array.isArray(input.edits) ? input.edits : [];
         return edits.map((e) => ({ tool: "Edit", input: { file_path: file(e?.path), old_string: String(e?.old ?? ""), new_string: String(e?.new ?? ""), replace_all: e?.all === true } }));
+      }
+      case "glob": {
+        return [{ tool: "Glob", input: { pattern: String(input.pattern), path: file(input.path ?? ".") } }];
+      }
+      case "grep": {
+        const mode = { files: "files_with_matches", content: "content", count: "count" }[String(input.mode ?? "files")] ?? "files_with_matches";
+        const more = { ...(input.glob !== undefined ? { glob: String(input.glob) } : {}), ...(input.ignore_case === true ? { "-i": true } : {}), ...(input.context !== undefined ? { "-C": Number(input.context) } : {}) };
+        return [{ tool: "Grep", input: { pattern: String(input.pattern), path: file(input.path ?? "."), output_mode: mode, ...more } }];
       }
       default: {
         return [];

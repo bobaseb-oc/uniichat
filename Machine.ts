@@ -72,6 +72,8 @@ export const TOOLS: Spec[] = [
   spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, so give background jobs their own output file. Background jobs live only while unii is open on the device: closing it kills every process the calls started.", { command: STR }, ["command"]),
   spec("read", "Read a text file. offset: the first line to show (from 1); limit: how many lines; at: the character of the first line to start from. It ends saying the lines shown, as [lines 4-7 of 15]; output past " + CAP + " characters comes in pages, saying where to go on.", { path: STR, offset: INT, limit: INT, at: INT }, ["path"]),
   spec("write", "Write a whole file, making its directories. Answers a unified diff of what changed (a new file: all its lines added).", { path: STR, content: STR }, ["path", "content"]),
+  spec("glob", "Find files by a glob pattern (\"**/*.ts\", \"src/**/test_*.py\") under path (a dir; by default the agent's), newest first, as paths from path; hidden files and node_modules are left out.", { pattern: STR, path: STR }, ["pattern"]),
+  spec("grep", "Search files' contents for a regex (ripgrep's syntax) under path (a dir or a file; by default the agent's dir); hidden, binary, .gitignore'd files and node_modules left out. glob: only files whose name matches (\"*.ts\"); mode: files (the default) the files that match, content the matching lines as file:line:text, count the matches per file; context: lines shown around each match (content); ignore_case.", { pattern: STR, path: STR, glob: STR, mode: { type: "string", enum: ["files", "content", "count"] }, context: INT, ignore_case: { type: "boolean" } }, ["pattern"]),
   spec("edit", "Replace text in files: the edits in order, each on its file as the edits before it left it. old must match exactly, whitespace included, and only once, unless all is true, which replaces every match. If any edit fails, no file is changed. Answers a unified diff of each file.", { edits: { type: "array", items: EDIT, minItems: 1 } }, ["edits"]),
 ];
 
@@ -177,6 +179,12 @@ export namespace Machine {
       }
       case "edit": {
         return Machine.edit(cwd, input.edits);
+      }
+      case "glob": {
+        return Machine.glob(cwd, String(input.pattern), input.path === undefined ? undefined : path.resolve(cwd, String(input.path)));
+      }
+      case "grep": {
+        return await Machine.grep(cwd, input, signal);
       }
       case "computer": {
         return await Computer.act(input, signal);
@@ -435,6 +443,127 @@ export namespace Machine {
     }
     const diffs = [...files.values()].map((f) => text_diff(f.shown, f.was, f.text));
     return { text: diffs.join("\n"), fail: false };
+  }
+
+  // the files under base (by default cwd) matching a glob, newest first,
+  // as paths from base; hidden ones and node_modules left out
+  export function glob(cwd: string, pattern: string, base: string | undefined): Out {
+    const dir = base ?? cwd;
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      return { text: "No directory " + dir + ".", fail: true };
+    }
+    const found = [...new Bun.Glob(pattern).scanSync({ cwd: dir, onlyFiles: true, dot: false })].filter((f) => !f.split("/").includes("node_modules"));
+    if (found.length === 0) {
+      return { text: "No files match " + pattern + ".", fail: false };
+    }
+    const time = (f: string) => fs.statSync(path.join(dir, f)).mtimeMs;
+    const sorted = found.map((f) => ({ f, t: time(f) })).sort((a, b) => b.t - a.t || a.f.localeCompare(b.f)).map((x) => x.f);
+    return { text: capped(sorted.join("\n")), fail: false };
+  }
+
+  // a search of files' contents (Grep's input): with ripgrep if there is
+  // one (rg), else a walk of the files read whole here
+  export async function grep(cwd: string, input: any, signal: AbortSignal, rg: string | null = Bun.which("rg")): Promise<Out> {
+    const pattern = String(input.pattern);
+    const target = path.resolve(cwd, String(input.path ?? "."));
+    const mode = input.mode === "content" || input.mode === "count" ? input.mode : "files";
+    const context = Math.max(0, Math.min(Number(input.context ?? 0) || 0, 20));
+    if (!fs.existsSync(target)) {
+      return { text: "No file or directory " + target + ".", fail: true };
+    }
+    const lines = rg !== null ? await grep_rg(rg, target, pattern, mode, context, input, signal) : grep_walk(target, pattern, mode, context, input);
+    if (typeof lines === "string") {
+      return { text: lines, fail: true };
+    }
+    if (lines.length === 0) {
+      return { text: "No matches for " + pattern + ".", fail: false };
+    }
+    return { text: capped(lines.join("\n")), fail: false };
+  }
+
+  // a text kept to CAP characters, its head and tail (Clip.ts)
+  function capped(text: string): string {
+    const c = clip();
+    c.add(text);
+    return c.text();
+  }
+
+  // ripgrep's lines, paths from the target dir, sorted by path; a string
+  // is its error
+  async function grep_rg(rg: string, target: string, pattern: string, mode: string, context: number, input: any, signal: AbortSignal): Promise<string[] | string> {
+    const dir = fs.statSync(target).isDirectory();
+    const args = [rg, "--sort=path", "--no-heading", "--color=never", "-g", "!node_modules"];
+    args.push(...(mode === "files" ? ["-l"] : mode === "count" ? ["-c"] : ["-n", ...(context > 0 ? ["-C", String(context)] : [])]));
+    if (input.ignore_case === true) {
+      args.push("-i");
+    }
+    if (input.glob !== undefined) {
+      args.push("-g", String(input.glob));
+    }
+    // last, so it wins over glob, which would let hidden files back in
+    args.push("-g", "!.*");
+    if (!dir && mode !== "files") {
+      args.push("--with-filename");
+    }
+    args.push("-e", pattern, "--", dir ? "." : path.basename(target));
+    const proc = Bun.spawn(args, { cwd: dir ? target : path.dirname(target), stdout: "pipe", stderr: "pipe" });
+    const stop = () => proc.kill();
+    signal.addEventListener("abort", stop, { once: true });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    signal.removeEventListener("abort", stop);
+    if (code > 1) {
+      return err.trim() || "ripgrep failed (exit " + code + ").";
+    }
+    return out.split("\n").filter((l: string) => l !== "").map((l: string) => l.replace(/^\.\//, ""));
+  }
+
+  // the same search, walking the files: hidden ones, node_modules and
+  // binaries (a NUL) left out; .gitignore is not read
+  function grep_walk(target: string, pattern: string, mode: string, context: number, input: any): string[] | string {
+    let rx: RegExp;
+    try {
+      rx = new RegExp(pattern, input.ignore_case === true ? "i" : "");
+    } catch (err: any) {
+      return "Bad regex: " + String(err?.message ?? err);
+    }
+    const dir = fs.statSync(target).isDirectory();
+    const base = dir ? target : path.dirname(target);
+    const named = input.glob === undefined ? null : new Bun.Glob(String(input.glob));
+    const files = (dir ? [...new Bun.Glob("**/*").scanSync({ cwd: target, onlyFiles: true, dot: false })] : [path.basename(target)])
+      .filter((f) => !f.split("/").includes("node_modules") && (named === null || named.match(path.basename(f)) || named.match(f)))
+      .sort();
+    const out: string[] = [];
+    for (const f of files) {
+      const text: string = fs.readFileSync(path.join(base, f), "utf8");
+      if (text.includes("\0")) {
+        continue;
+      }
+      const rows = text.split("\n");
+      if (rows.at(-1) === "") {
+        rows.pop();
+      }
+      const hits = rows.flatMap((r: string, k: number) => (rx.test(r) ? [k] : []));
+      if (hits.length === 0) {
+        continue;
+      }
+      if (mode === "files") {
+        out.push(f);
+      } else if (mode === "count") {
+        out.push(f + ":" + hits.length);
+      } else {
+        const shown = new Set<number>(hits.flatMap((k) => Array.from({ length: 2 * context + 1 }, (_, d) => k - context + d)).filter((k) => k >= 0 && k < rows.length));
+        const hit = new Set(hits);
+        let last = -2;
+        for (const k of [...shown].sort((a, b) => a - b)) {
+          if (context > 0 && last >= 0 && k > last + 1) {
+            out.push("--");
+          }
+          out.push(f + (hit.has(k) ? ":" : "-") + (k + 1) + (hit.has(k) ? ":" : "-") + rows[k]);
+          last = k;
+        }
+      }
+    }
+    return out;
   }
 
   // ms, or till the signal aborts: none, if it already did (an abort

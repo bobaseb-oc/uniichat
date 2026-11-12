@@ -113,3 +113,53 @@ test("a claude transcript past its cap keeps its end and says it was cut; no res
   expect(Machine.claude_line({ type: "result" })).toBeNull();
   expect(Machine.claude_line({ type: "user", message: { content: [{ type: "tool_result", content: [{ type: "text", text: "x" }] }] } })).toBe("echo: x");
 });
+
+// a small tree for glob and grep: two .ts files (b newer), a .md, a hidden
+// file and node_modules (left out), a binary
+function tree(): string {
+  const root = fs.mkdtempSync(os.tmpdir() + "/legion-find-");
+  fs.mkdirSync(root + "/src/deep", { recursive: true });
+  fs.mkdirSync(root + "/node_modules/x", { recursive: true });
+  fs.writeFileSync(root + "/src/a.ts", "const Alpha = 1;\nconst beta = 2;\n");
+  fs.writeFileSync(root + "/src/deep/b.ts", "// alpha here\nexport const gamma = 3;\n");
+  fs.writeFileSync(root + "/README.md", "Alpha and beta\n");
+  fs.writeFileSync(root + "/.hidden.ts", "alpha\n");
+  fs.writeFileSync(root + "/node_modules/x/c.ts", "alpha\n");
+  fs.writeFileSync(root + "/bin.dat", Buffer.from([0, 97, 108, 112, 104, 97, 0]));
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(root + "/src/a.ts", old, old);
+  return root;
+}
+
+test("glob finds files by pattern, newest first, without hidden files or node_modules", () => {
+  const root = tree();
+  expect(Machine.glob(root, "**/*.ts", undefined)).toEqual({ text: "src/deep/b.ts\nsrc/a.ts", fail: false });
+  expect(Machine.glob(root, "*.ts", root + "/src")).toEqual({ text: "a.ts", fail: false });
+  expect(Machine.glob(root, "**/*.py", undefined)).toEqual({ text: "No files match **/*.py.", fail: false });
+  expect(Machine.glob(root, "*", root + "/nope").fail).toBe(true);
+});
+
+for (const [how, rg] of [["ripgrep", Bun.which("rg")], ["no ripgrep", null]] as const) {
+  test.skipIf(how === "ripgrep" && rg === null)("grep (" + how + "): files, content with line numbers, counts, case, glob filter", async () => {
+    const root = tree();
+    const live = new AbortController().signal;
+    const g = (input: object) => Machine.grep(root, input, live, rg);
+    expect(await g({ pattern: "alpha" })).toEqual({ text: "src/deep/b.ts", fail: false });
+    expect(await g({ pattern: "alpha", ignore_case: true })).toEqual({ text: "README.md\nsrc/a.ts\nsrc/deep/b.ts", fail: false });
+    expect(await g({ pattern: "alpha", ignore_case: true, glob: "*.ts" })).toEqual({ text: "src/a.ts\nsrc/deep/b.ts", fail: false });
+    expect(await g({ pattern: "const \\w+ =", mode: "content", path: "src" })).toEqual({ text: "a.ts:1:const Alpha = 1;\na.ts:2:const beta = 2;\ndeep/b.ts:2:export const gamma = 3;", fail: false });
+    expect(await g({ pattern: "const", mode: "count" })).toEqual({ text: "src/a.ts:2\nsrc/deep/b.ts:1", fail: false });
+    expect(await g({ pattern: "beta", mode: "content", context: 1, path: "src/a.ts" })).toEqual({ text: "a.ts-1-const Alpha = 1;\na.ts:2:const beta = 2;", fail: false });
+    expect(await g({ pattern: "zzz" })).toEqual({ text: "No matches for zzz.", fail: false });
+    expect((await g({ pattern: "(" })).fail).toBe(true);
+  });
+}
+
+test("glob and grep run as device tools, in the agent's dir", async () => {
+  const root = tree();
+  fs.renameSync(root + "/src", root + "/Ann");
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  expect(await run("glob", { pattern: "**/*.ts" })).toEqual({ text: "deep/b.ts\na.ts", fail: false });
+  expect(await run("grep", { pattern: "gamma" })).toEqual({ text: "deep/b.ts", fail: false });
+});

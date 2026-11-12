@@ -37,6 +37,8 @@ test("Legion's tools are told to hooks under Claude Code's names and input shape
     { tool: "Edit", input: { file_path: "/r/a", old_string: "1", new_string: "2", replace_all: false } },
     { tool: "Edit", input: { file_path: "/r/b", old_string: "3", new_string: "4", replace_all: true } },
   ]);
+  expect(Hooks.calls({ name: "glob", input: { pattern: "**/*.ts", path: "src" }, cwd: "x" }, cwd)).toEqual([{ tool: "Glob", input: { pattern: "**/*.ts", path: "/r/src" } }]);
+  expect(Hooks.calls({ name: "grep", input: { pattern: "a+", mode: "content", ignore_case: true, glob: "*.ts", context: 2 }, cwd: "x" }, cwd)).toEqual([{ tool: "Grep", input: { pattern: "a+", path: "/r", output_mode: "content", glob: "*.ts", "-i": true, "-C": 2 } }]);
   // computer and claude (Claude Code itself, with its own hooks) are not told
   expect(Hooks.calls({ name: "computer", input: { action: "screenshot" }, cwd: "x" }, cwd)).toEqual([]);
   expect(Hooks.calls({ name: "claude", input: { task: "t" }, cwd: "x" }, cwd)).toEqual([]);

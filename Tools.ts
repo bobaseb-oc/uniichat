@@ -256,7 +256,7 @@ const DEVICES = `Devices: the user's computers that have unii open now, by name,
 at the start of each message. A device may list its home repo: the user's
 one place for steering files, skills and notes. Its AGENTS.md and
 CLAUDE.md are instructions, and say where the user's other repos are:
-read them before working in those repos. Your shell, read, write and edit tools run
+read them before working in those repos. Your shell, read, write, edit, glob and grep tools run
 on the one their \`device\` field names, and computer tasks on one marked
 "computer use". A computer is listed only while the user runs unii on
 it, and leaves the list when they close it: a task that needs one not
