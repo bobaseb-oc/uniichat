@@ -78,3 +78,10 @@ test("/crew full shows how far an agent's checklist is, and the step it is on", 
   expect(lines.find((l) => l.includes("FireAnt"))).toContain("1/3: Fix the race");
   expect(lines.find((l) => l.includes("PlainOwl"))).not.toContain("/");
 });
+
+test("the status line counts the open questions", () => {
+  const s = { up: true, dir: "repo", branch: null, model: "m", working: 0, spend: { spend: null, stale: false } };
+  expect(Paint.status_text({ ...s, questions: 2 })).toBe("repo · m · 2 questions (/questions)");
+  expect(Paint.status_text({ ...s, questions: 1 })).toBe("repo · m · 1 question (/questions)");
+  expect(Paint.status_text({ ...s, questions: 0 })).toBe("repo · m");
+});

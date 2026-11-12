@@ -215,6 +215,11 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
       ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
     ]],
+    ["Questions", [
+      ["/questions",        "",                        "the questions Legion filed for you, open",       (t) => term_note(t, View.view_questions_note(t.v))],
+      ["/answer <n> <text>", "",                       "answer question n (or with an offered answer's number); Legion takes it up", (t, a) => term_answer(t, View.view_answer(t.v, a))],
+      ["/drop <n>",         "",                        "dismiss question n",                             (t, a) => term_answer(t, View.view_drop(t.v, a))],
+    ]],
     ["Account", [
       ...topup,
       ["/account",          "",                        "balance, top-ups, charges, calls",               term_account],
@@ -596,6 +601,15 @@ async function term_image(t: Term, arg: string): Promise<void> {
 }
 
 // stops all that runs, or the agent named
+// an answer or a dismissal (/answer, /drop) sent; else why not, a note
+function term_answer(t: Term, act: View.Act | string): void {
+  if (typeof act === "string") {
+    term_note(t, act);
+    return;
+  }
+  term_act(t, act);
+}
+
 function term_stop(t: Term, arg: string): void {
   const name = term_agent(t, arg);
   if (arg !== "" && !t.v.agents.includes(name)) {
@@ -1112,7 +1126,7 @@ function term_paint(t: Term): void {
   const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
   const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
   const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
-  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true } };
+  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length };
   const under = Paint.rule_text(t.v.pick === null && t.v.up ? "" : Paint.status_text(status), iw);
   const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));

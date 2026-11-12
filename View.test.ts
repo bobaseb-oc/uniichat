@@ -344,3 +344,21 @@ test("questions: Answer and Drop acts, and the pill counts them as needing you",
   View.view_hear(v, { $: "state", ...v, questions: [q(5, "Now?")] } as any);
   expect(View.view_pill(v)).toBe("1 working, 1 need you");
 });
+
+// the terminal's /questions, /answer <n> <text>, /drop <n>
+test("questions in the terminal: the listing, and /answer and /drop parsed", () => {
+  const v = View.view_new();
+  expect(View.view_questions_note(v)).toBe("No open questions.");
+  View.view_hear(v, { $: "state", ...v, questions: [
+    { id: 4, text: "Which repo?", options: ["bank-recon", "pimco"], at: 0, date: "2026-11-12T10:00:00.000Z" },
+    { id: 7, text: "Ship Friday?\nNeeds sign-off.", at: 0, date: "2026-11-12T13:00:00.000Z" },
+  ] } as any);
+  expect(View.view_questions_note(v)).toBe("Your questions:\n4. Which repo?\n   answers: bank-recon | pimco\n7. Ship Friday?\n   Needs sign-off.\nAnswer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>.");
+  expect(View.view_answer(v, "4  bank-recon it is ")).toEqual({ $: "Answer", q: 4, text: "bank-recon it is" });
+  expect(View.view_answer(v, "4 2")).toEqual({ $: "Answer", q: 4, text: "pimco" });
+  expect(View.view_answer(v, "7 2")).toEqual({ $: "Answer", q: 7, text: "2" });
+  expect(View.view_answer(v, "4")).toBe("/answer needs a question's number and the answer: /answer <n> <text>.");
+  expect(View.view_answer(v, "9 yes")).toBe("No open question 9: /questions lists them.");
+  expect(View.view_drop(v, "7")).toEqual({ $: "Drop", q: 7 });
+  expect(View.view_drop(v, "x")).toBe("No open question x: /questions lists them.");
+});

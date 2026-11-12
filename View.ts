@@ -871,6 +871,41 @@ export function view_questions(v: View): Question[] {
   return [...(v.questions ?? [])].sort((a, b) => a.id - b.id);
 }
 
+// the open questions as the terminal lists them (/questions)
+export function view_questions_note(v: View): string {
+  const qs = view_questions(v);
+  if (qs.length === 0) {
+    return "No open questions.";
+  }
+  const item = (q: Question) => {
+    const [first, ...more] = q.text.split("\n");
+    const pad = " ".repeat(String(q.id).length + 2);
+    return [q.id + ". " + first, ...more.map((l) => pad + l), ...(q.options === undefined ? [] : [pad + "answers: " + q.options.join(" | ")])].join("\n");
+  };
+  return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
+}
+
+// /answer's argument, "<n> <text>", as an Answer: a text that is just the
+// number of one of its offered answers means that answer; else why not
+export function view_answer(v: View, arg: string): Act | string {
+  const m = /^(\S+)\s+([\s\S]*\S)\s*$/.exec(arg.trim());
+  if (m === null) {
+    return "/answer needs a question's number and the answer: /answer <n> <text>.";
+  }
+  const q = view_questions(v).find((x) => String(x.id) === m[1]);
+  if (q === undefined) {
+    return "No open question " + m[1] + ": /questions lists them.";
+  }
+  const k = /^\d+$/.test(m[2]!) ? Number(m[2]) - 1 : -1;
+  return { $: "Answer", q: q.id, text: q.options?.[k] ?? m[2]! };
+}
+
+// /drop's argument, a question's number, as a Drop; else why not
+export function view_drop(v: View, arg: string): Act | string {
+  const q = view_questions(v).find((x) => String(x.id) === arg.trim());
+  return q === undefined ? "No open question " + arg.trim() + ": /questions lists them." : { $: "Drop", q: q.id };
+}
+
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
   const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);

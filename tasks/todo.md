@@ -327,8 +327,10 @@ it; shown in a web side pane beside Chat, in the Crew "needs you" lane, and in t
       (pane escaped with lines kept, quick answers, box, dismiss; needs lane lists them first linking
       to #chat; the ? n toggle); 5/5 mutants killed (pill after a fix to the test); suite 223 pass,
       3 known fails; headless render of the pane checked; main.ts tsc: only its known error.
-- [ ] Q3 terminal: /questions lists them; /answer <n> <text>, /dismiss-q <n>; "N questions" in the
-      status line. → verify: View/Paint tests.
+- [x] Q3 terminal: /questions lists them; /answer <n> <text> (a bare number picks an offered answer),
+      /drop <n>; "N questions (/questions)" in the status line. Parsing and listing are View functions
+      (view_questions_note, view_answer, view_drop). Proof: View/Paint tests; 4/4 mutants killed; suite
+      225 pass, 3 known fails; tsc 2 → 2; Term.ts builds. By hand still: the commands in a live TUI.
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
