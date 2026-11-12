@@ -233,6 +233,12 @@ function chat(): void {
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
   BOX.onkeydown = (ev) => {
+    // Shift+Tab in the box: the next mode, as Claude Code's
+    if (ev.key === "Tab" && ev.shiftKey && !P.guest) {
+      ev.preventDefault();
+      act({ $: "Mode" });
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && (DESK.matches || P.guest)) {
       ev.preventDefault();
       submit();
@@ -538,7 +544,11 @@ function hear(msg: View.Server): void {
 // is hidden and the person allowed them (asked at their first message);
 // a click shows its agent
 function notify(alert: View.Alert): void {
-  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") {
+  if (!document.hidden) {
+    return;
+  }
+  chime();
+  if (!("Notification" in window) || Notification.permission !== "granted") {
     return;
   }
   const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
@@ -547,6 +557,29 @@ function notify(alert: View.Alert): void {
     act({ $: "Goto", name: alert.name });
     note.close();
   };
+}
+
+// Legion's own sound for an alert (not Claude Code's): two rising notes,
+// soft; a browser that won't play yet (no click on the page so far) stays
+// silent
+let AUDIO: AudioContext | null = null;
+function chime(): void {
+  try {
+    AUDIO ??= new AudioContext();
+    void AUDIO.resume();
+    const at = AUDIO.currentTime;
+    for (const [k, hz] of [660, 990].entries()) {
+      const osc = AUDIO.createOscillator();
+      const gain = AUDIO.createGain();
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, at + k * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.15, at + k * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + k * 0.14 + 0.3);
+      osc.connect(gain).connect(AUDIO.destination);
+      osc.start(at + k * 0.14);
+      osc.stop(at + k * 0.14 + 0.32);
+    }
+  } catch {}
 }
 
 // Import
@@ -1010,13 +1043,13 @@ function crew_bars(): void {
   const mode = View.view_route(location.hash).mode;
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
-  const asked = View.view_questions(v).length;
-  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked));
+  const asked = View.view_questions(v).length + View.view_waiting(v);
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode));
   // the question backlog, beside the chat, till put away
   const pane = !crew && asked > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
-  markup($("#questions"), pane ? Html.questions_html(v) : []);
+  markup($("#questions"), pane ? [...Html.waiting_html(v), ...Html.questions_html(v)] : []);
   $("#crew").hidden = !crew;
   if (!crew) {
     document.body.classList.remove("gridmode");
@@ -1088,6 +1121,7 @@ function tell(ev: SubmitEvent): void {
 }
 
 // an answer typed in the question backlog: to the orchestrator
+// (or the plan sent back, with what to change)
 function answer(ev: SubmitEvent): void {
   const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.qa");
   if (form === null) {
@@ -1095,7 +1129,7 @@ function answer(ev: SubmitEvent): void {
   }
   ev.preventDefault();
   const input = form.querySelector("input")!;
-  act({ $: "Answer", q: Number(form.dataset.q), text: input.value });
+  act(form.dataset.verdict !== undefined ? { $: "Verdict", yes: false, text: input.value } : { $: "Answer", q: Number(form.dataset.q), text: input.value });
   input.value = "";
 }
 

@@ -46,7 +46,9 @@ File each question for the user that can wait (a decision, an input) with
 ask: it collects in their backlog of questions, which they answer in due
 course; don't bury it in a long reply. Each message says the mode: in plan
 mode every agent only reads (devices, MCP servers, Claude Code workers
-refused) until you file a plan with plan and the user approves it.
+refused) until you file a plan with plan and the user approves it. In auto
+mode a reviewer checks each change and may refuse one, saying why: do it
+another way, or ask the user.
 
 The view is your memory, and its latest word on a thing is the truth. Whenever
 you need any information, first find its latest mention in the view and zoom

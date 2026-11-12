@@ -412,11 +412,192 @@ function look_css(kind, look) {
   return ".msg." + kind + "{" + body + "}";
 }
 
+// Modes.ts
+var MODES = ["plan", "auto", "full"];
+var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
+var READS = ["read", "glob", "grep"];
+var REVIEWED = ["shell", "write", "edit"];
+var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
+var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
+var Modes;
+((Modes2) => {
+  function read(x) {
+    return MODES.includes(x) ? x : "auto";
+  }
+  Modes2.read = read;
+  function next(mode) {
+    return MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+  }
+  Modes2.next = next;
+  function allows(mode, tool, input) {
+    if (mode !== "plan" || READS.includes(tool)) {
+      return null;
+    }
+    const why = "In plan mode only reading is allowed, until the user approves a plan";
+    if (tool === "shell") {
+      const not = Modes.readonly(String(input?.command ?? ""));
+      return not === null ? null : why + ": " + not + ". " + AFTER;
+    }
+    return why + ": " + tool + " can change things. " + AFTER;
+  }
+  Modes2.allows = allows;
+  function reviews(mode, tool) {
+    return mode === "auto" && REVIEWED.includes(tool);
+  }
+  Modes2.reviews = reviews;
+  function readonly(command) {
+    const lexed = lex(command);
+    if (typeof lexed === "string") {
+      return lexed;
+    }
+    if (lexed.length === 0) {
+      return "no command";
+    }
+    for (const words of lexed) {
+      const why = words.length === 0 ? "an empty command" : check(words);
+      if (why !== null) {
+        return why;
+      }
+    }
+    return null;
+  }
+  Modes2.readonly = readonly;
+  function lex(line) {
+    const cmds = [[]];
+    let word = null;
+    const end = () => {
+      if (word !== null) {
+        cmds.at(-1).push(word);
+        word = null;
+      }
+    };
+    for (let k = 0;k < line.length; k++) {
+      const c = line[k];
+      if (c === "'") {
+        const close2 = line.indexOf("'", k + 1);
+        if (close2 < 0) {
+          return "an unclosed quote";
+        }
+        word = (word ?? "") + line.slice(k + 1, close2);
+        k = close2;
+      } else if (c === '"') {
+        let w = "";
+        for (k += 1;k < line.length && line[k] !== '"'; k++) {
+          if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
+            return "a command substitution";
+          }
+          if (line[k] === "\\") {
+            k += 1;
+          }
+          w += line[k] ?? "";
+        }
+        if (k >= line.length) {
+          return "an unclosed quote";
+        }
+        word = (word ?? "") + w;
+      } else if (c === "\\") {
+        if (line[k + 1] === `
+`) {
+          return "a newline";
+        }
+        word = (word ?? "") + (line[k + 1] ?? "");
+        k += 1;
+      } else if (c === " " || c === "\t") {
+        end();
+      } else if (c === `
+` || c === "\r") {
+        return "a newline (one command line only)";
+      } else if (c === "`" || c === "$" && line[k + 1] === "(") {
+        return "a command substitution";
+      } else if (c === "<") {
+        return "a redirect or process substitution (<)";
+      } else if (c === ">") {
+        const rest = line.slice(k + 1);
+        const tail = /^&1(?=\s|$|[|;&])/.exec(rest) ?? /^\/dev\/null(?=\s|$|[|;&])/.exec(rest);
+        if (word !== "2" || tail === null) {
+          return "a redirect (>)";
+        }
+        word = null;
+        k += tail[0].length;
+      } else if (c === "|" || c === ";" || c === "&") {
+        const two = line.slice(k, k + 2);
+        if (c === "&" && two !== "&&") {
+          return "a background job (&)";
+        }
+        end();
+        if (cmds.at(-1).length === 0) {
+          return "an empty command";
+        }
+        cmds.push([]);
+        if (two === "&&" || two === "||") {
+          k += 1;
+        }
+      } else {
+        word = (word ?? "") + c;
+      }
+    }
+    end();
+    return cmds.at(-1).length === 0 && cmds.length > 1 ? "an empty command" : cmds.filter((w) => w.length > 0);
+  }
+  function check(words) {
+    const [cmd, ...args] = words;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
+      return "a variable set before a command";
+    }
+    if (cmd.includes("/")) {
+      return "a program by its path (" + cmd + ")";
+    }
+    if (PLAIN.has(cmd)) {
+      return null;
+    }
+    switch (cmd) {
+      case "sort": {
+        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+      }
+      case "tree": {
+        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+      }
+      case "uniq": {
+        return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
+      }
+      case "rg": {
+        return args.some((a) => a === "--pre" || a.startsWith("--pre=") || a === "--pre-glob" || a.startsWith("--pre-glob=")) ? "rg --pre runs another program" : null;
+      }
+      case "find": {
+        const act = args.find((a) => FIND_WRITES.has(a));
+        return act === undefined ? null : "find " + act + " writes or runs";
+      }
+      case "git": {
+        const sub = args[0];
+        if (sub === undefined || sub.startsWith("-")) {
+          return "git with options before its subcommand";
+        }
+        if (!GIT.has(sub)) {
+          return "git " + sub + " is not one that only reads";
+        }
+        const rest = args.slice(1);
+        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+          return "git " + sub + " with an option that writes or runs";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+          return "git " + sub + " that makes, moves or deletes one";
+        }
+        return null;
+      }
+      default: {
+        return cmd + " is not on plan mode's read-only list";
+      }
+    }
+  }
+})(Modes ||= {});
+
 // Call.ts
 var SHORT = 60;
 var CALL = /^(\S+) (\{[\s\S]*)$/;
 var MCP = /^mcp__.+?__/;
-var READS = new Map([
+var READS2 = new Map([
   ["shell", (x) => ({ head: String(x.command ?? ""), blocks: [] })],
   ["read", (x) => ({ head: String(x.path ?? "") + lines_show(x.offset, x.limit), blocks: [] })],
   ["write", (x) => ({ head: String(x.path ?? ""), blocks: [] })],
@@ -439,7 +620,7 @@ function call_parse(text) {
   }
   const name = m[1].replace(MCP, "");
   const { device, ...rest } = input;
-  const shown = (READS.get(name) ?? input_shown)(rest);
+  const shown = (READS2.get(name) ?? input_shown)(rest);
   return { name, device: typeof device === "string" ? device : "", ...shown };
 }
 function call_line(c) {
@@ -1151,6 +1332,16 @@ function view_act(v, act) {
     case "Drop": {
       return [{ $: "answer", q: act.q }];
     }
+    case "Mode": {
+      return [{ $: "mode", mode: act.mode ?? Modes.next(Modes.read(v.mode)) }];
+    }
+    case "Verdict": {
+      const text = (act.text ?? "").trim();
+      return [{ $: "plan", yes: act.yes, ...act.mode === undefined ? {} : { mode: act.mode }, ...text === "" ? {} : { text } }];
+    }
+    case "Consent": {
+      return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -1269,13 +1460,19 @@ function view_alerts(v, now) {
   const asks = fresh("asking").map((c) => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
   const failed = [...asks, ...fresh("failed").map((c) => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
   const ended = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  const asked = view_questions(v).map((q) => ({ key: "question " + q.id, title: MAIN + " asks", body: q.text.split(`
+`)[0].slice(0, 200), name: null }));
+  const plan = v.plan ? [{ key: "plan " + v.plan.date, title: "Plan ready", body: MAIN + "'s plan waits for your approval (/plan).", name: null }] : [];
+  const calls = (v.calls ?? []).map((c) => ({ key: "call " + c.id + " " + c.what, title: c.who + " wants to run a command", body: c.what.slice(0, 200) + ": /allow " + c.id + " or /refuse " + c.id + ".", name: null }));
+  const once = [...asked, ...plan, ...calls].filter((a) => !v.alerted.has(a.key));
+  once.forEach((a) => v.alerted.set(a.key, now));
   return [...failed, ...ended].filter((a) => {
     const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
     if (due) {
       v.alerted.set(a.key, now);
     }
     return due;
-  });
+  }).concat(once);
 }
 function view_tree(v, now) {
   const rows = view_crew(v, now);
@@ -1353,7 +1550,7 @@ function view_needs(v) {
   return [...v.crew.filter((c) => c.status === "asking"), ...v.crew.filter((c) => c.status === "failed")];
 }
 function view_pill(v) {
-  const asked = view_questions(v).length;
+  const asked = view_questions(v).length + view_waiting(v);
   if (v.crew.length === 0) {
     return asked > 0 ? asked + " need you" : "";
   }
@@ -1369,6 +1566,7 @@ function status_text(s) {
     ...s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"],
     ...s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"],
     ...s.mode === undefined ? [] : [s.mode + " mode"],
+    ...!s.waiting ? [] : [s.waiting + " waiting for you"],
     ...!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]
   ].join(" · ");
 }
@@ -1378,7 +1576,10 @@ function view_status(v) {
     return "";
   }
   const spend = { spend: s.spend, stale: s.stale };
-  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode });
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v) });
+}
+function view_waiting(v) {
+  return (v.plan ? 1 : 0) + (v.calls ?? []).length;
 }
 function view_questions(v) {
   return [...v.questions ?? []].sort((a, b) => a.id - b.id);
@@ -1770,13 +1971,21 @@ function lane_html(v, now) {
   return `<div class="lane">${mk.join("")}</div>`;
 }
 function needs_html(v) {
-  const asked = view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split(`
-`)[0])}</b> <span class="meta">question ${q.id}</span></a></div>`);
+  const plan = v.plan ? [`<div class="need question"><a href="#chat" data-qs-open><b>Plan ready</b> <span class="meta">waiting for your approval</span></a></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc(c.who)} wants to run</b> <span class="meta">${esc(c.what.slice(0, 80))}</span></a></div>`);
+  const asked = [...plan, ...calls, ...view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split(`
+`)[0])}</b> <span class="meta">question ${q.id}</span></a></div>`)];
   return [...asked, ...view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
     const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
     return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
   })];
+}
+function waiting_html(v) {
+  const b = (label, a, cls = "qo") => `<button class="${cls}"${act_html(a)}>${label}</button>`;
+  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
+  return [...plan, ...calls];
 }
 function questions_html(v) {
   return view_questions(v).map((q) => {
@@ -1798,11 +2007,12 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill, asked = 0) {
+function mode_html(mode, pill, asked = 0, perm) {
   const here = (m) => m === mode ? ` class="here"` : "";
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
   const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...qs];
+  const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 function tabs_html(tabs) {
   return tabs.map((tab) => {
@@ -2065,6 +2275,11 @@ function chat() {
     draw(true);
   };
   BOX.onkeydown = (ev) => {
+    if (ev.key === "Tab" && ev.shiftKey && !P.guest) {
+      ev.preventDefault();
+      act({ $: "Mode" });
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && (DESK.matches || P.guest)) {
       ev.preventDefault();
       submit();
@@ -2325,7 +2540,11 @@ function hear(msg) {
   draw(true);
 }
 function notify(alert) {
-  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") {
+  if (!document.hidden) {
+    return;
+  }
+  chime();
+  if (!("Notification" in window) || Notification.permission !== "granted") {
     return;
   }
   const note = new Notification(alert.title, { body: alert.body, tag: alert.key });
@@ -2334,6 +2553,25 @@ function notify(alert) {
     act({ $: "Goto", name: alert.name });
     note.close();
   };
+}
+var AUDIO = null;
+function chime() {
+  try {
+    AUDIO ??= new AudioContext;
+    AUDIO.resume();
+    const at = AUDIO.currentTime;
+    for (const [k, hz] of [660, 990].entries()) {
+      const osc = AUDIO.createOscillator();
+      const gain = AUDIO.createGain();
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, at + k * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.15, at + k * 0.14 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + k * 0.14 + 0.3);
+      osc.connect(gain).connect(AUDIO.destination);
+      osc.start(at + k * 0.14);
+      osc.stop(at + k * 0.14 + 0.32);
+    }
+  } catch {}
 }
 function importer() {
   const form = $("#import form");
@@ -2692,12 +2930,12 @@ function crew_bars() {
   const mode = view_route(location.hash).mode;
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
-  const asked = view_questions(v).length;
-  markup($("#mode"), mode_html(mode, view_pill(v), asked));
+  const asked = view_questions(v).length + view_waiting(v);
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode));
   const pane = !crew && asked > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
-  markup($("#questions"), pane ? questions_html(v) : []);
+  markup($("#questions"), pane ? [...waiting_html(v), ...questions_html(v)] : []);
   $("#crew").hidden = !crew;
   if (!crew) {
     document.body.classList.remove("gridmode");
@@ -2762,7 +3000,7 @@ function answer(ev) {
   }
   ev.preventDefault();
   const input = form.querySelector("input");
-  act({ $: "Answer", q: Number(form.dataset.q), text: input.value });
+  act(form.dataset.verdict !== undefined ? { $: "Verdict", yes: false, text: input.value } : { $: "Answer", q: Number(form.dataset.q), text: input.value });
   input.value = "";
 }
 function crew_keys(ev) {

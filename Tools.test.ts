@@ -288,3 +288,69 @@ test("plan mode refuses what can change things, before any device; the devices b
   expect((await call("main", "write", { device: "mac", path: "a", content: "x" })).text).not.toContain("plan mode");
   expect(Tools.devices(tools).text).toContain("Mode: full mode");
 });
+
+// auto mode (Modes.ts): a reviewer (the compactor's model) checks each
+// shell, write and edit before it goes to a device: allowed, it goes on;
+// refused, the agent reads why; no answer it can read (an error, a bad
+// reply), the call waits for the user's yes or no (Tools.consents)
+test("auto mode: the reviewer allows or refuses; when it can't answer, the user decides", async () => {
+  const { AskAI } = await import("./AskAI.ts");
+  const real = AskAI.ask;
+  const told: string[] = [];
+  let reply: { ok: boolean; text: string } = { ok: true, text: "" };
+  (AskAI as any).ask = (ask: any) => {
+    told.push(ask.system + "\n" + ask.blocks.map((b: any) => b.text).join(""));
+    return { send: () => {}, stop: () => {}, move: () => {}, done: Promise.resolve({ ...reply, left: [] }) };
+  };
+  try {
+    const mem: any = { mode: "auto", count: 0 };
+    let changed = 0;
+    const tools = Tools.serve(mem, { change: () => void (changed += 1) } as any);
+    const go = new AbortController().signal;
+    const shell = (command: string, id = "c") => Tools.call(tools, "main", "shell", { device: "mac", command }, go, id);
+    // allowed: on to the device (none here, so refused for that)
+    reply = { ok: true, text: 'Sure. {"allow": true}' };
+    const allowed = await shell("ls");
+    expect(allowed.text).not.toContain("reviewer");
+    expect(told.at(-1)).toContain("ls");
+    // refused, with its reason
+    reply = { ok: true, text: '{"allow": false, "reason": "it deletes the repo"}' };
+    expect(await shell("rm -rf .")).toEqual({ text: "Refused by auto mode's reviewer: it deletes the repo", fail: true });
+    // reading is never reviewed
+    const before = told.length;
+    await Tools.call(tools, "main", "read", { device: "mac", path: "a" }, go, "r");
+    expect(told.length).toBe(before);
+    // no answer it can read: the user decides, yes then no
+    for (const bad of [{ ok: false, text: "down" }, { ok: false, text: '{"allow": true}' }, { ok: true, text: "maybe?" }, { ok: true, text: '{"allow": "yes"}' }]) {
+      reply = bad;
+      const waiting = shell("make deploy", "w");
+      await Bun.sleep(20);
+      const [c] = Tools.consents(tools);
+      expect(c).toMatchObject({ who: "main", tool: "shell", what: expect.stringContaining("make deploy") });
+      expect(Tools.consent(tools, c!.id, false)).toBe(true);
+      expect(await waiting).toEqual({ text: "The user refused this call (auto mode's reviewer couldn't check it).", fail: true });
+      expect(Tools.consents(tools)).toEqual([]);
+    }
+    reply = { ok: false, text: "down" };
+    const yes = shell("make build", "y");
+    await Bun.sleep(20);
+    expect(Tools.consent(tools, Tools.consents(tools)[0]!.id, true)).toBe(true);
+    expect((await yes).text).not.toContain("refused this call");
+    expect(Tools.consent(tools, 999, true)).toBe(false);
+    // a stop while it waits refuses it, and it leaves the list
+    const stop = new AbortController();
+    const stopped = Tools.call(tools, "main", "write", { device: "mac", path: "a", content: "x" }, stop.signal, "s");
+    await Bun.sleep(20);
+    stop.abort();
+    expect(await stopped).toEqual({ text: "The user refused this call (auto mode's reviewer couldn't check it).", fail: true });
+    expect(Tools.consents(tools)).toEqual([]);
+    expect(changed).toBeGreaterThan(0);
+    // full mode reviews nothing
+    mem.mode = "full";
+    const n = told.length;
+    await shell("rm -rf .");
+    expect(told.length).toBe(n);
+  } finally {
+    (AskAI as any).ask = real;
+  }
+});

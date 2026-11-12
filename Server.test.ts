@@ -289,6 +289,33 @@ test("a device's status is kept and told in the state; only a device's, its fiel
   expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac });
 });
 
+// A call waiting for the user (auto's reviewer couldn't check it): in the
+// state; the user's yes or no answers it; an unknown one is refused
+const CONSENT = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const asked = Tools.ask_user(chat.tools, "Wkr", "shell", { device: "mac", command: "make deploy" }, new AbortController().signal);
+const listed = Chat.state(chat).calls;
+const unknown = await Chat.act(chat, "c0", { $: "consent", n: 9, yes: true }, "");
+const yes = await Chat.act(chat, "c1", { $: "consent", n: listed[0].id, yes: true }, "");
+console.log(JSON.stringify({ listed, unknown, yes, answered: await asked, after: Chat.state(chat).calls }));
+process.exit(0);
+`;
+
+test("a call waiting for the user is in the state; their yes answers it", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/consent.ts", CONSENT);
+  const proc = Bun.spawn([process.execPath, dir + "/consent.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toEqual({
+    listed: [{ id: 1, who: "Wkr", tool: "shell", what: "make deploy (on mac)" }], unknown: { error: "No call 9 waits for you." }, yes: {}, answered: true, after: [],
+  });
+});
+
 // The modes: the user switches the mode (a note, no turn); a plan filed
 // in plan mode is in the state; approved, the mode becomes the one picked
 // and the orchestrator is told (a turn); rejected, it stays plan mode and

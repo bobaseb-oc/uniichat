@@ -362,12 +362,31 @@ to a device (it knows the mode and has the models); the device's hooks still run
       with the mode). Proof: View/Device/Server tests; 2/2 mutants killed; suite 234 pass, 3 known
       fails; tsc: one more TS2339 on setInterval().unref() (DOM-lib noise, as Term.ts's). By hand
       still: the line in the live web UI.
-- [ ] M2 auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
+- [x] M2 auto mode: a reviewer call (cheap model) per shell/write/edit: the user's latest message,
       the agent's task, the call → allow, or refuse with a reason (the agent sees it); no answer
       (error, timeout, bad reply) → the call waits for the user's yes/no in Needs you. → verify:
       faked-model tests (allow, refuse, error → asks, yes runs, no refuses), mutants.
-- [ ] M3 views: mode chip (web header, terminal status), Shift+Tab and /mode, the plan card
-      (approve as auto/full, or reject with feedback), pending calls in Needs you and /approve-call.
+      Proof: Tools.test with AskAI.ask stubbed (allow goes on; refuse says why; reading never
+      reviewed; an error, an error reply holding allow JSON, prose, a non-boolean: the user decides,
+      yes runs, no refuses; a stop while waiting refuses and leaves the list; full reviews nothing);
+      Server fixture (waiting calls in the state, consent answers, unknown refused); 10 mutants
+      killed after 2 tests were tightened. Reviewer: the compactor's model, REVIEW prompt (allow
+      unless destructive beyond the task, off-machine, secrets, system/packages, outside its folder,
+      beyond the ask), 60 s cap. By hand still: a real reviewer call through LiteLLM.
+- [x] M3 views: mode chip (web header, terminal status), Shift+Tab and /mode, the plan card
+      (approve as auto/full, or reject with feedback), pending calls in Needs you and /allow, /refuse.
+      Proof: View.test (Mode cycles from the state's mode, /mode, /plan show/yes/no, Verdict and
+      Consent acts, the pill counts them), Html.test (chip, plan card and waiting calls escaped, first
+      in the pane and the needs lane), Paint.test (status: mode, N waiting); 3 mutants killed after
+      tightening. Shift+Tab is the mode now (Term and the web box); speed keeps /speed and the pick.
+- [x] N1 (user: "notifications don't work; a distinctive sound and a desktop box") Notify.notify_cmds:
+      afplay Hero (UNII_NOTIFY_SOUND: a name, a path, off; not Claude Code's Submarine/Glass), the box by
+      terminal-notifier if installed, else osascript; the TUI notifies when away or when its terminal
+      never reports focus (Apple Terminal); new alerts, once each, for a question, a plan ready, a
+      waiting call; the web chimes (WebAudio, two notes) with its notification when hidden. Proof:
+      Notify/View tests; mutants (sound off, name check, re-alerting) killed; Hero played and an
+      osascript box appeared here (user confirmed).
+
 
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).

@@ -85,3 +85,8 @@ test("the status line counts the open questions", () => {
   expect(Paint.status_text({ ...s, questions: 1 })).toBe("repo · m · 1 question (/questions)");
   expect(Paint.status_text({ ...s, questions: 0 })).toBe("repo · m");
 });
+
+test("the status line shows the mode and what waits", () => {
+  const s = { up: true, dir: "repo", branch: null, model: "m", working: 0, spend: { spend: null, stale: false }, mode: "plan" as const, waiting: 2 };
+  expect(Paint.status_text(s)).toBe("repo · m · plan mode · 2 waiting for you");
+});

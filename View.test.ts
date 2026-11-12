@@ -378,3 +378,44 @@ test("the status line, and the web's from the state", () => {
   v.pick = { model: "sonnet-5.5" } as any;
   expect(View.view_status(v)).toBe("mac: uniichat ⎇ feat/crew-ui · sonnet-5.5 · 1 agent at work · $0.50 today · auto mode");
 });
+
+// the mode controls (M3): Shift+Tab / the chip cycles the mode, /mode sets
+// it; the plan waiting: shown, approved (into auto or full) or sent back;
+// a call waiting for the user (auto's reviewer couldn't check it): yes/no.
+// All count as needing the person.
+test("modes in the views: cycle and set, the plan's verdict, a waiting call's yes or no", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, mode: "plan", plan: { text: "1. read\n2. fix", date: "2026-11-12T10:00:00.000Z" }, calls: [{ id: 3, who: "Wkr", tool: "shell", what: "make deploy (on mac)" }] } as any);
+  expect(View.view_act(v, { $: "Mode" })).toEqual([{ $: "mode", mode: "auto" }]);
+  expect(View.view_act(v, { $: "Mode", mode: "full" })).toEqual([{ $: "mode", mode: "full" }]);
+  expect(View.view_mode_cmd("bogus")).toBe("No mode bogus: plan, auto or full.");
+  expect(View.view_mode_cmd(" plan ")).toEqual({ $: "Mode", mode: "plan" });
+  expect(View.view_mode_cmd("")).toEqual({ $: "Mode" });
+  expect(View.view_act(v, { $: "Verdict", yes: true, mode: "full" })).toEqual([{ $: "plan", yes: true, mode: "full" }]);
+  expect(View.view_act(v, { $: "Verdict", yes: false, text: " test first " })).toEqual([{ $: "plan", yes: false, text: "test first" }]);
+  expect(View.view_plan_cmd(v, "")).toBe("The plan waiting for you:\n1. read\n2. fix\n/plan yes [auto|full] to approve it, /plan no <feedback> to send it back.");
+  expect(View.view_plan_cmd(v, "yes")).toEqual({ $: "Verdict", yes: true, mode: "auto" });
+  expect(View.view_plan_cmd(v, "yes full")).toEqual({ $: "Verdict", yes: true, mode: "full" });
+  expect(View.view_plan_cmd(v, "no do tests first")).toEqual({ $: "Verdict", yes: false, text: "do tests first" });
+  expect(View.view_plan_cmd(v, "maybe")).toBe("/plan, /plan yes [auto|full] or /plan no <feedback>.");
+  expect(View.view_plan_cmd(v, "yes please")).toBe("/plan, /plan yes [auto|full] or /plan no <feedback>.");
+  expect(View.view_act(v, { $: "Consent", n: 3, yes: true })).toEqual([{ $: "consent", n: 3, yes: true }]);
+  expect(View.view_consent_cmd(v, "3", false)).toEqual({ $: "Consent", n: 3, yes: false });
+  expect(View.view_consent_cmd(v, "9", true)).toBe("No call 9 waits for you.");
+  expect(View.view_pill(v)).toBe("2 need you");
+  View.view_hear(v, { $: "state", ...v, plan: null, calls: [], mode: "auto" } as any);
+  expect(View.view_plan_cmd(v, "")).toBe("No plan is waiting for you.");
+  expect(View.view_act(v, { $: "Mode" })).toEqual([{ $: "mode", mode: "full" }]);
+  expect(View.view_pill(v)).toBe("");
+});
+
+// alerts for what newly waits for the person: a question, the plan, a
+// call auto's reviewer couldn't check; each once
+test("alerts: a new question, a plan ready, a waiting call, each once", () => {
+  const v = View.view_new();
+  View.view_alerts(v, 0);
+  View.view_hear(v, { $: "state", ...v, questions: [{ id: 1, text: "Ship it?\nmore", at: 0, date: "" }], plan: { text: "p", date: "" }, calls: [{ id: 2, who: "Wkr", tool: "shell", what: "make deploy (on mac)" }] } as any);
+  const got = View.view_alerts(v, 1e6).map((a) => [a.title, a.body]);
+  expect(got).toEqual([["Legion asks", "Ship it?"], ["Plan ready", "Legion's plan waits for your approval (/plan)."], ["Wkr wants to run a command", "make deploy (on mac): /allow 2 or /refuse 2."]]);
+  expect(View.view_alerts(v, 2e6)).toEqual([]);
+});

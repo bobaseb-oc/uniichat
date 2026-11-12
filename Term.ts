@@ -60,6 +60,7 @@ type Term = {
   crew?   : boolean; // the crew panel hidden (/crew)
   full?   : { sel: string | null }; // /crew full shown: the agent selected
   away?   : boolean; // the terminal not in front (it told FocusOut): alerts notify
+  focused?: boolean; // the terminal ever told its focus; one that never does is taken as away
   goto?   : string | null; // the last alert's agent, shown as the terminal comes back
   branch? : string | null; // the branch of the folder Unii works in (term_status)
   spend?  : Cost.Spend;    // today's LiteLLM spend (term_status)
@@ -201,7 +202,7 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
     ["Pick", [
       ["",                  "Shift+Left, Shift+Right", "the model before, the next",                     (t, k) => term_move(t, ARROWS[k])],
       ["",                  "Shift+Up, Shift+Down",    "more effort, less",                              (t, k) => term_move(t, ARROWS[k])],
-      ["",                  "Shift+Tab",               "fast on, off (the next speed), typing or not",   (t) => term_move(t, "speed")],
+      ["",                  "Shift+Tab",               "the next mode: plan, auto, full (as Claude Code's), typing or not", (t) => term_act(t, { $: "Mode" })],
       ["/model [name]",     "",                        "the models to pick from; with a name, that one", (t, a) => term_pick(t, "model", a)],
       ["/effort [level]",   "",                        "the efforts; with one, that one",                (t, a) => term_pick(t, "effort", a)],
       ["/speed [speed]",    "",                        "the speeds; with one, that one",                 (t, a) => term_pick(t, "speed", a)],
@@ -215,6 +216,12 @@ function term_groups(v: View.View): [group: string, cmds: Cmd[]][] {
       ["/dismiss [name]",   "",                        "take a done agent out of the crew; all done ones with no name", term_dismiss],
       ["/approve [name]",   "",                        "let a Claude Code worker asking to start run (auto mode, on its device)", (t, a) => term_approve(t, a, true)],
       ["/deny [name]",      "",                        "refuse a Claude Code worker asking to start",     (t, a) => term_approve(t, a, false)],
+    ]],
+    ["Modes", [
+      ["/mode [name]",      "",                        "plan (agents only read till you approve a plan), auto (a reviewer checks each change) or full (hooks only); alone: the next", (t, a) => term_answer(t, View.view_mode_cmd(a))],
+      ["/plan [yes|no]",    "",                        "the plan waiting for you; yes [auto|full] approves it, no <feedback> sends it back", (t, a) => term_answer(t, View.view_plan_cmd(t.v, a))],
+      ["/allow <n>",        "",                        "run call n, waiting as auto mode's reviewer couldn't check it", (t, a) => term_answer(t, View.view_consent_cmd(t.v, a, true))],
+      ["/refuse <n>",       "",                        "refuse waiting call n",                          (t, a) => term_answer(t, View.view_consent_cmd(t.v, a, false))],
     ]],
     ["Questions", [
       ["/questions",        "",                        "the questions Legion filed for you, open",       (t) => term_note(t, View.view_questions_note(t.v))],
@@ -341,7 +348,7 @@ function term_hear(t: Term, msg: View.Server): void {
   term_draw(t);
   if (msg.$ === "state") {
     term_idle(t);
-    View.view_alerts(t.v, Date.now()).forEach((alert) => t.away && term_notify(t, alert));
+    View.view_alerts(t.v, Date.now()).forEach((alert) => (t.away || !t.focused) && term_notify(t, alert));
   }
 }
 
@@ -371,6 +378,7 @@ function term_status(t: Term, draw = true): void {
 // the last alert's agent, if one came meanwhile
 function term_focus(t: Term, away: boolean): void {
   t.away = away;
+  t.focused = true;
   if (!away && t.goto !== undefined) {
     term_act(t, { $: "Goto", name: t.goto });
     t.goto = undefined;
@@ -385,8 +393,12 @@ function term_notify(t: Term, alert: View.Alert): void {
   t.goto = alert.name;
   if (way === "osc777" || way === "osc9") {
     process.stdout.write(Notify.notify_osc(way, alert.title, alert.body));
-  } else if (way === "osascript" && process.platform === "darwin") {
-    Bun.spawn(["osascript", ...Notify.notify_args(alert.title, alert.body)], { stdout: "ignore", stderr: "ignore" });
+  }
+  // on a Mac, its sound, and the box where the terminal draws none
+  if (process.platform === "darwin") {
+    for (const cmd of Notify.notify_cmds(way, process.env, alert.title, alert.body, (c) => Bun.which(c) !== null)) {
+      Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+    }
   }
 }
 
@@ -1129,7 +1141,7 @@ function term_paint(t: Term): void {
   const crew  = t.v.crew.length > 0 && (t.crew ?? true) ? Paint.crew_lines(t.v, iw, Date.now(), CREW_ROWS) : [Paint.tabs_line(t.v, iw)];
   const hint  = t.v.page === null ? View.HINT + " · /help" : "Tell " + t.v.page.name + " · Tab to go on";
   const input = Screen.screen_input(t.scr, iw, room - 2 - crew.length, off ? OFF : hint, off);
-  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length, mode: t.v.mode };
+  const status = { up: t.v.up, dir: term_dir().split("/").pop() || "~", branch: t.branch ?? null, model: t.v.pick?.model ?? "?", working: t.v.agents.length, spend: t.spend ?? { spend: null, stale: true, due: true }, questions: View.view_questions(t.v).length, mode: t.v.mode, waiting: View.view_waiting(t.v) };
   const under = Paint.rule_text(t.v.pick === null && t.v.up ? "" : Paint.status_text(status), iw);
   const own   = term_inset([Paint.rule_line(t.v, iw), ...input.lines, under, ...crew]);
   const rest  = View.view_stream(t.v).map((l) => ({ kind: l.kind, text: l.text.slice(t.flow.get(l) ?? 0) }));

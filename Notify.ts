@@ -42,3 +42,24 @@ export function notify_osc(way: "osc777" | "osc9", title: string, body: string):
 export function notify_args(title: string, body: string): string[] {
   return [...SCRIPT, notify_clean(title), notify_clean(body)];
 }
+
+// what an alert runs on macOS, each command and its arguments (spawned,
+// never through a shell): a distinctive sound by UNII_NOTIFY_SOUND (a
+// system sound's name, a sound file's path, "off"; Hero by default, not
+// Claude Code's hooks' Submarine or Glass), then, for osascript, the box:
+// terminal-notifier if there (has), which macOS lets show reliably, else
+// osascript's (OSC ways draw their own; "off": nothing)
+export function notify_cmds(way: Way, env: Record<string, string | undefined>, title: string, body: string, has: (cmd: string) => boolean): string[][] {
+  if (way === "off") {
+    return [];
+  }
+  const asked = env.UNII_NOTIFY_SOUND ?? "Hero";
+  const file = /^[A-Za-z]+$/.test(asked) ? "/System/Library/Sounds/" + asked + ".aiff" : /^\/[^\0]*\.(aiff|wav|mp3|m4a|caf)$/i.test(asked) && !asked.includes("/../") ? asked : "/System/Library/Sounds/Hero.aiff";
+  const sound = asked === "off" ? [] : [["afplay", file]];
+  if (way !== "osascript") {
+    return sound;
+  }
+  const [t, b] = [notify_clean(title), notify_clean(body)];
+  const box = has("terminal-notifier") ? ["terminal-notifier", "-title", t, "-message", b, "-group", "legion"] : ["osascript", ...notify_args(title, body)];
+  return [...sound, box];
+}

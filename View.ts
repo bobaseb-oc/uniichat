@@ -10,7 +10,7 @@
 // and comes again before a message in another 3-hour window.
 
 import type { Kind, Vendor } from "./AskAI.ts";
-import type { Mode as Perm } from "./Modes.ts";
+import { Modes, type Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
 import * as Md from "./Md.ts";
@@ -73,6 +73,7 @@ export type State = {
   questions?: Question[]; // the orchestrator's, open (Tools.question)
   mode?     : Perm;       // the chat's permission mode (Modes.ts)
   status?   : DeviceStatus | null; // the latest device's report (Device.device_status)
+  calls?    : Waiting[];  // calls waiting for the user's yes (auto mode's reviewer couldn't check them)
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
 };
 
@@ -80,6 +81,10 @@ export type State = {
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
 export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+// a call waiting for the user's yes (Tools.ask_user): its number, who
+// calls, its tool, what it does
+export type Waiting = { id: number; who: string; tool: string; what: string };
+
 // a device's report for the status line (Device.device_status): its
 // name, the folder Unii works in there, its branch, today's spend (stale)
 export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean };
@@ -201,6 +206,7 @@ export type Client =
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
   | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
+  | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
 // an act not answered: with its id, the socket it went by, what its
@@ -232,6 +238,9 @@ export type Act =
   | { $: "Tell"; name: string; text: string }   // a message to that agent (a tile's box)
   | { $: "Answer"; q: number; text: string }    // an open question answered (the backlog pane)
   | { $: "Drop"; q: number }                    // an open question dismissed
+  | { $: "Mode"; mode?: Perm }                  // the mode set; none: the next (Shift+Tab, the chip)
+  | { $: "Verdict"; yes: boolean; mode?: Perm; text?: string } // the plan waiting: approved into a mode, or sent back
+  | { $: "Consent"; n: number; yes: boolean }   // a waiting call: run it, or not
 
 // what a page draws, top to bottom
 export type Row =
@@ -560,6 +569,16 @@ export function view_act(v: View, act: Act): Client[] {
     case "Drop": {
       return [{ $: "answer", q: act.q }];
     }
+    case "Mode": {
+      return [{ $: "mode", mode: act.mode ?? Modes.next(Modes.read(v.mode)) }];
+    }
+    case "Verdict": {
+      const text = (act.text ?? "").trim();
+      return [{ $: "plan", yes: act.yes, ...(act.mode === undefined ? {} : { mode: act.mode }), ...(text === "" ? {} : { text }) }];
+    }
+    case "Consent": {
+      return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
         v.expanded.add(act.name);
@@ -729,13 +748,19 @@ export function view_alerts(v: View, now: number): Alert[] {
   const asks = fresh("asking").map((c): Alert => ({ key: c.name + " asks", title: c.name + " asks to start", body: "Claude Code: /approve or /deny it (on its page, the site's ✓ or ×).", name: c.name }));
   const failed = [...asks, ...fresh("failed").map((c): Alert => ({ key: c.name + " failed", title: c.name + " failed", body: c.tier + " · " + c.model + ": open it to see why.", name: c.name }))];
   const ended: Alert[] = was.busy && !v.busy ? [{ key: "turn", title: MAIN + " answered", body: "Its turn ended: your move.", name: null }] : [];
+  // what newly waits for the person (keyed, so each comes once)
+  const asked = view_questions(v).map((q): Alert => ({ key: "question " + q.id, title: MAIN + " asks", body: q.text.split("\n")[0]!.slice(0, 200), name: null }));
+  const plan: Alert[] = v.plan ? [{ key: "plan " + v.plan.date, title: "Plan ready", body: MAIN + "'s plan waits for your approval (/plan).", name: null }] : [];
+  const calls = (v.calls ?? []).map((c): Alert => ({ key: "call " + c.id + " " + c.what, title: c.who + " wants to run a command", body: c.what.slice(0, 200) + ": /allow " + c.id + " or /refuse " + c.id + ".", name: null }));
+  const once = [...asked, ...plan, ...calls].filter((a) => !v.alerted.has(a.key));
+  once.forEach((a) => v.alerted.set(a.key, now));
   return [...failed, ...ended].filter((a) => {
     const due = now - (v.alerted.get(a.key) ?? -Infinity) >= ALERT_GAP;
     if (due) {
       v.alerted.set(a.key, now);
     }
     return due;
-  });
+  }).concat(once);
 }
 
 // the Crew tree: the crew's rows (view_crew), a manager's children shown
@@ -869,7 +894,7 @@ export function view_needs(v: View): Crew[] {
 
 // the Chat's pill: "3 working, 2 need you" ("": no crew)
 export function view_pill(v: View): string {
-  const asked = view_questions(v).length;
+  const asked = view_questions(v).length + view_waiting(v);
   if (v.crew.length === 0) {
     return asked > 0 ? asked + " need you" : "";
   }
@@ -881,7 +906,7 @@ export function view_pill(v: View): string {
 // the web: offline first, the folder Unii works in and its branch, its
 // model, the agents at work, today's LiteLLM spend (Cost.ts; * stale),
 // the mode, the orchestrator's questions open
-export type StatusLine = { up: boolean; dir: string; branch: string | null; model: string; working: number; spend: { spend: number | null; stale: boolean }; questions?: number; mode?: Perm };
+export type StatusLine = { up: boolean; dir: string; branch: string | null; model: string; working: number; spend: { spend: number | null; stale: boolean }; questions?: number; mode?: Perm; waiting?: number };
 
 export function status_text(s: StatusLine): string {
   const usd = (n: number) => (n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2));
@@ -892,6 +917,7 @@ export function status_text(s: StatusLine): string {
     ...(s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"]),
     ...(s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"]),
     ...(s.mode === undefined ? [] : [s.mode + " mode"]),
+    ...(!s.waiting ? [] : [s.waiting + " waiting for you"]),
     ...(!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]),
   ].join(" · ");
 }
@@ -904,7 +930,47 @@ export function view_status(v: View): string {
     return "";
   }
   const spend = { spend: s.spend, stale: s.stale };
-  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode });
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v) });
+}
+
+// what waits for the person besides questions: the plan, calls
+export function view_waiting(v: View): number {
+  return (v.plan ? 1 : 0) + (v.calls ?? []).length;
+}
+
+// /mode's argument as a Mode act (none: the next); else why not
+export function view_mode_cmd(arg: string): Act | string {
+  const m = arg.trim();
+  if (m === "") {
+    return { $: "Mode" };
+  }
+  return ["plan", "auto", "full"].includes(m) ? { $: "Mode", mode: m as Perm } : "No mode " + m + ": plan, auto or full.";
+}
+
+// /plan: the plan waiting, shown; /plan yes [auto|full], /plan no
+// <feedback>: a Verdict; else why not
+export function view_plan_cmd(v: View, arg: string): Act | string {
+  if (!v.plan) {
+    return "No plan is waiting for you.";
+  }
+  const [word, ...rest] = arg.trim().split(/\s+/);
+  const more = rest.join(" ");
+  if (word === "" || word === undefined) {
+    return "The plan waiting for you:\n" + v.plan.text + "\n/plan yes [auto|full] to approve it, /plan no <feedback> to send it back.";
+  }
+  if (word === "yes" && (more === "" || more === "auto" || more === "full")) {
+    return { $: "Verdict", yes: true, mode: more === "full" ? "full" : "auto" };
+  }
+  if (word === "no") {
+    return { $: "Verdict", yes: false, text: more };
+  }
+  return "/plan, /plan yes [auto|full] or /plan no <feedback>.";
+}
+
+// /allow <n> or /refuse <n>: a Consent to a waiting call; else why not
+export function view_consent_cmd(v: View, arg: string, yes: boolean): Act | string {
+  const c = (v.calls ?? []).find((x) => String(x.id) === arg.trim());
+  return c === undefined ? "No call " + arg.trim() + " waits for you." : { $: "Consent", n: c.id, yes };
 }
 
 // the orchestrator's questions still open, oldest first

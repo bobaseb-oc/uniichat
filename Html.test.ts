@@ -211,3 +211,25 @@ test("questions: the pane, and the needs-you lane lists them first", () => {
   View.view_hear(v, { $: "state", ...v, questions: [] } as any);
   expect(Html.questions_html(v)).toEqual([]);
 });
+
+// the mode chip; the waiting pane's plan card (approve into auto or full,
+// send back with feedback) and waiting calls (allow, refuse), escaped,
+// before the questions; the needs-you lane lists them first
+test("modes on the web: the chip, the plan card and waiting calls", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, mode: "plan", plan: { text: "1. <read>\n2. fix", date: "2026-11-12T10:00:00.000Z" }, calls: [{ id: 3, who: "Wkr", tool: "shell", what: "rm -rf <x> (on mac)" }] } as any);
+  expect(Html.mode_html("chat", "", 0, "plan").join("")).toContain('<button class="perm plan" title="the mode: Shift+Tab in the box cycles it" data-act="' + act({ $: "Mode" }) + '">plan mode</button>');
+  const [plan, call] = Html.waiting_html(v);
+  expect(plan).toContain('<div class="qt">1. &lt;read&gt;\n2. fix</div>');
+  expect(plan).toContain(act({ $: "Verdict", yes: true, mode: "auto" }));
+  expect(plan).toContain(act({ $: "Verdict", yes: true, mode: "full" }));
+  expect(plan).toContain('<form class="qa" data-verdict>');
+  expect(call).toContain("rm -rf &lt;x&gt; (on mac)");
+  expect(call).toContain(act({ $: "Consent", n: 3, yes: true }));
+  expect(call).toContain(act({ $: "Consent", n: 3, yes: false }));
+  const needs = Html.needs_html(v);
+  expect(needs[0]).toContain("Plan ready");
+  expect(needs[1]).toContain("Wkr wants to run");
+  View.view_hear(v, { $: "state", ...v, plan: null, calls: [] } as any);
+  expect(Html.waiting_html(v)).toEqual([]);
+});

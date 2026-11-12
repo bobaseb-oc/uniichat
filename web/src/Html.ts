@@ -9,6 +9,7 @@
 import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
 import * as Theme from "../../Theme.ts";
+import type { Mode as Perm } from "../../Modes.ts";
 import * as View from "../../View.ts";
 
 // Constants
@@ -204,12 +205,25 @@ export function lane_html(v: View.View, now: number): string {
 // what needs the person (View.view_needs), each with what it waits on
 // and its buttons
 export function needs_html(v: View.View): string[] {
-  const asked = View.view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split("\n")[0]!)}</b> <span class="meta">question ${q.id}</span></a></div>`);
+  const plan = v.plan ? [`<div class="need question"><a href="#chat" data-qs-open><b>Plan ready</b> <span class="meta">waiting for your approval</span></a></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc(c.who)} wants to run</b> <span class="meta">${esc(c.what.slice(0, 80))}</span></a></div>`);
+  const asked = [...plan, ...calls, ...View.view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split("\n")[0]!)}</b> <span class="meta">question ${q.id}</span></a></div>`)];
   return [...asked, ...View.view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
     const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
     return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
   })];
+}
+
+// what waits for the person besides questions, first in the pane: the
+// orchestrator's plan (approve into auto or full; send back with
+// feedback), then each call auto mode's reviewer couldn't check (run it,
+// or not); none: nothing
+export function waiting_html(v: View.View): string[] {
+  const b = (label: string, a: View.Act, cls = "qo") => `<button class="${cls}"${act_html(a)}>${label}</button>`;
+  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
+  return [...plan, ...calls];
 }
 
 // the question backlog (View.view_questions), beside the chat: each the
@@ -243,11 +257,13 @@ export function focus_html(v: View.View): string {
 // Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
 // marked when someone needs the person
 // and the questions open (a button showing or hiding their pane)
-export function mode_html(mode: View.Mode, pill: string, asked = 0): string[] {
+// and the permission mode's chip (a click: the next)
+export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm): string[] {
   const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
   const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...qs];
+  const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
+  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 
 export function tabs_html(tabs: View.Tab[]): string[] {
