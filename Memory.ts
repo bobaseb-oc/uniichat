@@ -58,7 +58,8 @@ import * as fs from "node:fs";
 import { AskAI, type Ask, type Bill, type Block, type Call, type End as Ended, type Img, type Kind, type Pay, type Say, type Served } from "./AskAI.ts";
 import { clip_page, clip_pages } from "./Clip.ts";
 import { type Mode, Modes } from "./Modes.ts";
-import type { Question } from "./View.ts";
+import type { Question, Summary } from "./View.ts";
+import type { Routine } from "./Routines.ts";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
 import { Pick } from "./Pick.ts";
@@ -110,15 +111,17 @@ type Kept = { parts: Array<[number, number]>; batch: boolean };
 export type Plan = { text: string; date: string };
 
 // view.json: the chat's view, the compactions' (none: the chat's)
-type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; questions?: Question[]; asked?: number; mode?: Mode; plan?: Plan | null };
+type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; goal?: string | null; work?: string[]; questions?: Question[]; asked?: number; mode?: Mode; plan?: Plan | null; routines?: Routine[]; routined?: number; summaries?: Record<string, Summary> };
 
 // fds: files read lately, open, oldest first; count: the pages logged
 // whole; open: those after, not whole yet; pick: the chat's, as last set;
 // goal: the user's (/goal; null: none), till met or halted (Server.ts);
 // questions: the orchestrator's to the user still open (Tools.question), asked:
-// the last one's number (never reused); mode: the chat's (Modes.ts; none
+// the last one's number (never reused); summaries: meeting transcripts'
+// (Chat.transcript), by Doc id, never their text; mode: the chat's (Modes.ts; none
 // saved: auto); plan: the orchestrator's plan waiting for the user's yes
-// (Tools.plan), or none;
+// (Tools.plan), or none; routines: the user's (Routines.ts), routined: the
+// last one's number (never reused);
 // work: what ran, as last saved; nodes: the texts of the views' nodes
 // built and of those above them, by slot; agents: their trees, each a
 // Memory of its own (docs/agent/<Name>/), as opened;
@@ -143,6 +146,9 @@ export type Memory = {
   asked  : number;
   mode   : Mode;
   plan   : Plan | null;
+  routines: Routine[];
+  routined: number;
+  summaries: Record<string, Summary>;
   work   : string[];
   nodes  : Map<number, string>;
   agents : Map<string, Memory>;
@@ -235,7 +241,7 @@ export namespace Memory {
 
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, questions: [], asked: 0, mode: "auto", plan: null, work: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, questions: [], asked: 0, mode: "auto", plan: null, routines: [], routined: 0, summaries: {}, work: [], nodes: new Map(), agents: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: HIGH }, seen: { parts: [], size: 0, batch: false, high: SEEN },
       busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], trouble: null, done: false, wait: new Set(), share, acted,
     };
@@ -246,6 +252,9 @@ export namespace Memory {
     mem.asked = Number(saved?.asked ?? 0) || 0;
     mem.mode = Modes.read(saved?.mode);
     mem.plan = typeof saved?.plan?.text === "string" ? saved.plan : null;
+    mem.routines = Array.isArray(saved?.routines) ? saved.routines : [];
+    mem.routined = Number(saved?.routined ?? 0) || 0;
+    mem.summaries = typeof saved?.summaries === "object" && saved.summaries !== null ? saved.summaries : {};
     mem.work = saved?.work ?? [];
     mem.ends.main = Memory.index(mem, "main", saved?.main ?? [0, 0]);
     mem.ends.tree = Memory.index(mem, "tree", saved?.tree ?? [0, 0]);
@@ -282,7 +291,7 @@ export namespace Memory {
   export function save(mem: Memory): void {
     const file = mem.dir + "/view.json";
     const [chat, seen] = [mem.view, mem.seen].map((view): Kept => ({ parts: view.parts.map((part) => [part.l, part.i]), batch: view.batch }));
-    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, questions: mem.questions, asked: mem.asked, mode: mem.mode, plan: mem.plan, work: mem.work, ...mem.ends }));
+    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, questions: mem.questions, asked: mem.asked, mode: mem.mode, plan: mem.plan, routines: mem.routines, routined: mem.routined, summaries: mem.summaries, work: mem.work, ...mem.ends }));
     fs.renameSync(file + ".new", file);
     Disk.wrote(file);
   }

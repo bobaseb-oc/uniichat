@@ -45,6 +45,8 @@ import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.
 import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
 import { Pick } from "./Pick.ts";
+import * as Inbox from "./Inbox.ts";
+import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
 import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
@@ -95,8 +97,15 @@ type Batch = Kept & { micros: number[][]; open: number[]; left: number; all: num
 // what to do once at rest as it ends (all: nothing runs) or moves (no
 // post runs); writes, held: the posts logging, one after another, and
 // the logging held meanwhile (null: none); wallet: what pays its calls
+// the team digest's themes (Chat.themes): the digest's key (its merged
+// PRs), each author's lines
+export type Themes = { key: string; by: Record<string, string[]> };
+
 type Chat = {
   status?: DeviceStatus; // the latest device's report, for the web's status line
+  inbox?: Inbox.Inbox;   // the latest device's inbox (Device.device_inbox), checked
+  themes?: Themes;       // the digest's themes (Chat.themes), for the digest they were made of
+  reading?: Set<string>; // transcript Docs asked of the devices (Chat.transcript), whose text is taken
   acct  : Account;
   mem   : Memory;
   tools : Tools;
@@ -123,6 +132,7 @@ type Chat = {
   held  : Array<() => void> | null;
   rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
+  tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
 };
 
 // a chat as it moves to another process (Chat.move): its user (an id:
@@ -329,6 +339,8 @@ export namespace Chat {
     chat.eye = Chat.eye(mem, Memory.turn(mem));
     mem.made = (l, i) => Chat.made(chat, l, i);
     mem.troubled = () => Chat.all(chat, Chat.state(chat));
+    chat.tick = setInterval(() => Chat.ticked(chat, Date.now()), Chat.TICKS);
+    chat.tick.unref?.();
     mem.wait.add(() => Chat.progress(chat));
     mem.wait.add(() => Chat.free(chat));
     const work = moved === null ? mem.work : [];
@@ -371,6 +383,7 @@ export namespace Chat {
     }
     Chat.cloud.billing.settle(acct.user);
     if (chat.socks.size === 0) {
+      clearInterval(chat.tick);
       Tools.close(chat.tools);
       Memory.stop(chat.mem);
       Chat.chats.delete(acct.user);
@@ -1120,7 +1133,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1155,6 +1168,15 @@ export namespace Chat {
     const { tab, host, computer, work, home } = sock.data;
     chat.socks.add(sock);
     Chat.send(sock, Chat.state(chat));
+    if (chat.inbox !== undefined) {
+      Chat.send(sock, { $: "inbox", inbox: chat.inbox });
+    }
+    if (chat.themes !== undefined) {
+      Chat.send(sock, { $: "themes", themes: chat.themes });
+    }
+    for (const [id, summary] of Object.entries(chat.mem.summaries)) {
+      Chat.send(sock, { $: "summary", id, summary });
+    }
     Chat.show(chat, sock);
     Chat.send(sock, { $: "live", live: chat.live });
     if (host === null) {
@@ -1349,6 +1371,25 @@ export namespace Chat {
       case "status": {
         return Chat.reported(chat, device, msg);
       }
+      case "inbox": {
+        return Chat.inboxed(chat, device, msg.inbox);
+      }
+      case "review": {
+        return Chat.review(chat, id, msg);
+      }
+      case "routine": {
+        return Chat.routine(chat, id, msg);
+      }
+      case "themes": {
+        return Chat.themes(chat);
+      }
+      case "transcript": {
+        return Chat.transcript(chat, device, msg);
+      }
+      case "fetch": {
+        Chat.all(chat, { $: "fetch" });
+        return {};
+      }
       case "consent": {
         return Tools.consent(chat.tools, Number(msg.n), msg.yes === true) ? {} : { error: "No call " + msg.n + " waits for you." };
       }
@@ -1490,14 +1531,284 @@ export namespace Chat {
   // as the latest, told every view when it changes
   export function reported(chat: Chat, device: string, msg: any): Answer {
     const text = (x: unknown) => typeof x === "string" && x.length <= 200;
-    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && (msg.spend === null || Number.isFinite(msg.spend)) && typeof msg.stale === "boolean";
+    const usd = (x: unknown) => x === null || Number.isFinite(x);
+    const ok = text(msg.dir) && (msg.branch === null || text(msg.branch)) && usd(msg.spend) && typeof msg.stale === "boolean" && (msg.week === undefined || usd(msg.week));
     if (device === "" || !ok) {
       return { error: device === "" ? "Only a device reports its status." : "A status needs dir, branch, spend and stale." };
     }
-    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale };
+    const status: DeviceStatus = { device, dir: msg.dir, branch: msg.branch, spend: msg.spend, stale: msg.stale, ...(msg.week === undefined ? {} : { week: msg.week }) };
     if (JSON.stringify(status) !== JSON.stringify(chat.status ?? null)) {
       chat.status = status;
       Chat.change(chat);
+    }
+    return {};
+  }
+
+  // a device's inbox (Device.device_inbox), only a device's, checked
+  // (Inbox.inbox_check: what a view is shown); kept, told every view
+  export function inboxed(chat: Chat, device: string, raw: unknown): Answer {
+    const inbox = device === "" ? "Only a device reports its inbox." : Inbox.inbox_check(raw);
+    if (typeof inbox === "string") {
+      return { error: inbox };
+    }
+    chat.inbox = inbox;
+    Chat.all(chat, { $: "inbox", inbox });
+    Chat.automate(chat, inbox);
+    return {};
+  }
+
+  // the digest's themes: what the compactor is told, how long it may
+  // take, the most lines an author gets and characters a line
+  const THEMES = "You group a team's merged pull requests into themes. For each author, write 1 to 6 short lines, each a theme in a few plain words followed by its PR numbers in parentheses, like: \"Explainers generator, read-only runner (#776, #777)\". Use only the PRs given, and only their authors. Answer with JSON only: {\"<author>\": [\"<line>\", ...], ...}.";
+  const THEMES_MS = 90_000;
+  const THEME_LINES = 8;
+  const THEME_TEXT = 200;
+
+  // the digest's merged PRs in themes per author, by one compactor call
+  // the user asks for (Summarize by theme): its JSON kept only for the
+  // digest's authors, lines capped and cut; the same digest isn't asked
+  // again; told every view
+  export async function themes(chat: Chat): Promise<Answer> {
+    const merged = chat.inbox?.digest?.merged ?? [];
+    if (merged.length === 0) {
+      return { error: "Nothing merged to summarize yet." };
+    }
+    const key = merged.map((p) => p.url).sort().join(" ");
+    if (chat.themes?.key === key) {
+      return {};
+    }
+    const text = merged.map((p) => p.author + ": #" + p.number + " " + p.title + " (" + p.repo + ")").join("\n");
+    let end: { ok: boolean; text: string } | null;
+    try {
+      const call = AskAI.ask({ ...Pick.ask(config.COMPACTOR), system: THEMES, blocks: [{ text, mark: false }], searches: 0, server: "", bill: chat.mem.pay?.("chat", "themes") }, () => {});
+      const late = new Promise<null>((done) => setTimeout(() => done(null), THEMES_MS).unref?.());
+      end = await Promise.race([call.done.catch(() => null), late]);
+      if (end === null) {
+        call.stop();
+      }
+    } catch {
+      end = null;
+    }
+    const authors = new Set(merged.map((p) => p.author));
+    const by: Record<string, string[]> = {};
+    try {
+      const json = JSON.parse(/\{[\s\S]*\}/.exec(end?.ok ? end.text : "")?.[0] ?? "");
+      for (const [who, lines] of Object.entries(json ?? {})) {
+        if (authors.has(who) && Array.isArray(lines)) {
+          by[who] = lines.filter((l): l is string => typeof l === "string").slice(0, THEME_LINES).map((l) => l.trim().slice(0, THEME_TEXT));
+        }
+      }
+    } catch {
+      return { error: "The summary didn't come back right" + (end?.ok === false ? ": " + end.text.slice(0, 200) : "") + "." };
+    }
+    chat.themes = { key, by };
+    Chat.all(chat, { $: "themes", themes: chat.themes });
+    return {};
+  }
+
+  // Meeting transcripts (RED ZONE draft, Google.ts)
+  // -----------------------------------------------
+  // A view asks for a Doc the inbox lists to be summarized; the devices
+  // are asked to read it (only they hold the Google grant); only an
+  // asked-for Doc's text is taken, only from a device; the compactor
+  // summarizes it; the summary is kept with the chat (never the text) and
+  // told every view. The user chose (2026-11-12) to let meeting text go to
+  // the LiteLLM gateway for this.
+
+  const SUMMARY = "Summarize this meeting transcript for its attendee: one sentence on what the meeting settled, then short sections (a heading each) of bullets with the decisions and the context behind them, then a 'Next steps' section of bullets with each owner's name in parentheses first. Plain Markdown, under 400 words. Only what the transcript says.";
+  const SUMMARY_TEXT = 6000;
+  const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
+
+  export async function transcript(chat: Chat, device: string, msg: any): Promise<Answer> {
+    const id = typeof msg.id === "string" ? msg.id : "";
+    const doc = chat.inbox?.google?.docs.find((d) => d.id === id);
+    if (doc === undefined) {
+      return { error: "No such transcript in the inbox." };
+    }
+    chat.reading ??= new Set();
+    if (device === "") {
+      if (msg.text !== undefined || msg.error !== undefined) {
+        return { error: "Only a device reads a transcript." };
+      }
+      if (chat.mem.summaries[id] === undefined && !chat.reading.has(id)) {
+        chat.reading.add(id);
+        Chat.all(chat, { $: "read", id });
+      }
+      return {};
+    }
+    if (!chat.reading.delete(id)) {
+      return { error: "That transcript wasn't asked for." };
+    }
+    if (typeof msg.text !== "string") {
+      Chat.note(chat, "Couldn't read " + JSON.stringify(doc.title) + ": " + String(msg.error ?? "no text").slice(0, 200));
+      return {};
+    }
+    void Chat.summarize(chat, doc, msg.text.slice(0, 200_000));
+    return {};
+  }
+
+  // a transcript's text summarized by the compactor, the summary kept
+  export async function summarize(chat: Chat, doc: { id: string; title: string }, text: string): Promise<void> {
+    let end: { ok: boolean; text: string } | null = null;
+    try {
+      const call = AskAI.ask({ ...Pick.ask(config.COMPACTOR), system: SUMMARY, blocks: [{ text: doc.title + "\n\n" + text, mark: false }], searches: 0, server: "", bill: chat.mem.pay?.("chat", "transcript") }, () => {});
+      end = await call.done.catch(() => null);
+    } catch {
+      end = null;
+    }
+    if (end === null || !end.ok || end.text.trim() === "") {
+      Chat.note(chat, "The summary of " + JSON.stringify(doc.title) + " didn't come" + (end?.ok === false ? ": " + end.text.slice(0, 200) : "") + ".");
+      return;
+    }
+    const summary = { title: doc.title, text: end.text.trim().slice(0, SUMMARY_TEXT), at: Date.now() };
+    const kept = Object.entries({ ...chat.mem.summaries, [doc.id]: summary }).sort((a, b) => b[1].at - a[1].at).slice(0, SUMMARIES_KEPT);
+    chat.mem.summaries = Object.fromEntries(kept);
+    Memory.save(chat.mem);
+    Chat.all(chat, { $: "summary", id: doc.id, summary });
+  }
+
+  // Routines
+  // --------
+  // The user's (Routines.ts), kept with the chat: each starts a native
+  // agent, the user's (its report takes no turn). The tick runs those due
+  // while the chat is open (a view or a device connected); a review
+  // routine, on each inbox, a review of each new review request of the
+  // user's, AUTOS at most at once (the first inbox it sees only seeds it)
+
+  export const TICKS = 60_000;
+  export const AUTOS = 3;
+
+  // a routine run: its agent started, a note, when it ran kept
+  export function run_routine(chat: Chat, r: Routines.Routine, now: number): void {
+    const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, r.task, true, { title: "routine: " + r.name });
+    r.last = now;
+    Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ".");
+  }
+
+  // the routines due now run; how many
+  export function ticked(chat: Chat, now: number): number {
+    const due = chat.mem.routines.filter((r) => Routines.routine_due(r, now));
+    due.forEach((r) => Chat.run_routine(chat, r, now));
+    if (due.length > 0) {
+      Memory.save(chat.mem);
+      Chat.change(chat);
+    }
+    return due.length;
+  }
+
+  // review routines on an inbox: each new review request of the user's
+  export function automate(chat: Chat, inbox: Inbox.Inbox): void {
+    const mine = inbox.reviews.filter((p) => p.you);
+    let changed = false;
+    for (const r of chat.mem.routines.filter((x) => x.on && x.when.$ === "review")) {
+      const seen = r.seen;
+      r.seen = [...new Set([...(seen ?? []), ...mine.map((p) => p.url)])].slice(-200);
+      changed = true;
+      if (seen === undefined) {
+        continue;
+      }
+      for (const p of mine.filter((x) => !seen.includes(x.url)).slice(0, Chat.AUTOS)) {
+        const label = Chat.pr_label(p, "review");
+        const task = Chat.review_task(p, "review", false) + (r.task === "" ? "" : "\n\nAlso: " + r.task);
+        const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, task, true, label);
+        Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ": " + label.title + ".");
+        r.last = Date.now();
+      }
+    }
+    if (changed) {
+      Memory.save(chat.mem);
+      Chat.change(chat);
+    }
+  }
+
+  // the user's routine acts: add one (checked; at most Routines.MOST),
+  // turn one on or off, drop one, run one now
+  export async function routine(chat: Chat, id: string, msg: any): Promise<Answer> {
+    const list = chat.mem.routines;
+    if (msg.op === "add") {
+      const given = Routines.routine_check(msg.routine);
+      if (typeof given === "string") {
+        return { error: given };
+      }
+      if (list.length >= Routines.MOST) {
+        return { error: "At most " + Routines.MOST + " routines: drop one first." };
+      }
+      chat.mem.routined += 1;
+      list.push({ id: chat.mem.routined, ...given, on: true, last: null, made: Date.now() });
+    } else {
+      const r = list.find((x) => x.id === msg.n);
+      if (r === undefined) {
+        return { error: "No routine " + String(msg.n).slice(0, 20) + "." };
+      }
+      if (msg.op === "toggle") {
+        r.on = msg.on === true;
+      } else if (msg.op === "drop") {
+        chat.mem.routines = list.filter((x) => x !== r);
+      } else if (msg.op === "run" && r.when.$ !== "review") {
+        const refused = await Chat.afford(chat);
+        if (refused !== null) {
+          return refused;
+        }
+        Chat.mark(chat, id, {});
+        Chat.run_routine(chat, r, Date.now());
+      } else {
+        return { error: msg.op === "run" ? "A review routine runs on new review requests." : "No routine act " + String(msg.op).slice(0, 20) + "." };
+      }
+    }
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    return {};
+  }
+
+  // the most inbox PRs one Review starts agents for
+  export const REVIEWS = 10;
+
+  // what an agent is told for a PR it reviews or fixes (claude: it's a
+  // manager, to run a Claude Code worker for it); nothing goes to GitHub
+  export function review_task(p: Inbox.Pr, how: "review" | "fix", claude: boolean): string {
+    const it = p.repo + "#" + p.number + " " + JSON.stringify(p.title) + " (" + p.url + "), branch " + p.branch;
+    const why = p.state === "failing" ? "failing checks: " + p.failing.join(", ") : p.state === "conflicts" ? "conflicts with its base" : "changes requested in review";
+    const task = how === "review"
+      ? "Review " + it + ". Read it with `gh pr view` and `gh pr diff` in a checkout of " + p.repo + ", and run its tests if you can. Report: approve, or the blocking findings, each with file:line and why. Post nothing to GitHub: the user posts."
+      : "Fix " + it + ": " + why + ". Work in its own worktree of " + p.repo + " on that branch; make the checks pass, or resolve the conflicts, or answer the review, with tests. Commit there. Don't push or comment on GitHub: report what you changed and the command to push.";
+    return claude ? "Start one Claude Code worker (spawn as: \"claude\") on the user's device to do this, in a checkout of " + p.repo + ", and report what it did: " + task : task;
+  }
+
+  // a PR agent's label: "review o/r#5", its repo
+  export function pr_label(p: Inbox.Pr, how: "review" | "fix"): { title: string; repos: string[] } {
+    return { title: how + " " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+  }
+
+  // the cockpit's Review / Fix: each PR the inbox holds to its own agent
+  // (a native worker; a manager running a Claude Code worker if asked),
+  // started by the user; any PR not in the inbox refuses them all
+  export async function review(chat: Chat, id: string, msg: any): Promise<Answer> {
+    const prs: unknown = msg.prs;
+    if (msg.how !== "review" && msg.how !== "fix") {
+      return { error: "A review or a fix." };
+    }
+    if (!Array.isArray(prs) || prs.length === 0 || prs.length > Chat.REVIEWS) {
+      return { error: "Give 1 to " + Chat.REVIEWS + " PRs." };
+    }
+    const held = [...(chat.inbox?.reviews ?? []), ...(chat.inbox?.mine ?? [])];
+    const found = prs.map((url) => held.find((p) => p.url === url));
+    const missing = prs.find((_, k) => found[k] === undefined);
+    if (missing !== undefined) {
+      return { error: "Not in the inbox: " + String(missing).slice(0, 200) + "." };
+    }
+    const refused = await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    Chat.mark(chat, id, {});
+    const claude = msg.claude === true;
+    // a PR's task stands alone: no brief of the chat (whose view would
+    // wait on its latest lines' summaries), so none waits
+    const tier = claude ? "manager" : "worker";
+    for (const p of found as Inbox.Pr[]) {
+      const label = Chat.pr_label(p, msg.how);
+      const name = Tools.start(chat.tools, "main", { $: "sub", tier, effort: null, model: null }, Chat.review_task(p, msg.how, claude), true, label);
+      Chat.note(chat, "Started " + name + " (by the user): " + label.title);
     }
     return {};
   }

@@ -276,7 +276,11 @@ const web = await Chat.act(chat, "s0", { $: "status", dir: "x", branch: null, sp
 const ok = await Chat.act(chat, "s1", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, junk: 1 }, "mac");
 const kept = Chat.state(chat).status;
 const bad = await Chat.act(chat, "s2", { $: "status", dir: 5, branch: "main", spend: "lots", stale: false }, "mac");
-console.log(JSON.stringify({ none, web: "error" in web, ok, kept, bad: "error" in bad, after: Chat.state(chat).status }));
+const after = Chat.state(chat).status;
+const weekly = await Chat.act(chat, "s3", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, week: 12.5 }, "mac");
+const week = Chat.state(chat).status.week;
+const badweek = await Chat.act(chat, "s4", { $: "status", dir: "uniichat", branch: "main", spend: 0.25, stale: false, week: "lots" }, "mac");
+console.log(JSON.stringify({ none, web: "error" in web, ok, kept, bad: "error" in bad, after, weekly, week, badweek: "error" in badweek }));
 process.exit(0);
 `;
 
@@ -286,7 +290,241 @@ test("a device's status is kept and told in the state; only a device's, its fiel
   const proc = Bun.spawn([process.execPath, dir + "/status.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   const mac = { device: "mac", dir: "uniichat", branch: "main", spend: 0.25, stale: false };
-  expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac });
+  expect(out).toEqual({ none: null, web: true, ok: {}, kept: mac, bad: true, after: mac, weekly: {}, week: 12.5, badweek: true });
+});
+
+// A device's inbox (Device.device_inbox): only a device's, checked
+// (Inbox.inbox_check), kept and told every view; a view's "fetch" asks
+// every socket (the devices) to read it anew
+const INBOX = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [] };
+const web = await Chat.act(chat, "i0", { $: "inbox", inbox }, "");
+const ok = await Chat.act(chat, "i1", { $: "inbox", inbox: { ...inbox, extra: 1 } }, "mac");
+const bad = await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, merged: "many" } }, "mac");
+const fetch = await Chat.act(chat, "i3", { $: "fetch" }, "");
+console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
+process.exit(0);
+`;
+
+test("a device's inbox is checked, kept and told every view; a view's fetch asks the devices", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/inbox.ts", INBOX);
+  const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [], google: null };
+  expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
+});
+
+// PRs of the inbox reviewed or fixed (the cockpit's Review / Fix): a native
+// Legion worker each, labelled by its PR and repo, started by the user (its
+// report takes no turn); with claude, a manager told to run a Claude Code
+// worker; only PRs the inbox holds, at most Chat.REVIEWS at once
+const REVIEW = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+AskAI.ask = (ask, on) => AskAI.tie(on, ask.bill, () => {}, () => {})[0];
+const asked = [];
+const start = Tools.start;
+Tools.start = (...args) => { asked.push(args[3] + " | user: " + args[4]); return start(...args); };
+const pr = (n, state) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", bot: false, updated: "", add: 1, del: 0, files: 1, branch: "b" + n, state, failing: state === "failing" ? ["ruff"] : [], body: "", you: true });
+await Chat.act(chat, "i0", { $: "inbox", inbox: { at: 1, login: "me", reviews: [pr(5, "ready")], mine: [pr(6, "failing")], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] } }, "mac");
+const unknown = await Chat.act(chat, "r0", { $: "review", prs: ["https://github.com/o/r/pull/99"], how: "review", claude: false }, "");
+const odd = await Chat.act(chat, "r1", { $: "review", prs: ["https://github.com/o/r/pull/5"], how: "merge", claude: false }, "");
+const many = await Chat.act(chat, "r2", { $: "review", prs: Array.from({ length: 11 }, () => "https://github.com/o/r/pull/5"), how: "review", claude: false }, "");
+const review = await Chat.act(chat, "r3", { $: "review", prs: ["https://github.com/o/r/pull/5"], how: "review", claude: false }, "");
+const fix = await Chat.act(chat, "r4", { $: "review", prs: ["https://github.com/o/r/pull/6"], how: "fix", claude: true }, "");
+const crew = Chat.state(chat).crew.map((c) => ({ tier: c.tier, parent: c.parent, title: c.title, repos: c.repos }));
+console.log(JSON.stringify({ unknown: "error" in unknown, odd: "error" in odd, many: "error" in many, review, fix, crew, asked }));
+process.exit(0);
+`;
+
+test("inbox PRs reviewed or fixed: a native worker each (a manager with a Claude Code worker if asked); only the inbox's", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/review.ts", REVIEW);
+  const proc = Bun.spawn([process.execPath, dir + "/review.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ unknown: true, odd: true, many: true, review: {}, fix: {} });
+  expect(out.crew).toEqual([
+    { tier: "worker", parent: "main", title: "review o/r#5", repos: ["r"] },
+    { tier: "manager", parent: "main", title: "fix o/r#6", repos: ["r"] },
+  ]);
+  expect(out.asked.length).toBe(2);
+  expect(out.asked[0]).toContain("Review o/r#5 \"T5\" (https://github.com/o/r/pull/5)");
+  expect(out.asked[0]).toContain("Post nothing to GitHub");
+  expect(out.asked[1]).toContain("failing checks: ruff");
+  expect(out.asked[1]).toContain("spawn as: \"claude\"");
+  expect(out.asked[1]).toContain("Don't push");
+  expect(out.asked.every((t: string) => t.endsWith(" | user: true"))).toBe(true); // the user's: its report takes no turn
+});
+
+// Routines (Routines.ts): added, checked, at most Routines.MOST; run now,
+// turned off, dropped; the tick starts those due once; a review routine
+// starts a review for each new review request of the user's (the first
+// inbox seen only seeds it); kept with the chat
+const ROUTINE = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+AskAI.ask = (ask, on) => AskAI.tie(on, ask.bill, () => {}, () => {})[0];
+const started = [];
+const start = Tools.start;
+Tools.start = (...args) => { started.push({ tier: args[2].tier, task: args[3], user: args[4], title: args[5]?.title }); return start(...args); };
+const add = (r) => Chat.act(chat, "a" + Math.random(), { $: "routine", op: "add", routine: r }, "");
+const ok = await add({ name: "Sweep", task: "clean the worktrees", when: { $: "every", hours: 1 }, tier: "worker" });
+const bad = await add({ name: "", task: "x", when: { $: "every", hours: 1 } });
+const listed = Chat.state(chat).routines.map((r) => ({ id: r.id, name: r.name, on: r.on }));
+const run = await Chat.act(chat, "r1", { $: "routine", op: "run", n: 1 }, "");
+const ran = started.length;
+const early = Chat.ticked(chat, Date.now() + 30 * 60e3);
+const due = Chat.ticked(chat, Date.now() + 61 * 60e3);
+const again = Chat.ticked(chat, Date.now() + 62 * 60e3);
+const off = await Chat.act(chat, "r2", { $: "routine", op: "toggle", n: 1, on: false }, "");
+const offdue = Chat.ticked(chat, Date.now() + 9 * 3600e3);
+const unknown = await Chat.act(chat, "r3", { $: "routine", op: "run", n: 9 }, "");
+await add({ name: "Reviews", task: "", when: { $: "review" } });
+const pr = (n, you) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", bot: false, updated: "", add: 1, del: 0, files: 1, branch: "b", state: "ready", failing: [], body: "", you });
+const inbox = (reviews) => ({ at: 1, login: "me", reviews, mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] });
+const before = started.length;
+await Chat.act(chat, "i1", { $: "inbox", inbox: inbox([pr(1, true)]) }, "mac");
+const seeded = started.length - before;
+await Chat.act(chat, "i2", { $: "inbox", inbox: inbox([pr(1, true), pr(2, true), pr(3, false)]) }, "mac");
+const reviewed = started.slice(before);
+const drop = await Chat.act(chat, "r4", { $: "routine", op: "drop", n: 1 }, "");
+for (let k = 0; k < 19; k++) await add({ name: "R" + k, task: "t", when: { $: "every", hours: 5 } });
+const full = await add({ name: "one too many", task: "t", when: { $: "every", hours: 5 } });
+const fs = await import("node:fs");
+const saved = JSON.parse(fs.readFileSync(chat.mem.dir + "/view.json", "utf8")).routines.length;
+console.log(JSON.stringify({ ok, bad: "error" in bad, listed, run, ran, first: started[0], early, due, again, off, offdue, unknown: "error" in unknown, seeded, reviewed, drop, full: "error" in full, saved, left: Chat.state(chat).routines.length }));
+process.exit(0);
+`;
+
+test("routines: added and checked, run now, run by the tick once when due, off, dropped; review routines start reviews of new requests; kept", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/routine.ts", ROUTINE);
+  const proc = Bun.spawn([process.execPath, dir + "/routine.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ ok: {}, bad: true, listed: [{ id: 1, name: "Sweep", on: true }], run: {}, ran: 1, early: 0, due: 1, again: 0, off: {}, offdue: 0, unknown: true, seeded: 0, drop: {}, full: true });
+  expect(out.first).toEqual({ tier: "worker", task: "clean the worktrees", user: true, title: "routine: Sweep" });
+  expect(out.reviewed.length).toBe(1);
+  expect(out.reviewed[0]).toMatchObject({ tier: "worker", user: true, title: "review o/r#2" });
+  expect(out.reviewed[0].task).toContain("Review o/r#2");
+  expect(out.saved).toBe(20);
+  expect(out.left).toBe(20);
+});
+
+// The digest's themes (the cockpit's Summarize by theme): one compactor
+// call over the merged PRs, its JSON kept only for the digest's authors,
+// lines capped and cut; asked again only when the digest changed; told
+// every view; none to summarize, or a reply not JSON, refused
+const THEMES = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const asks = [];
+let reply = JSON.stringify({ ann: ["Login fixes (#1, #2)", "x".repeat(900)], mallory: ["not in the digest"] });
+AskAI.ask = (ask) => { asks.push(ask.blocks.map((b) => b.text).join("")); return { send() {}, stop() {}, done: Promise.resolve({ ok: true, text: "Here: " + reply, left: [] }) }; };
+const none = await Chat.act(chat, "t0", { $: "themes" }, "");
+const pr = (n) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", at: "" });
+const inbox = (merged) => ({ at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: { repos: ["o/r"], merged, open: [] } });
+await Chat.act(chat, "i1", { $: "inbox", inbox: inbox([pr(1), pr(2)]) }, "mac");
+const ok = await Chat.act(chat, "t1", { $: "themes" }, "");
+const cached = await Chat.act(chat, "t2", { $: "themes" }, "");
+reply = "no json here";
+await Chat.act(chat, "i2", { $: "inbox", inbox: inbox([pr(1), pr(2), pr(3)]) }, "mac");
+const bad = await Chat.act(chat, "t3", { $: "themes" }, "");
+console.log(JSON.stringify({ none: "error" in none, ok, cached, bad: "error" in bad, asks, themes: sent.filter((m) => m.$ === "themes").map((m) => m.themes.by) }));
+process.exit(0);
+`;
+
+test("the digest's themes: one compactor call, its JSON checked, asked again only for a new digest", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/themes.ts", THEMES);
+  const proc = Bun.spawn([process.execPath, dir + "/themes.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ none: true, ok: {}, cached: {}, bad: true });
+  expect(out.asks.length).toBe(2);
+  expect(out.asks[0]).toContain("ann: #1 T1 (o/r)");
+  expect(out.themes.length).toBe(1);
+  expect(Object.keys(out.themes[0])).toEqual(["ann"]);
+  expect(out.themes[0].ann[0]).toBe("Login fixes (#1, #2)");
+  expect(out.themes[0].ann[1].length).toBe(200);
+});
+
+// A meeting transcript summarized (RED ZONE draft, Google.ts): the user
+// asks for a Doc the inbox lists; the devices are asked to read it; only
+// an asked-for Doc's text is taken, from a device; the compactor
+// summarizes it; the summary (not the text) kept and told; a device's
+// failure said; asked again: the summary kept
+const TRANSCRIPT = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set(), seen: new Set() } });
+const asks = [];
+const notes = [];
+const note = Chat.note;
+Chat.note = (c, t) => { notes.push(t); return note(c, t); };
+AskAI.ask = (ask) => { asks.push(ask.blocks.map((b) => b.text).join("")); return { send() {}, stop() {}, done: Promise.resolve({ ok: true, text: "## Overview\\nThey decided.", left: [] }) }; };
+const doc = { id: "doc_1234567890", title: "Standup - Transcript", at: "", url: "https://docs.google.com/document/d/doc_1234567890" };
+const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [], google: { events: [], docs: [doc] } };
+await Chat.act(chat, "i", { $: "inbox", inbox }, "mac");
+const unknown = await Chat.act(chat, "t0", { $: "transcript", id: "doc_other12345" }, "");
+const unasked = await Chat.act(chat, "t1", { $: "transcript", id: doc.id, text: "words" }, "mac");
+const ask = await Chat.act(chat, "t2", { $: "transcript", id: doc.id }, "");
+const read = sent.filter((m) => m.$ === "read");
+const viewtext = await Chat.act(chat, "t3", { $: "transcript", id: doc.id, text: "a view's words" }, "");
+const reply = await Chat.act(chat, "t4", { $: "transcript", id: doc.id, text: "Ann: we ship Friday." }, "mac");
+await Bun.sleep(20);
+const summary = sent.filter((m) => m.$ === "summary");
+const again = await Chat.act(chat, "t5", { $: "transcript", id: doc.id }, "");
+const reads = sent.filter((m) => m.$ === "read").length;
+const fs = await import("node:fs");
+const saved = JSON.parse(fs.readFileSync(chat.mem.dir + "/view.json", "utf8")).summaries;
+await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, google: { events: [], docs: [doc, { ...doc, id: "doc_0987654321" }] } } }, "mac");
+await Chat.act(chat, "t6", { $: "transcript", id: "doc_0987654321" }, "");
+const failed = await Chat.act(chat, "t7", { $: "transcript", id: "doc_0987654321", error: "Google: HTTP 403." }, "mac");
+console.log(JSON.stringify({ unknown: "error" in unknown, unasked: "error" in unasked, ask, read, viewtext: "error" in viewtext, reply, summary, again, asks, saved, failed, reads, notes, stored: JSON.stringify(saved).includes("we ship Friday") }));
+process.exit(0);
+`;
+
+test("a transcript summarized: only a listed Doc, read by a device when asked, summarized, the summary kept (not the text)", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/transcript.ts", TRANSCRIPT);
+  const proc = Bun.spawn([process.execPath, dir + "/transcript.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ unknown: true, unasked: true, ask: {}, read: [{ $: "read", id: "doc_1234567890" }], viewtext: true, reply: {}, again: {}, stored: false });
+  expect(out.asks.length).toBe(1);
+  expect(out.asks[0]).toContain("Ann: we ship Friday.");
+  expect(out.summary).toEqual([{ $: "summary", id: "doc_1234567890", summary: { title: "Standup - Transcript", text: "## Overview\nThey decided.", at: expect.any(Number) } }]);
+  expect(out.saved.doc_1234567890.text).toBe("## Overview\nThey decided.");
+  expect(out.failed).toEqual({});
+  expect(out.reads).toBe(1); // summarized: asked again, not read again
+  expect(out.notes.some((n: string) => n.includes("Google: HTTP 403."))).toBe(true);
 });
 
 // A call waiting for the user (auto's reviewer couldn't check it): in the
@@ -511,4 +749,13 @@ test("every view hears an agent's pulse, a burst as one; a view's watch replaces
   expect(out.da).toBe(20);
   expect(out.db).toBe(0);
   expect(out.after).toBe(0);
+});
+
+// the wait while a turn waits on summaries is View's SUMMARIES ("summaries"),
+// never shadowed (a constant of the same name once made it a number)
+test("the summaries wait reads as View's SUMMARIES", async () => {
+  const { SUMMARIES } = await import("./View.ts");
+  const src = fs.readFileSync(import.meta.dir + "/Server.ts", "utf8");
+  expect(SUMMARIES).toBe("summaries");
+  expect(src.match(/\bconst SUMMARIES\b/g)).toBe(null);
 });

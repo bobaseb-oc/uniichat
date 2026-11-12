@@ -19,6 +19,9 @@
 #   legion mcp-login S  sign in to the MCP server S with OAuth (e.g. atlassian);
 #                     the grant goes to the Keychain only
 #   legion mcp-logout S delete that grant
+#   legion google-login [client.json]  sign in to Google for the cockpit's
+#                     calendar and transcripts (read-only; Keychain only)
+#   legion google-logout  revoke that grant at Google and delete it
 #   legion <args>       anything else goes to Term.ts (e.g. login, version)
 set -euo pipefail
 
@@ -160,6 +163,8 @@ case "${1:-}" in
   knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "legion: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;
   mcp-logout) mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" --logout ;;
+  google-login)  exec bun "$ROOT/local/google-login.ts" "${@:2}" ;;
+  google-logout) exec bun "$ROOT/local/google-login.ts" --logout ;;
   "")    server_start && logs_make && UNII_IMPORT_ASK=1 term_exec "$URL" ;;
   *)     term_exec "$@" ;;
 esac

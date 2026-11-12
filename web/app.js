@@ -16,7 +16,7 @@ function demo_crew(now) {
   const crew = [];
   for (let m = 0;m < 8; m++) {
     const [title, repos] = GOALS[m];
-    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: "waiting", since: now - (m + 1) * 60000, title, repos });
+    crew.push({ name: "Mgr" + m, parent: "main", tier: "manager", model: "opus-5.5", status: m % 3 === 2 ? "done" : "waiting", since: now - (m + 1) * 60000, title, repos, spent: 0.35 + m * 1.7 });
     for (let w = 0;w < 5; w++) {
       const part = w < PARTS.length ? { title: PARTS[w], repos: [repos[w % repos.length]] } : {};
       const todo = w === 0 ? { todo: STEPS.map((text, k) => ({ text, status: k < m % STEPS.length ? "done" : k === m % STEPS.length ? "doing" : "pending" })) } : {};
@@ -36,6 +36,91 @@ function demo_pulses(crew) {
     act: c.status === "working" ? k % 2 === 0 ? "shell: bun test " + c.name + ".test.ts" : "Reading the failing case in " + c.name : "",
     last: c.status === "done" ? "Done: 12 tests pass." : c.status === "failed" ? "failed: the build broke" : ""
   }));
+}
+function demo_inbox(now) {
+  const at = (h) => new Date(now - h * 3600000).toISOString();
+  const pr = (repo, number, title, state, h, over = {}) => ({
+    repo,
+    number,
+    title,
+    url: "https://github.com/" + repo + "/pull/" + number,
+    author: "ann",
+    bot: false,
+    updated: at(h),
+    add: 40 + number,
+    del: number % 30,
+    files: 1 + number % 9,
+    branch: "feat/" + number,
+    state,
+    failing: state === "failing" ? ["ruff", "unit"] : [],
+    body: `## Why
+The ` + title.toLowerCase() + `.
+
+## What
+- one change
+- its test`,
+    you: true,
+    ...over
+  });
+  return {
+    at: now,
+    login: "you",
+    merged: 28,
+    today: 1,
+    errors: [],
+    google: {
+      events: [["Ryan & Jenny | Weekly 1:1", 1, "abc-defg-hij"], ["Agent Attribution Options", 2, "klm-nopq-rst"], ["Ryan / Isha", 2.5, ""]].map(([title, h, meet], k) => {
+        const start = new Date(now + h * 3600000);
+        return { id: "ev" + k, title, start: start.toISOString(), end: new Date(start.getTime() + 30 * 60000).toISOString(), meet: meet === "" ? "" : "https://meet.google.com/" + meet, people: 2 + k };
+      }),
+      docs: [["Determinism Attribution and Auto-Close", 26], ["DevOps AI Studio Priorities Debate", 3], ["Daily CTL Sync", 7]].map(([title, h], k) => ({
+        id: "demo_doc_" + k,
+        title: title + " - Transcript",
+        at: at(h),
+        url: "https://docs.google.com/document/d/demo_doc_" + k
+      }))
+    },
+    digest: {
+      repos: ["acme/agent-foundations"],
+      merged: [
+        ["ryan", 776, "Explainers generator and read-only runner"],
+        ["ryan", 774, "1.x CI made green and fast"],
+        ["ryan", 780, "Backtest drain and release pipeline"],
+        ["you", 747, "Checks-authoring eval suite and runner"],
+        ["you", 746, "Per-run quality record in Postgres"],
+        ["evan", 763, "ReviewAI as its own agent"],
+        ["chris", 807, "Known-differences table built from explainer results"]
+      ].map(([author, number, title]) => ({ repo: "acme/agent-foundations", number, title, url: "https://github.com/acme/agent-foundations/pull/" + number, author, at: at(30) })),
+      open: [{ repo: "acme/agent-foundations", number: 808, title: "Step-by-step calculation when one method explains over half a break", url: "https://github.com/acme/agent-foundations/pull/808", author: "chris", at: at(50) }]
+    },
+    reviews: [
+      pr("acme/agent-foundations", 766, "AO-10787 Add the 8 new custodians to the playbooks", "pending", 1, { author: "yiqun" }),
+      pr("acme/agent-foundations", 760, "AO-10106 Regenerate the position catalogue", "blocked", 120, { author: "bob" }),
+      pr("acme/agent-foundations", 757, "AO-10753 Add the reasoning-model profile tables", "ready", 0.3, { author: "yiqun", you: false }),
+      pr("acme/infra", 2879, "Bump the transform image to 2.0.1", "ready", 600, { author: "dependabot", bot: true, you: false }),
+      pr("acme/web", 120, "Old: the login page copy", "blocked", 24 * 90, { author: "cat" })
+    ],
+    mine: [
+      pr("acme/modeling", 78, "AO-10668 Remove the lazy config sync", "blocked", 140),
+      pr("acme/agent-foundations", 820, "Sonnet for worker subagents, Opus for the chief of staff", "failing", 4),
+      pr("acme/modeling", 76, "AO-10136 Carry the root cause keys into attribution", "ready", 280),
+      pr("acme/etl", 345, "AO-383 Draft the attribution mapping", "draft", 24 * 60),
+      pr("acme/etl", 229, "PIM-4033 Split the loader", "conflicts", 24 * 40)
+    ],
+    tickets: [
+      { key: "AO-10852", title: "Explainer results as the agent payload", status: "In Progress", priority: "High", updated: at(2), url: "" },
+      { key: "AO-10874", title: "Determinism configs tie to a root cause", status: "To Do", priority: "Medium", updated: at(30), url: "" }
+    ],
+    clean: [
+      { repo: "agent-foundations", path: "/repos/agent-foundations/.wt/summaries", branch: "ao-10668-two-sentence-summaries", changes: 16, merged: false },
+      { repo: "agent-foundations", path: "/repos/agent-foundations/.wt/attribution", branch: "ao-10767-nav-attribution", changes: 0, merged: true }
+    ],
+    notes: [
+      { kind: "ci", title: "CI failed on 1.x", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/actions", at: at(1), unread: true },
+      { kind: "review", title: "Review requested: AO-10787", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/pull/766", at: at(0.5), unread: true },
+      { kind: "assign", title: "Assigned: AO-10914 Inconsistent root cause", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/issues/914", at: at(1.2), unread: false }
+    ]
+  };
 }
 
 // Clip.ts
@@ -712,6 +797,28 @@ function object_parse(text) {
   }
 }
 
+// Routines.ts
+var NAME = 80;
+var TASK = 4000;
+var HOURS = 168;
+var DAY2 = 86400000;
+function routine_next(r, now) {
+  const base = r.last ?? r.made;
+  if (r.when.$ === "every") {
+    return base + r.when.hours * 3600000;
+  }
+  if (r.when.$ !== "daily") {
+    return null;
+  }
+  const [h, m] = r.when.at.split(":").map(Number);
+  const d = new Date(now);
+  const today = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
+  return today > base ? today : today + DAY2;
+}
+function when_text(w) {
+  return w.$ === "daily" ? "daily at " + w.at : w.$ === "every" ? w.hours === 1 ? "every hour" : "every " + w.hours + " hours" : "on each new review request";
+}
+
 // Names.ts
 var ADJS = `
 red blue green yellow orange purple pink brown black white gray silver golden
@@ -738,17 +845,17 @@ toucan trout tuna turkey turtle walrus wasp whale wolf wombat yak zebra apple
 banana bagel cookie mango melon muffin noodle pancake pepper potato pretzel
 radish taco waffle
 `.split(/\s+/).filter(Boolean);
-var NAME = "(?:" + ADJS.map(name_word).join("|") + ")-?(?:" + NOUNS.map(name_word).join("|") + ")";
+var NAME2 = "(?:" + ADJS.map(name_word).join("|") + ")-?(?:" + NOUNS.map(name_word).join("|") + ")";
 function name_word(word) {
   return word[0].toUpperCase() + word.slice(1);
 }
 
 // Md.ts
-var NAME2 = new RegExp("\\[(" + NAME + ")\\]", "g");
+var NAME3 = new RegExp("\\[(" + NAME2 + ")\\]", "g");
 var SPAN = new RegExp([
   /`([^`\n]+)`/.source,
   /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|\/(?!\/)[^\s)]*)\)/.source,
-  NAME2.source,
+  NAME3.source,
   /\*\*([^*\n]+)\*\*/.source,
   /(?<![*\w])\*([^*\s][^*\n]*?)\*(?![\w*])/.source,
   /(?<![^\s(])(https?:\/\/[^\s<)]+[^\s<).,;:!?])/.source
@@ -817,7 +924,7 @@ function md_plain(s) {
 `).map(plain_line) }));
 }
 function plain_line(s) {
-  return spans_by(s, NAME2, (m) => Name(m[1]));
+  return spans_by(s, NAME3, (m) => Name(m[1]));
 }
 function md_output(s) {
   const lines = s.replace(/\r/g, "").split(`
@@ -1105,6 +1212,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
+var PAGES = ["home", "inbox", "routines", "digest", "transcripts"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1163,6 +1271,9 @@ function view_new() {
     pulses: new Map,
     heard: null,
     alerted: new Map,
+    inbox: null,
+    themes: null,
+    summaries: new Map,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1182,9 +1293,25 @@ function view_hear(v, msg) {
       v.turn = msg.turn;
       return v.fold === null ? [] : [{ $: "root" }];
     }
+    case "inbox": {
+      v.inbox = msg.inbox;
+      return [];
+    }
+    case "themes": {
+      v.themes = msg.themes.by;
+      return [];
+    }
+    case "summary": {
+      v.summaries.set(msg.id, msg.summary);
+      return [];
+    }
+    case "read": {
+      return [];
+    }
     case "zoom":
     case "jobs":
-    case "job": {
+    case "job":
+    case "fetch": {
       return [];
     }
     case "root": {
@@ -1350,6 +1477,25 @@ function view_act(v, act) {
     }
     case "Consent": {
       return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Review": {
+      return act.prs.length === 0 ? [] : [{ $: "review", prs: act.prs, how: act.how, claude: act.claude === true }];
+    }
+    case "Fetch": {
+      return [{ $: "fetch" }];
+    }
+    case "Archive": {
+      return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Themes": {
+      return [{ $: "themes" }];
+    }
+    case "Transcript": {
+      return [{ $: "transcript", id: act.id }];
+    }
+    case "Routine": {
+      const { $, ...op } = act;
+      return [{ $: "routine", ...op }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -1590,14 +1736,17 @@ function view_questions(v) {
   return [...v.questions ?? []].sort((a, b) => a.id - b.id);
 }
 function view_route(hash) {
-  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
+  }
+  if (m[1] !== "crew") {
+    return { mode: m[1], name: null };
   }
   return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
 }
 function view_hash(mode, name) {
-  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+  return mode !== "crew" ? "#" + mode : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 function ago(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -2012,12 +2161,13 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill, asked = 0, perm) {
+function mode_html(mode, pill, asked = 0, perm, inbox = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
+  const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
   const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
+  return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 function tabs_html(tabs) {
   return tabs.map((tab) => {
@@ -2142,6 +2292,447 @@ function span_html(s) {
   }
 }
 
+// Cockpit.ts
+var DAY3 = 86400000;
+var OLD2 = 60 * DAY3;
+function age(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d";
+}
+var TAGS = {
+  failing: ["Failing", "bad"],
+  blocked: ["Blocked: needs an approving review", "warn"],
+  ready: ["Ready to merge", "ok"],
+  conflicts: ["Conflicts: resolve them first", "bad"],
+  draft: ["Draft: mark it ready for review", ""],
+  pending: ["Checks running", ""],
+  changes: ["Changes requested", "warn"]
+};
+function since(at, now) {
+  const t = Date.parse(at);
+  return Number.isNaN(t) ? "" : age(now - t);
+}
+function pr_row(p, now) {
+  const [tag, tone] = TAGS[p.state];
+  const failing = p.state === "failing" && p.failing.length > 0 ? tag + ": " + p.failing.join(", ") : tag;
+  const t = Date.parse(p.updated);
+  return {
+    key: p.url,
+    kind: "pr",
+    title: p.title,
+    sub: p.repo + "#" + p.number,
+    url: p.url,
+    tag: failing,
+    tone,
+    age: since(p.updated, now),
+    stamp: p.updated,
+    old: !Number.isNaN(t) && now - t > OLD2,
+    pr: p
+  };
+}
+function plural(n, one, many = one + "s") {
+  return n + " " + (n === 1 ? one : many);
+}
+function holds(r, filter) {
+  const f = filter.trim().toLowerCase();
+  if (f === "") {
+    return true;
+  }
+  return [r.title, r.sub, r.pr?.branch ?? "", r.pr?.author ?? "", r.ticket?.key ?? "", r.clean?.branch ?? "", r.tag].some((x) => x.toLowerCase().includes(f));
+}
+function inbox_sections(inbox, crew, filter, now) {
+  if (inbox === null) {
+    return [];
+  }
+  const failed = crew.filter((c) => c.status === "failed").map((c) => ({
+    key: "agent:" + c.name,
+    kind: "agent",
+    title: (c.title ?? c.name) + " failed",
+    sub: c.name,
+    url: "",
+    tag: "Agent failed",
+    tone: "bad",
+    age: age(now - c.since),
+    stamp: String(c.since),
+    agent: c.name
+  }));
+  const red = inbox.mine.filter((p) => p.state === "failing").map((p) => ({ ...pr_row(p, now), key: "alert:" + p.url, title: "Failing: " + p.title }));
+  const notes = inbox.notes.filter((n) => n.kind === "ci" || n.kind === "security").map((n) => ({
+    key: "note:" + n.url + n.at,
+    kind: "note",
+    title: n.title,
+    sub: n.repo,
+    url: n.url,
+    tag: n.kind === "ci" ? "CI" : "Security",
+    tone: "bad",
+    age: since(n.at, now),
+    stamp: n.at,
+    note: n
+  }));
+  const reviews = inbox.reviews.map((p) => pr_row(p, now));
+  const you = inbox.reviews.filter((p) => p.you).length;
+  const bots = inbox.reviews.filter((p) => p.bot).length;
+  const tickets = (inbox.tickets ?? []).map((t) => ({
+    key: "ticket:" + t.key,
+    kind: "ticket",
+    title: t.key + " " + t.title,
+    sub: t.status + (t.priority ? " · " + t.priority : ""),
+    url: t.url,
+    tag: t.status,
+    tone: "",
+    age: since(t.updated, now),
+    stamp: t.updated,
+    ticket: t
+  }));
+  const clean = inbox.clean.map((c) => {
+    const where = c.repo + " " + (c.branch ?? "(detached)");
+    const title = c.changes > 0 ? plural(c.changes, "uncommitted change") + " in " + (c.merged ? "merged " : "") + where : "worktree of merged " + where + ": nothing left in it";
+    return { key: "clean:" + c.path, kind: "clean", title, sub: c.path, url: "", tag: c.merged ? "Merged" : "Uncommitted", tone: c.changes > 0 ? "warn" : "", age: "", stamp: String(c.changes), clean: c };
+  });
+  const section = (id, title, rows, sub = "", note) => {
+    const kept = rows.filter((r) => holds(r, filter));
+    return note === undefined ? { id, title, count: kept.length, sub, rows: kept } : { id, title, count: kept.length, sub, rows: kept, note };
+  };
+  const jira = inbox.tickets === null ? inbox.errors.find((e) => e.startsWith("acli")) ?? "Jira isn't read on this device (acli)." : undefined;
+  return [
+    section("alerts", "Alerts", [...failed, ...red, ...notes]),
+    section("reviews", "Reviews", reviews, you + " for you · " + (inbox.reviews.length - you - bots) + " team · " + plural(bots, "bot")),
+    section("mine", "Your PRs", inbox.mine.map((p) => ({ ...pr_row(p, now), old: false }))),
+    section("tickets", "Tickets", tickets, "", jira),
+    section("clean", "To clean up", clean)
+  ];
+}
+function inbox_seen(sections) {
+  return Object.fromEntries(sections.flatMap((s) => s.rows).map((r) => [r.key, r.stamp]));
+}
+function inbox_changed(sections, seen) {
+  if (seen === null) {
+    return 0;
+  }
+  return sections.flatMap((s) => s.rows).filter((r) => seen[r.key] !== r.stamp).length;
+}
+function inbox_badge(inbox) {
+  if (inbox === null) {
+    return 0;
+  }
+  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => FIX.includes(p.state)).length;
+}
+function home_greeting(now) {
+  const h = now.getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+function needing(v) {
+  return view_needs(v).length + view_questions(v).length + (v.calls ?? []).length + (v.plan ? 1 : 0);
+}
+function home_line(v) {
+  const need = needing(v);
+  const working = v.crew.filter((c) => c.status === "working").length;
+  return (need === 0 ? "no agent needs you" : need + " need you") + " · " + working + " working";
+}
+var usd = (x) => "$" + x.toFixed(2);
+function home_stats(v) {
+  const crew = v.crew;
+  const inbox = v.inbox;
+  const working = crew.filter((c) => c.status === "working" || c.status === "waiting" || c.status === "asking").length;
+  const you = inbox?.reviews.filter((p) => p.you).length ?? 0;
+  const fix = inbox?.mine.filter((p) => FIX.includes(p.state)).length ?? 0;
+  const week = v.status?.week ?? null;
+  const today = v.status?.spend ?? null;
+  return [
+    { label: "Agents", value: String(crew.length), sub: working + " working · " + (crew.length - working) + " done", href: "#crew" },
+    { label: "Reviews for you", value: inbox === null ? "–" : String(you), sub: inbox === null ? "" : inbox.reviews.length - you + " for your team", href: "#inbox" },
+    { label: "Your PRs", value: inbox === null ? "–" : String(inbox.mine.length), sub: inbox === null ? "" : fix + " to fix", href: "#inbox" },
+    { label: "Merged this week", value: inbox === null ? "–" : String(inbox.merged), sub: inbox === null ? "" : inbox.today + " today", href: "#digest" },
+    { label: "Agent spend", value: week === null ? "–" : usd(week), sub: today === null ? "" : usd(today) + " today", href: "#home" }
+  ];
+}
+var FIX = ["failing", "conflicts", "changes"];
+function ticket_of(text) {
+  return /\b[A-Z][A-Z0-9]{1,9}-\d+\b/.exec(text)?.[0] ?? null;
+}
+function home_cards(v, now) {
+  const top = v.crew.filter((c) => c.parent === "main");
+  const under = (name) => v.crew.filter((c) => c.parent === name).reduce((n, c) => n + 1 + under(c.name), 0);
+  const card = (c) => {
+    const title = c.title ?? c.name;
+    return {
+      name: c.name,
+      title,
+      repo: c.repos?.[0] ?? null,
+      ticket: ticket_of(title),
+      pr: /#(\d+)\b/.exec(title)?.[0] ?? null,
+      cost: c.spent === undefined ? "" : "≈" + usd(c.spent),
+      age: c.since === 0 ? "" : age(now - c.since),
+      status: c.status,
+      under: under(c.name)
+    };
+  };
+  const live = (c) => c.status === "working" || c.status === "waiting" || c.status === "asking";
+  return { working: top.filter(live).map(card), done: top.filter((c) => !live(c)).map(card) };
+}
+function home_apps(v) {
+  const routines = (v.routines ?? []).filter((r) => r.on).length;
+  const failing = v.inbox?.mine.filter((p) => p.state === "failing").length ?? 0;
+  const open2 = view_questions(v).length;
+  return {
+    inbox: v.inbox === null ? "not read yet" : failing === 0 ? "nothing failing" : failing + " PR" + (failing === 1 ? "" : "s") + " failing",
+    questions: open2 === 0 ? "none open" : open2 + " open",
+    routines: routines === 0 ? "none scheduled" : routines + " scheduled"
+  };
+}
+function home_activity(v) {
+  return [...v.inbox?.notes ?? []].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
+}
+function side_groups(v, now) {
+  const { working, done } = home_cards(v, now);
+  const groups = new Map;
+  for (const c of [...working, ...done].sort((a, b) => v.crew.findIndex((x) => x.name === a.name) - v.crew.findIndex((x) => x.name === b.name))) {
+    const list = groups.get(c.ticket) ?? [];
+    list.push({ name: c.name, title: c.title, status: c.status, age: c.age, under: c.under });
+    groups.set(c.ticket, list);
+  }
+  const all = [...groups.entries()].map(([ticket, agents]) => ({ ticket, agents }));
+  return [...all.filter((g) => g.ticket !== null), ...all.filter((g) => g.ticket === null)];
+}
+function side_spaces(v) {
+  const repos = [];
+  const add = (r) => r !== "" && !repos.includes(r) && repos.push(r);
+  v.crew.forEach((c) => (c.repos ?? []).forEach(add));
+  (v.inbox?.clean ?? []).forEach((c) => add(c.repo));
+  (v.inbox?.spaces ?? []).forEach(add);
+  if (v.status) {
+    add(v.status.dir);
+  }
+  return repos.map((repo) => ({
+    repo,
+    agents: v.crew.filter((c) => (c.repos ?? []).includes(repo)).length,
+    clean: (v.inbox?.clean ?? []).filter((c) => c.repo === repo).length
+  }));
+}
+function bar_text(v) {
+  const n = (...s) => v.crew.filter((c) => s.includes(c.status)).length;
+  return needing(v) + " need you · " + n("working") + " working · " + n("waiting") + " ready · " + n("done", "stopped") + " done";
+}
+var PAGE_ITEMS = [
+  { label: "Home", hint: "page · g h", go: { href: "#home" } },
+  { label: "Inbox", hint: "page · g i", go: { href: "#inbox" } },
+  { label: "Chat", hint: "page · g m", go: { href: "#chat" } },
+  { label: "Crew", hint: "page · g c", go: { href: "#crew" } },
+  { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
+  { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
+  { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
+  { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
+  { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
+  { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
+  { label: "Plan mode", hint: "command · only reading till a plan is approved", go: { act: { $: "Mode", mode: "plan" } } },
+  { label: "Auto mode", hint: "command · a reviewer checks each change", go: { act: { $: "Mode", mode: "auto" } } },
+  { label: "Full mode", hint: "command · hooks only", go: { act: { $: "Mode", mode: "full" } } }
+];
+function palette(v, q) {
+  const agents = v.crew.map((c) => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
+  const prs = [...v.inbox?.reviews ?? [], ...v.inbox?.mine ?? []].map((p) => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
+  const spaces = side_spaces(v).map((s) => ({ label: s.repo, hint: "space · a repo", go: { space: s.repo } }));
+  const all = [...PAGE_ITEMS, ...agents, ...prs, ...spaces];
+  const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
+  if (words.length === 0) {
+    return all;
+  }
+  const hits = all.filter((i) => words.every((w) => (i.label + " " + i.hint).toLowerCase().includes(w)));
+  const starts = (i) => i.label.toLowerCase().startsWith(words[0]);
+  return [...hits.filter(starts), ...hits.filter((i) => !starts(i))];
+}
+function digest_groups(prs) {
+  const by = new Map;
+  prs.forEach((p) => by.set(p.author, [...by.get(p.author) ?? [], p]));
+  return [...by.entries()].map(([author, list]) => ({ author, prs: list })).sort((a, b) => b.prs.length - a.prs.length || a.author.localeCompare(b.author));
+}
+function up_next(v, now) {
+  const today = new Date(now).toDateString();
+  const p = (n) => String(n).padStart(2, "0");
+  return (v.inbox?.google?.events ?? []).filter((e) => Date.parse(e.end || e.start) > now).sort((a, b) => Date.parse(a.start) - Date.parse(b.start)).map((e) => {
+    const d = new Date(e.start);
+    return { title: e.title, day: d.toDateString() === today ? "today" : "tomorrow", time: e.start.length <= 10 ? "all day" : p(d.getHours()) + ":" + p(d.getMinutes()), meet: e.meet, people: e.people };
+  });
+}
+
+// web/src/Pages.ts
+var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
+function act_html2(act) {
+  return ` data-act="${esc(JSON.stringify(act))}"`;
+}
+function link_html(url, text = "↗") {
+  return url === "" ? "" : `<a class="go" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
+}
+var FIXABLE = ["failing", "conflicts", "changes"];
+function row_acts(s, r) {
+  if (r.pr === undefined) {
+    return "";
+  }
+  if (s === "reviews") {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "review" })} title="a Legion agent reviews it">Review</button>`;
+  }
+  if ((s === "mine" || s === "alerts") && FIXABLE.includes(r.pr.state)) {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "fix" })} title="a Legion agent fixes it">Fix</button>`;
+  }
+  return "";
+}
+function detail_html(r) {
+  const p = r.pr;
+  if (p === undefined) {
+    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc(r.clean.path)}</code></div>`;
+  }
+  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc).join(" · ")}</p>`;
+  const body = p.body.trim() === "" ? "" : `<div class="body">${esc(p.body)}</div>`;
+  return `<div class="ibd"><p class="meta">${esc(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
+}
+function row_html2(s, r, ui) {
+  const here = ui.cursor === r.key ? " here" : "";
+  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
+  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc(r.tag)}</span>`;
+  const open2 = ui.detail === r.key ? detail_html(r) : "";
+  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
+  return `<div class="ibr ${r.kind}${here}" data-row="${esc(r.key)}">${pick}<span class="sub">${esc(r.sub)}</span><span class="t">${esc(r.title)}</span>${tag}<span class="age">${esc(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
+}
+function inbox_html(sections, ui) {
+  return sections.map((s) => {
+    const shut = ui.shut.has(s.id);
+    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc(s.title)}</b><span class="meta">${esc(s.sub)}</span><span class="n">${s.count}</span></button>`;
+    const fresh = s.rows.filter((r) => !r.old).map((r) => row_html2(s.id, r, ui)).join("");
+    const old = s.rows.filter((r) => r.old);
+    const folded = old.length === 0 ? "" : `<details class="old"><summary>${old.length} older than 60 days</summary>${old.map((r) => row_html2(s.id, r, ui)).join("")}</details>`;
+    const note = s.note === undefined ? "" : `<p class="ibnote">${esc(s.note)}</p>`;
+    return `<section class="ibs${shut ? " shut" : ""}" data-sec="${s.id}">${head}<div class="ibrows">${note}${fresh}${folded}</div></section>`;
+  });
+}
+function inbox_head(inbox, changed) {
+  const issue = `<a class="pbtn" href="${esc(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
+  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })} title="the devices read it anew">Refresh</button>`;
+  if (inbox === null) {
+    return `<div class="phead"><h2>Inbox</h2><p class="meta">No device has read the inbox yet: open a terminal (legion) or run legion device; it reads with your gh, acli and git.</p>${refresh}${issue}</div>`;
+  }
+  const at = new Date(inbox.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc(e)}</p>`).join("");
+  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
+}
+function picks_html(sections, picks, claude) {
+  if (picks.size === 0) {
+    return "";
+  }
+  const rows = sections.flatMap((s) => s.rows.filter((r) => picks.has(r.key) && r.pr !== undefined).map((r) => [s.id, r]));
+  const keys = [...new Set(rows.map(([, r]) => r.key))];
+  const reviews = keys.filter((k) => rows.some(([s, r]) => r.key === k && s === "reviews"));
+  const fixes = keys.filter((k) => rows.some(([s, r]) => r.key === k && s !== "reviews" && FIXABLE.includes(r.pr.state)));
+  const go = (label, prs, how) => prs.length === 0 ? "" : `<button class="pbtn"${act_html2(claude ? { $: "Review", prs, how, claude: true } : { $: "Review", prs, how })}>${label} ${prs.length}</button>`;
+  const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
+  return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
+}
+function card_html(c) {
+  const archive = !["working", "waiting", "asking"].includes(c.status);
+  const chips = [c.repo, c.ticket, c.pr].filter((x) => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
+  const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
+  const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
+  return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc(c.name)}</span><span class="meta">${esc(c.status)}</span><span class="age">${esc(c.age)}</span></div>` + `<b class="ht">${esc(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
+}
+var KIND_MARK = { review: "◎", assign: "▣", mention: "@", ci: "✗", security: "⚠", other: "•" };
+function home_html(v, now) {
+  const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(home_greeting(now))}</h2><p class="meta">${esc(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
+  const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
+  const { working, done } = home_cards(v, now.getTime());
+  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map(card_html).join("")}</div>`;
+  const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
+  const apps = home_apps(v);
+  const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
+  const signed = v.inbox?.errors.find((e) => e.startsWith("google:"));
+  const next = up_next(v, now.getTime());
+  const meet = (url) => url === "" ? "" : `<a class="pbtn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
+  const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? next.map((e) => `<div class="next"><span class="when">${esc(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>` : `<p class="meta">${esc(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
+  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
+}
+var SPACES = 12;
+var MARK = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+function side_html(v, mode, now) {
+  const here = (m) => m === mode ? ` class="here"` : "";
+  const n = (k) => k === 0 ? "" : `<span class="n">${k}</span>`;
+  const working = v.crew.filter((c) => c.status === "working").length;
+  const pages = [
+    ["home", "Home", 0],
+    ["inbox", "Inbox", inbox_badge(v.inbox)],
+    ["chat", "Chat", (v.questions ?? []).length],
+    ["crew", "Crew", working],
+    ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length],
+    ["digest", "Digest", 0],
+    ["transcripts", "Transcripts", 0]
+  ];
+  const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
+  const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
+  const groups = side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc(g.ticket ?? "–")}</div>${g.agents.map((a) => `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
+  const count = v.crew.filter((c) => c.parent === "main").length;
+  const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
+  const all = side_spaces(v);
+  const more = all.length > SPACES ? `<p class="meta">+${all.length - SPACES} more (the palette finds them)</p>` : "";
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${all.slice(0, SPACES).map((s) => `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}${more}</section>`;
+  const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
+  return [search, nav, agents, spaces, foot];
+}
+function palette_html(items, sel) {
+  if (items.length === 0) {
+    return [`<p class="meta pnone">Nothing matches.</p>`];
+  }
+  return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+}
+function routines_html(v, now) {
+  const time = (ms) => new Date(ms).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const rows = (v.routines ?? []).map((r) => {
+    const next = routine_next(r, now);
+    const when = `<span class="meta">${esc(when_text(r.when))} · ${r.tier}${!r.on ? " · off" : next === null ? "" : " · next " + esc(time(next))}${r.last === null ? "" : " · last " + esc(age(now - r.last)) + " ago"}</span>`;
+    const run = r.when.$ === "review" ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "run", n: r.id })}>Run now</button>`;
+    const flip = `<button class="pbtn"${act_html2({ $: "Routine", op: "toggle", n: r.id, on: !r.on })}>${r.on ? "Turn off" : "Turn on"}</button>`;
+    const drop = `<button class="pbtn"${act_html2({ $: "Routine", op: "drop", n: r.id })}>Delete</button>`;
+    const task = r.task === "" ? "" : `<p class="rtask">${esc(r.task)}</p>`;
+    return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
+  });
+  const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
+  const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
+  return [head, ...rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows, form];
+}
+function digest_html(v) {
+  const d = v.inbox?.digest ?? null;
+  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })}>Refresh</button>`;
+  if (d === null) {
+    return [`<div class="phead"><h2>Digest</h2><p class="meta">No digest yet: a device reads it from your spaces' GitHub repos (UNII_SPACES on the device, else its home repo).</p>${refresh}</div>`];
+  }
+  const head = `<div class="phead"><h2>${esc(d.repos.join(", "))}: last 7 days</h2><p class="meta">${d.merged.length} merged · ${d.open.length} open</p>` + `<button class="pbtn"${act_html2({ $: "Themes" })} title="one call to the compactor's model">Summarize by theme</button>${refresh}</div>`;
+  const pr = (p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a> <span class="meta">#${p.number}</span></li>`;
+  const merged = digest_groups(d.merged).map((g) => {
+    const themes = v.themes?.[g.author];
+    const lines = themes !== undefined && themes.length > 0 ? themes.map((t) => `<li>${esc(t)}</li>`).join("") : g.prs.map(pr).join("");
+    return `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${lines}</ul></div>`;
+  });
+  const open2 = digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
+  return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open2.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
+}
+function transcripts_html(v, sel, reading) {
+  const g = v.inbox?.google ?? null;
+  const head = `<div class="phead"><h2>Transcripts</h2><p class="meta">Recorded calls: last 14 days</p><button class="pbtn"${act_html2({ $: "Fetch" })}>Refresh</button></div>`;
+  if (g === null) {
+    const why = v.inbox?.errors.find((e) => e.startsWith("google:")) ?? "google: run legion google-login on your device";
+    return [head, `<p class="meta">${esc(why.replace(/^google: /, "Google: "))}</p>`];
+  }
+  const day = (at) => new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const list = g.docs.map((d) => `<button class="tdoc${d.id === sel ? " here" : ""}" data-doc="${esc(d.id)}"><span class="meta">${esc(day(d.at))}</span><span class="t">${esc(d.title)}</span>${v.summaries.has(d.id) ? `<span class="meta">summarized</span>` : ""}</button>`).join("") || `<p class="meta">No transcripts in the last 14 days.</p>`;
+  const doc = g.docs.find((d) => d.id === sel);
+  let body = `<p class="meta">Pick a transcript.</p>`;
+  if (doc !== undefined) {
+    const s = v.summaries.get(doc.id);
+    const open2 = doc.url === "" ? "" : `<a class="pbtn" href="${esc(doc.url)}" target="_blank" rel="noopener noreferrer">Open full transcript</a>`;
+    const what = s !== undefined ? `<div class="tsum">${md_parse(s.text).map(block_html).join("")}</div>` : reading.has(doc.id) ? `<p class="meta">Reading and summarizing…</p>` : `<button class="pbtn"${act_html2({ $: "Transcript", id: doc.id })} title="its text goes to the compactor's model, once">Summarize</button>`;
+    body = `<h3>${esc(doc.title)}</h3><p class="meta">${esc(day(doc.at))}</p><div class="acts">${open2}</div>${what}`;
+  }
+  return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
+}
+
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
 var DESK = matchMedia("(hover: hover)");
@@ -2179,6 +2770,20 @@ var P = {
   watching: "",
   watched: null,
   qhide: false
+};
+var C = {
+  shut: new Set,
+  cursor: null,
+  picks: new Set,
+  detail: null,
+  claude: false,
+  filter: "",
+  page: "",
+  before: null,
+  stamped: -1,
+  pal: 0,
+  doc: null,
+  reading: new Map
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2316,6 +2921,29 @@ function chat() {
   $("#questions").onsubmit = answer;
   $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
+  document.addEventListener("keydown", page_keys);
+  document.addEventListener("change", page_change);
+  $("#page").addEventListener("click", page_click);
+  $("#picks").addEventListener("click", page_click);
+  $("#side").addEventListener("click", page_click);
+  $("#page").addEventListener("submit", routine_add);
+  document.addEventListener("keydown", palette_keys);
+  $("#pq").oninput = () => {
+    C.pal = 0;
+    palette_draw();
+  };
+  $("#palette").addEventListener("click", (ev) => {
+    const k = ev.target.closest("[data-pi]")?.dataset.pi;
+    if (k !== undefined) {
+      palette_run(Number(k));
+    } else if (ev.target === $("#palette")) {
+      $("#palette").close();
+    }
+  });
+  $("#pfilter").oninput = (ev) => {
+    C.filter = ev.target.value;
+    draw(true);
+  };
   crew_route();
   visualViewport.onresize = () => draw(true);
   document.onscroll = () => {
@@ -2386,8 +3014,18 @@ function act(a) {
   }
   P.end = P.end || a.$ === "Send";
   P.rows = true;
+  if (a.$ === "Transcript") {
+    C.reading.set(a.id, Date.now());
+  }
+  const refused = (out) => {
+    if (a.$ === "Transcript" && out.error !== undefined) {
+      C.reading.delete(a.id);
+    }
+    link_note(v, out);
+    draw(true);
+  };
   for (const msg of view_act(v, a)) {
-    link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : undefined, said);
+    link_send(v, msg, a.$ === "Send" ? (out) => back(a, out) : refused, said);
   }
   if (a.$ === "Goto") {
     crew_sync();
@@ -2531,6 +3169,7 @@ function hear(msg) {
   }
   if (DEMO !== null && msg.$ === "state") {
     v.crew = DEMO;
+    v.inbox ??= demo_inbox(Date.now());
     demo_pulses(DEMO).forEach((p) => view_hear(v, p));
   }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
@@ -2925,7 +3564,7 @@ function bars() {
 function crew_route() {
   const r = view_route(location.hash);
   const at = v.page?.name ?? null;
-  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+  if (r.mode !== "crew" ? at !== null && P.crew : r.name !== at) {
     act({ $: "Goto", name: r.name });
   }
   P.crew = r.mode === "crew";
@@ -2936,7 +3575,16 @@ function crew_bars() {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = view_questions(v).length + view_waiting(v);
-  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode));
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox)));
+  side_bars(mode);
+  if (page_bars(mode)) {
+    $("#questions").hidden = true;
+    $("#crew").hidden = true;
+    $("#grid").hidden = true;
+    document.body.classList.remove("qmode", "gridmode");
+    watch();
+    return;
+  }
   const pane = !crew && asked > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
@@ -3013,11 +3661,253 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
   }
+}
+function page_bars(mode) {
+  const page = PAGES.includes(mode) && !P.guest;
+  document.body.classList.toggle("pagemode", page);
+  $("#page").hidden = !page;
+  $("#log").hidden = page;
+  $("#pfilter").hidden = mode !== "inbox";
+  if (!page) {
+    C.page = "";
+    $("#picks").hidden = true;
+    return false;
+  }
+  if (mode === "inbox") {
+    inbox_bars();
+  } else if (mode === "transcripts") {
+    $("#picks").hidden = true;
+    [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180000).forEach(([id]) => C.reading.delete(id));
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "digest") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), digest_html(v));
+  } else if (mode === "routines") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), routines_html(v, Date.now()));
+  } else if (mode === "home") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), home_html(v, new Date));
+  } else {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), [`<div class="phead"><h2>${mode[0].toUpperCase() + mode.slice(1)}</h2></div>`]);
+    markup($("#page .pbody"), []);
+  }
+  C.page = mode;
+  return true;
+}
+function side_bars(mode) {
+  const side = !P.guest && mode !== "crew";
+  document.body.classList.toggle("sidemode", side);
+  $("#side").hidden = !side;
+  markup($("#side"), side ? side_html(v, mode, Date.now()) : []);
+  $("#bar").textContent = P.guest ? "" : bar_text(v);
+}
+function new_agent() {
+  location.hash = "#chat";
+  BOX.value = "/agent ";
+  BOX.dispatchEvent(new Event("input"));
+  setTimeout(() => BOX.focus());
+}
+function palette_keys(ev) {
+  const dialog = $("#palette");
+  const opens = (ev.metaKey || ev.ctrlKey) && (ev.key === "k" || ev.key === "K" || ev.key.toLowerCase() === "p" && (ev.ctrlKey || ev.shiftKey));
+  if (opens && !P.guest) {
+    ev.preventDefault();
+    palette_open();
+    return;
+  }
+  if (!dialog.open) {
+    return;
+  }
+  const items = palette(v, $("#pq").value);
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    C.pal = Math.max(0, Math.min(items.length - 1, C.pal + (ev.key === "ArrowDown" ? 1 : -1)));
+    palette_draw();
+  } else if (ev.key === "Enter") {
+    ev.preventDefault();
+    palette_run(C.pal);
+  }
+}
+function palette_open() {
+  const dialog = $("#palette");
+  $("#pq").value = "";
+  C.pal = 0;
+  palette_draw();
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  $("#pq").focus();
+}
+function palette_draw() {
+  const items = palette(v, $("#pq").value);
+  markup($("#palette .plist"), palette_html(items, C.pal));
+  document.querySelector("#palette .pi.here")?.scrollIntoView({ block: "nearest" });
+}
+function palette_run(k) {
+  const item = palette(v, $("#pq").value)[k];
+  $("#palette").close();
+  if (item === undefined) {
+    return;
+  }
+  const go = item.go;
+  if ("href" in go) {
+    location.hash = go.href;
+  } else if ("open" in go) {
+    window.open(go.open, "_blank", "noopener");
+  } else if ("act" in go) {
+    act(go.act);
+  } else if ("space" in go) {
+    C.filter = go.space;
+    $("#pfilter").value = go.space;
+    location.hash = "#inbox";
+  } else if (go.cmd === "new-agent") {
+    new_agent();
+  } else {
+    document.body.classList.toggle("focus");
+  }
+  draw(true);
+}
+function routine_add(ev) {
+  const form = ev.target.closest("form.radd");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const f = new FormData(form);
+  const kind = String(f.get("kind"));
+  const when = kind === "daily" ? { $: "daily", at: String(f.get("at")) } : kind === "every" ? { $: "every", hours: Number(f.get("hours")) } : { $: "review" };
+  const tier = f.get("tier") === "manager" ? "manager" : "worker";
+  act({ $: "Routine", op: "add", routine: { name: String(f.get("name")), task: String(f.get("task")), when, tier } });
+  form.reset();
+}
+function inbox_bars() {
+  const now = Date.now();
+  const all = inbox_sections(v.inbox, v.crew, "", now);
+  if (C.page !== "inbox") {
+    const kept_ = localStorage.getItem(kept("inbox-seen"));
+    C.before = kept_ === null ? null : JSON.parse(kept_);
+  }
+  if (v.inbox !== null && v.inbox.at !== C.stamped) {
+    C.stamped = v.inbox.at;
+    localStorage.setItem(kept("inbox-seen"), JSON.stringify(inbox_seen(all)));
+  }
+  const sections = inbox_sections(v.inbox, v.crew, C.filter, now);
+  const keys = new Set(sections.flatMap((x) => x.rows.map((r) => r.key)));
+  C.cursor = C.cursor !== null && keys.has(C.cursor) ? C.cursor : null;
+  markup($("#page .ptop"), [inbox_head(v.inbox, inbox_changed(all, C.before))]);
+  markup($("#page .pbody"), inbox_html(sections, C));
+  const picks = picks_html(sections, C.picks, C.claude);
+  $("#picks").hidden = picks === "";
+  markup($("#picks"), picks === "" ? [] : [picks]);
+}
+function inbox_now() {
+  return inbox_sections(v.inbox, v.crew, C.filter, Date.now());
+}
+function page_click(ev) {
+  const el = ev.target;
+  const fold = el.closest("[data-fold]")?.dataset.fold;
+  if (fold !== undefined && !C.shut.delete(fold)) {
+    C.shut.add(fold);
+  }
+  const row = el.closest("[data-row]")?.dataset.row;
+  if (row !== undefined && el.closest("a, button, input") === null) {
+    if (C.cursor === row) {
+      C.detail = C.detail === row ? null : row;
+    }
+    C.cursor = row;
+  }
+  if (el.closest("[data-new-agent]") !== null) {
+    new_agent();
+  }
+  if (el.closest("[data-focus]") !== null) {
+    document.body.classList.toggle("focus");
+  }
+  if (el.closest("[data-palette]") !== null) {
+    palette_open();
+  }
+  if (el.closest("[data-add-machine]") !== null) {
+    $("#machine").showPopover();
+  }
+  const space = el.closest("[data-space]")?.dataset.space;
+  if (space !== undefined) {
+    C.filter = space;
+    $("#pfilter").value = space;
+    location.hash = "#inbox";
+  }
+  const doc = el.closest("[data-doc]")?.dataset.doc;
+  if (doc !== undefined) {
+    C.doc = doc;
+  }
+  if (el.closest("[data-open-picks]") !== null) {
+    [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));
+  }
+  const review = el.closest("[data-act]")?.dataset.act;
+  if (el.closest("[data-drop-picks]") !== null || review !== undefined && JSON.parse(review).$ === "Review" && el.closest("#picks") !== null) {
+    C.picks.clear();
+  }
+  draw(true);
+}
+function page_change(ev) {
+  const el = ev.target;
+  if (el.dataset.pick !== undefined) {
+    el.checked ? C.picks.add(el.dataset.pick) : C.picks.delete(el.dataset.pick);
+  }
+  if (el.dataset.claude !== undefined) {
+    C.claude = el.checked;
+  }
+  draw(true);
+}
+function page_keys(ev) {
+  const over = document.querySelector(":popover-open, dialog[open]") !== null;
+  if (view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey || over) {
+    return;
+  }
+  const filter = $("#pfilter");
+  if (ev.target === filter) {
+    if (ev.key === "Escape" || ev.key === "Enter") {
+      filter.blur();
+    }
+    return;
+  }
+  if (ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null) {
+    return;
+  }
+  const sections = inbox_now();
+  const rows = sections.filter((x) => !C.shut.has(x.id)).flatMap((x) => x.rows.filter((r) => !r.old));
+  const at = rows.findIndex((r) => r.key === C.cursor);
+  const row = rows[at];
+  const keys = {
+    j: () => C.cursor = rows[Math.min(at + 1, rows.length - 1)]?.key ?? null,
+    k: () => C.cursor = rows[Math.max(at - 1, 0)]?.key ?? null,
+    " ": () => {
+      const s = sections.find((x) => x.rows.some((r) => r.key === C.cursor))?.id;
+      s !== undefined && !C.shut.delete(s) && C.shut.add(s);
+    },
+    Tab: () => C.detail = C.detail === C.cursor ? null : C.cursor,
+    Enter: () => row?.url && window.open(row.url, "_blank", "noopener"),
+    v: () => row?.pr && (C.picks.delete(row.key) || C.picks.add(row.key)),
+    "/": () => filter.focus(),
+    Escape: () => C.picks.clear()
+  };
+  const key = { ArrowDown: "j", ArrowUp: "k" }[ev.key] ?? ev.key;
+  if (keys[key] === undefined) {
+    return;
+  }
+  ev.preventDefault();
+  keys[key]();
+  draw(true);
+  document.querySelector(`[data-row="${CSS.escape(C.cursor ?? "")}"]`)?.scrollIntoView({ block: "nearest" });
 }
 function anchor() {
   for (const r of document.querySelectorAll("#log [data-a]")) {

@@ -32,6 +32,11 @@
 <!-- the Crew grid (#crew, no agent in focus): a tile per agent Unii started -->
 <main id="grid" hidden></main>
 <main id="account" hidden></main>
+<!-- the cockpit's sidebar (Pages.side_html): search or run, the pages, agents by ticket, spaces -->
+<nav id="side" hidden></nav>
+<!-- the cockpit's pages (#home, #inbox, #routines, #digest: web/src/Pages.ts); the inbox's picked rows -->
+<main id="page" hidden><div class="ptop"></div><input id="pfilter" type="search" placeholder="Filter rows… a repo, a ticket, a title, a branch" aria-label="filter the inbox" hidden><div class="pbody"></div></main>
+<aside id="picks" hidden></aside>
 <footer>
   <div id="toast" hidden></div>
   <nav id="pick"></nav>
@@ -42,12 +47,22 @@
     <textarea rows="1" inputmode="email" autocomplete="email" enterkeyhint="send"></textarea><div class="voice"><canvas></canvas><span>0:00</span></div><button class="mic" type="button" aria-label="dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="send" type="submit" aria-label="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>
   </form>
   <div id="status"></div>
+  <div id="bar"></div>
   <nav id="tabs"></nav>
   <p class="ai"></p>
 </footer>
 <!-- out of credit: what was refused, then credit to add (Html.credit_html) -->
 <div id="wallet" popover>
   <p class="title"></p>
+</div>
+<!-- the palette (⌘K, Ctrl+P): pages, commands, agents, inbox PRs (Cockpit.palette) -->
+<dialog id="palette"><input id="pq" placeholder="Search or run…" aria-label="search or run" autocomplete="off"><div class="plist"></div></dialog>
+<!-- Add machine: another computer runs the agents' jobs -->
+<div id="machine" popover>
+  <p class="title">Add a machine</p>
+  <p class="sub">On the other computer, with this repo checked out and signed in as you, run:</p>
+  <p><code>local/legion device</code> <button class="copy" data-copy="local/legion device" title="Copy">Copy</button></p>
+  <p class="sub">It joins as a device: the agents' shells, edits and Claude Code workers can run there, under its own guard hooks. Its name is its host's.</p>
 </div>
 <div id="menu" popover>
   <button data-go="/account">Account</button>

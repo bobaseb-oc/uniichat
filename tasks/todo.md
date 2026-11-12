@@ -409,6 +409,147 @@ unchanged (they end at the first line not built).
   state field and troubled broadcast (one line each); a chat moved to another process doesn't relay its
   summaries' trouble. By hand still: a live turn with the gateway down shows the reason, then goes at 60 s.
 
+## Cockpit: Herdr parity (branch feat/cockpit; user's ask 2026-11-12: "parity all the way through")
+Intent: Legion's web gets Herdr's cockpit (screen recording 2026-11-11, frames in /tmp/claude-501/herdr-frames):
+a home digest, a GitHub/Jira inbox with pick-and-act, a sidebar of agents by ticket and spaces, a
+command palette, routines, a team digest. Agents it starts are native Legion subagents; a Claude Code
+worker only when the user ticks it (then a manager starts one, as today).
+Constraints: the device reads GitHub/Jira/git with the user's own CLIs (gh, acli, git), read-only, like
+its status report; no new sign-in or token code (Red Zone); the server only checks, caps and keeps a
+device's report; nothing is posted to GitHub/Jira by Legion (File issue opens GitHub's own page).
+Success: each page renders from the demo crew + a fixture inbox, unit-tested and checked end to end in
+headless Chrome; every act tested on the server; mutants caught; suite stays at the 3 known fails.
+- [x] C1 inbox data: Inbox.ts (pure: the gh GraphQL query; PRs' state from checks/review/mergeable:
+      failing, blocked, ready, conflicts, draft, pending; review requests split you / team; Jira rows
+      from acli JSON; worktrees to clean up from `git worktree list --porcelain` + status counts +
+      merged branches; GitHub notifications as activity/alerts); the device runs them every 5 min and
+      on the server's ask, async with timeouts; "inbox" act checked and capped by the server, kept,
+      in the state. → verify: Inbox.test (fixtures), Server act test, Device test with a fake run.
+      Proof: Inbox.test 8/8 (states, you/team/bot, body cut, GraphQL read + errors, search vars, acli
+      both shapes + links, worktree porcelain, notification kinds/links, the check: caps, cuts,
+      https-only links, bad kinds/counts refused, extra fields dropped); Device.test (fake gh/acli/git:
+      merged + dirty worktrees kept, clean unmerged left out, acli signed out said, gh missing said, only
+      read commands run); Server fixture (device-only, checked, kept, sent as its own message; fetch to
+      every socket). Live run: 17 reviews, 27 PRs, 42 merged this week, states right; acli signed out.
+      Mutants 11/11 killed (one test added for a review asked of another user). Suite 253 pass, 3
+      known fails; tsc: only Bun/process type noise added. Sent as its own "inbox" message (on change,
+      and on join), not in every state: ~60 KB.
+- [x] C2 inbox page (#inbox): sections Alerts / Reviews / Your PRs / Tickets / To clean up, folding,
+      counts, filter, j/k/space/tab/enter, a details card (PR body, checks), "N changed since you
+      looked", refresh, open, File issue (GitHub's new-issue page). → verify: Html/View tests, e2e.
+- [x] C3 pick and act: pick rows (v, "pick all review requests"), a panel with Review / Fix / Open /
+      Drop picks; Review and Fix start one native worker per PR (labelled repo#n, its repo), or with
+      "Claude Code" ticked a manager told to use a Claude Code worker; plan mode still gates them.
+      → verify: Server act tests (spawns, labels, caps, unknown PR refused), View tests.
+      Proof (C2+C3, one commit): Cockpit.test 10/10 (routes, sections, you/team/bot, old folded for
+      reviews only, tags/tones, alerts from failed agents + failing PRs + CI notes, Jira's note, filter,
+      changed-since-looked, badge, acts); Pages.test 6/6 (escaping, fold, row acts, cursor, picks, details
+      card, picked panel, head); Html.test (Home/Inbox in the switch). Server fixture: a native worker per
+      PR labelled "review o/r#5" (repos [r]), a manager with claude, user-started (no turn), only the
+      inbox's PRs, at most 10, tasks say "post nothing" / "don't push". Found on the way: started
+      through Tools.begin, the second PR waited on the first one's note being summarized; PR agents
+      now start with Tools.start, their task standing alone. E2E (headless Chrome, real clicks/keys,
+      demo inbox): 5 sections, 22 rows, badge 5, fold/unfold, j/k cursor, click → details, Tab, v → "1
+      picked", Drop picks, Fix → the server's refusal toast (demo PRs aren't the server's), filter,
+      Chat and back. Fixed after looking: links styled as `.open` blocks (class clash), PR rows of
+      the user folded as old. Mutants 15/15 killed (one test added for the acts). Suite 271 pass, 3
+      known fails; tsc 194 → 194 (a `Page` name clash with View's agent page caught and renamed Deck).
+- [x] C4 home (#home): greeting, "N need you · M working", stat cards (agents, reviews for you, your
+      PRs to fix, merged this week, agent spend today / 7 days), Working and Done cards (repo,
+      ticket, PR, est. cost, age; Go to agent, Archive, Archive all), Apps (Inbox, Questions, Routines),
+      Activity. Per-agent cost: an estimate at list price (Price.ts) from each request's usage, shown
+      "≈"; billing untouched. 7-day spend: the cost cache's daily files. → verify: tests, e2e.
+      Proof: Ask.used (each request's usage, beside Ask.again; Agent.ts calls it after grant.end) →
+      Tools.spent (list price, a model with no price adds nothing) → Crew.spent; failsafe.test (the
+      fake vendor's usage told once), Tools.test. Cost.cost_week (the last 7 UTC days' caches summed)
+      → the status report's week, checked by the server (Cost/Device/Server tests). Cockpit.test 4 more
+      (greeting, line, stats, cards: Unii's own agents, working then done, ticket/PR/cost; Archive →
+      a dismiss each; apps; activity newest first); Pages.test (escaping, Archive only on done, Archive
+      all). E2E on the demo: stats, groups, 9 cards, Focus on/off, stat → #inbox, New agent → #chat with
+      "/agent " in the box, Archive → the server's refusal (demo agents aren't its own). Fixed after
+      looking: `.chip` was the account page's button class (renamed hchip). Mutants 11/11; suite 279
+      pass, 3 known; tsc 208 → 208.
+- [x] C5 sidebar, palette, bar: a left column (search or run, page icons with badges, agents grouped
+      by ticket key, spaces with their worktrees, Settings, Add machine), Ctrl+P / ⌘⇧P palette
+      (pages, agents, PRs, commands, New agent), focus mode, bottom bar need you · working · ready ·
+      done. → verify: tests, e2e with real clicks on the demo crew in every mode.
+      Proof: Cockpit.test 4 more (agents by ticket, none last, with how many under; spaces from agents,
+      worktrees and the device; the bar; the palette: every word must match, labels starting so first,
+      pages / commands / agents / PRs and what each does); Pages.test (side + palette markup, escaped).
+      E2E on the demo: sidebar 230 px on Home and Chat, hidden on the Crew (its own column), Ctrl+K →
+      palette, "inbo" → Inbox + Refresh, Enter → #inbox, a space → the inbox filtered, Add machine →
+      its popover, Esc closes it (found: the inbox's Esc key swallowed it; page keys now stand aside
+      while a popover or the palette is open), the sidebar's search button, a click on an item. Mutants
+      8/8 after 3 tests were tightened (bar counts equal, "any word" and "starts first" untested, a space
+      only a worktree has). Suite 284 pass, 3 known; tsc 56 → 56.
+- [x] C6 routines: a prompt that starts a native agent daily at a time / every N hours / on a new
+      review request (Herdr's inbox automations); kept in view.json, run by the server's tick, listed
+      and toggled on #routines and by /routine in the terminal. → verify: Server tests with a fake
+      clock, View tests.
+      Proof: Routines.test 6/6 (the check: name, task unless a review one, daily HH:MM, every 1-168 h,
+      tier; when due: daily once past its time and not run since, made after it → tomorrow; every N h
+      after the last run; review never by the clock; the terminal's parse; the views: act, /routines,
+      /routine, the page, the Home count). Server fixture: added, checked, run now, the tick runs it once
+      when due and not again, off, unknown refused, a review routine seeds on its first inbox and then
+      starts one review per new request of the user's (a team's ignored), at most 20, kept in view.json.
+      E2E against the real throwaway server: add (every 4 h), off, on, delete, a bad one refused with
+      the server's reason. They run while the server runs and a view or a device is connected (Chat.free
+      ends an idle chat with no socket, and its tick): said on the page. Mutants 11/11; suite 291 pass,
+      3 known; tsc: one more setInterval().unref (the DOM-lib noise already known); Term.ts builds.
+- [x] C7 team digest (#digest): merged PRs of the last 7 days in the spaces' repos by author, and open
+      ones; a theme line per author from the compactor, asked for by the user (Summarize by theme),
+      asked again only for a new digest. → verify: tests, e2e.
+      Proof: Inbox.test (repos from remotes, the searches, PRs read, checked with the report: links
+      https-only, none = null); Device.test (the spaces' origins → one digest search; no GitHub space: no
+      search); Server fixture (one compactor call, its JSON kept only for the digest's authors, lines
+      capped at 8 and cut at 200, the same digest not asked again, a reply not JSON refused, told every
+      view); Pages.test (by author, most first; themes in place of PRs once summarized; open ones; acts).
+      Live: this repo's two merged PRs read. E2E: the demo digest drawn; Summarize → the server's "Nothing
+      merged" (it holds no device's inbox). Mutants 8/8 (one test added: a device with no GitHub
+      space). Suite 294 pass, 3 known; tsc: the same setInterval().unref noise.
+- [x] C9 (user's ask 2026-11-12) spaces found, not listed: git repos under the roots (UNII_SPACES now
+      lists roots; default /Volumes/dev/git and ~/.claude) and the home repo, 4 folders deep, not in a
+      repo, node_modules, build or hidden folders; a linked worktree's .git file skipped; found anew every
+      30 min. All checked for worktrees (git only where .git/worktrees is); the active ones (git files
+      changed in 14 days) feed the digest (40 at most, upstream remote before origin: forks) and the
+      sidebar (12 shown, the rest in the palette). The digest's repos split into searches that fit
+      GitHub's 256-character queries, 5 at most. Live: 538 repos found in ~4.5 s, 55 active, 23 worktrees
+      to clean. Found: the gh sign-in can't see OnCorps repos (404: its token isn't authorized for the
+      org's SSO), so the digest of OnCorps repos is empty until it is. Mutants 11/11; suite 296 pass, 3
+      known (one run had 7 failsafe.test failures that didn't recur, alone or in the suite: its timers
+      run 1000x fast, a load flake).
+- [x] C8 RED ZONE, DRAFT built 2026-11-12 to the design below, awaiting the user's code review before merge (user chose Google sign-in; decided: they register the OAuth client, drive.readonly is fine, meeting text may go to the gateway for summaries):
+      Up next (calendar) and meeting transcripts. Design:
+      - Sign-in: Google OAuth 2.0 for a desktop app (installed-app flow, PKCE, loopback redirect on
+        127.0.0.1), run on the device by `legion google-login` (as `legion mcp-login`); an OAuth client
+        of OnCorps' Google Cloud project, Internal (oncorps.io accounts only). Scopes read-only and
+        narrow: calendar.events.readonly, drive.readonly (transcripts are Docs in Drive).
+      - Tokens: the device's Keychain only (as Auth.keychain), never a file, the server, a log or a
+        prompt; refreshed on the device; `legion google-logout` revokes at Google and deletes them.
+      - Reads: on the device with the inbox, like gh: today's and tomorrow's events (title, time, Meet
+        link, attendee count, not attendee emails), and the last 14 days' transcript Docs (title, date,
+        id). A transcript's text is fetched only when the user opens it.
+      - Summaries: a transcript summarized (the compactor, through the LiteLLM gateway) only on the
+        user's click, the summary kept with the chat; the full text never kept.
+      - Fail closed: no or expired grant → the pages say "sign in with legion google-login"; any error
+        → nothing shown, never a partial page.
+      Invariants for review: no token leaves the device; scopes read-only; nothing written to Google;
+      nothing sent to a model but on a click; logout revokes.
+      Built: Google.ts (login/token/refresh/logout/events/docs/text on Auth's Keychain, callback and
+      grant checks), local/google-login.ts + `legion google-login [client.json]` / `google-logout`;
+      the device reads events and Docs with each inbox (both or neither); the server takes a Doc's text
+      only from a device, only for a Doc it asked for (a view's Summarize of a listed Doc), summarizes
+      it with the compactor and keeps the summary (50 newest), never the text; Home's Up next,
+      #transcripts (summary or Summarize, Open full transcript). Proof: Google.test 6/6 against a fake
+      Google (S256, offline, read-only scopes, state refused, fewer scopes refused and nothing kept,
+      non-https refused, one refresh for many askers, failed refresh says sign in again, logout revokes
+      then deletes, no attendee address asked, Meet/Docs links only, ids checked, text cut); Device,
+      Inbox, Server (asked/unasked/view-sent text, summary kept not text, not read twice, failure said)
+      and Pages tests; e2e on demo data (Up next, list, pick, Summarize refused clears). Mutants 18/18
+      after 2 tests added (fail closed when only Docs fail; no second read). Found by tsc: a new
+      SUMMARIES constant shadowed View's wait (lesson recorded). Suite (bun run test, --isolate) 308
+      pass, 2 known. Not run live: a real Google sign-in (needs the user's client).
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

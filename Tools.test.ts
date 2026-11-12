@@ -12,6 +12,7 @@ import * as os from "node:os";
 process.env.UNII_DIR = fs.mkdtempSync(os.tmpdir() + "/unii-tools-");
 
 const { Tools } = await import("./Tools.ts");
+const { Price } = await import("./Price.ts");
 
 test("a call's MCP requests follow its chat past a process that ended", async () => {
   const tools = Tools.serve({} as any, {} as any);
@@ -128,7 +129,7 @@ test("an agent's note says its tier, starter, model and effort, and reads back a
 });
 
 test("the crew: each agent's tier, starter, model and status; one dismissed is gone", () => {
-  const tools = Tools.serve({} as any, { pick: () => ({ vendor: "claude-api", model: "opus-5.5", effort: "high", speed: "slow" }) } as any);
+  const tools = Tools.serve({} as any, { pick: () => ({ vendor: "claude-api", model: "claude-opus-5-5", effort: "high", speed: "slow" }) } as any);
   working(tools, "Mgr", "manager");
   working(tools, "Wkr", "worker", "Mgr");
   tools.agents.set("Old", { name: "Old", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: "haiku-5.5" }, call: null, live: [], calls: {}, stop: false, replies: ["failed: boom"], user: false });
@@ -353,4 +354,21 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
   } finally {
     (AskAI as any).ask = real;
   }
+});
+
+// an agent's cost so far, an estimate at list price (Price.ts) from each
+// of its requests' usage (Ask.used), in the crew as USD; a model with no
+// price adds nothing, never throws
+test("spent: an agent's requests' usage adds up to its estimated cost, in the crew", () => {
+  const tools = Tools.serve({ dir: "/nowhere" } as any, { change: () => {}, pick: () => null } as any);
+  const a = { name: "Wkr", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set(a.name, a);
+  expect(Tools.crew(tools)[0].spent).toBeUndefined();
+  const use = { input: 1000, write: 0, read: 0, output: 1000, searches: 0, seconds: 0, speed: "slow" };
+  Tools.spent(a, { run: { vendor: "claude-api", model: "claude-opus-5-5", effort: "medium", speed: "slow" }, use } as any);
+  Tools.spent(a, { run: { vendor: "claude-api", model: "claude-opus-5-5", effort: "medium", speed: "slow" }, use } as any);
+  const one = Price.cost("claude-opus-5-5", use as any) / 1e6;
+  expect(Tools.crew(tools)[0].spent).toBeCloseTo(2 * one, 9);
+  Tools.spent(a, { run: { vendor: "claude-api", model: "no-such-model", effort: "x", speed: "slow" }, use } as any);
+  expect(Tools.crew(tools)[0].spent).toBeCloseTo(2 * one, 9);
 });

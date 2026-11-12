@@ -46,3 +46,23 @@ export function cost_refresh(script: string): void {
   refreshing = proc;
   void proc.exited.finally(() => (refreshing = null));
 }
+
+// the last 7 UTC days' spend (today's and the 6 before): the daily caches
+// there summed (null: none), and how many there were
+export function cost_week(dir: string, now: number): { spend: number | null; days: number } {
+  let spend = 0;
+  let days = 0;
+  for (let k = 0; k < 7; k++) {
+    const file = dir + "/litellm-" + new Date(now - k * 86400e3).toISOString().slice(0, 10) + ".json";
+    try {
+      const got = JSON.parse(fs.readFileSync(file, "utf8"))?.spend;
+      if (typeof got === "number" && Number.isFinite(got)) {
+        spend += got;
+        days += 1;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return { spend: days === 0 ? null : spend, days };
+}

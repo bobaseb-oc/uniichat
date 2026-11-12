@@ -109,6 +109,136 @@ test("a device reports the folder Unii works in and its branch", () => {
   const s = Device.device_status({ work: "/nowhere", home: repo, computer: false }, Date.now()) as any;
   expect(s).toMatchObject({ $: "status", dir: repo.split("/").pop(), branch: "trunk" });
   expect(typeof s.stale).toBe("boolean");
+  expect(s.week === null || typeof s.week === "number").toBe(true); // the last 7 days' spend (Cost.cost_week)
   const none = Device.device_status({ work: os.tmpdir(), computer: false }, Date.now()) as any;
   expect(none).toMatchObject({ dir: "main", branch: null });
+});
+
+// a device's inbox (Device.device_inbox): gh's PRs and notifications,
+// acli's tickets, its spaces' worktrees, read by the commands it runs
+// (here a fake's); one that fails is said in errors, the rest kept
+test("a device reads its inbox with gh, acli and git; what fails is said, not thrown", async () => {
+  const pr = { number: 3, title: "T", url: "https://github.com/o/r/pull/3", isDraft: false, updatedAt: "", additions: 1, deletions: 0, changedFiles: 1, body: "", headRefName: "b",
+    repository: { nameWithOwner: "o/r" }, author: { __typename: "User", login: "me" }, reviewDecision: null, mergeable: "MERGEABLE", reviewRequests: { nodes: [] }, commits: { nodes: [] } };
+  const ran: string[][] = [];
+  const exec: Device.Exec = async (cmd) => {
+    ran.push(cmd);
+    const line = cmd.join(" ");
+    if (line.startsWith("gh api graphql") && !line.includes("digest")) {
+      return { code: 0, out: JSON.stringify({ data: { viewer: { login: "me" }, reviews: { nodes: [] }, mine: { nodes: [pr] }, merged: { issueCount: 4 }, today: { issueCount: 1 } } }) };
+    }
+    if (line.startsWith("gh api notifications")) {
+      return { code: 0, out: JSON.stringify([{ reason: "assign", unread: true, updated_at: "", repository: { full_name: "o/r" }, subject: { title: "N", url: "" } }]) };
+    }
+    if (line.startsWith("acli")) {
+      return { code: 1, out: "✗ Error: unauthorized: use 'acli jira auth login' to authenticate" };
+    }
+    if (line.includes("worktree list")) {
+      return { code: 0, out: "worktree /s\nbranch refs/heads/main\n\nworktree /s/.wt/x\nbranch refs/heads/x\n\nworktree /s/.wt/y\nbranch refs/heads/y\n\nworktree /s/.wt/z\nbranch refs/heads/z\n" };
+    }
+    if (line.includes("remote get-url upstream")) {
+      return cmd.includes("/s") ? { code: 0, out: "git@github.com:up/s.git\n" } : { code: 2, out: "error: No such remote 'upstream'" };
+    }
+    if (line.includes("remote get-url")) {
+      return { code: 0, out: "git@github.com:o/s.git\n" };
+    }
+    if (line.startsWith("gh api graphql") && line.includes("digest")) {
+      return { code: 0, out: JSON.stringify({ data: { merged: { nodes: [{ number: 9, title: "M", url: "https://github.com/o/s/pull/9", repository: { nameWithOwner: "o/s" }, author: { login: "bo" }, mergedAt: "2026-11-11T00:00:00Z" }] }, open: { nodes: [] } } }) };
+    }
+    if (line.includes("rev-parse")) {
+      return { code: 0, out: "origin/main\n" };
+    }
+    if (line.includes("branch --merged")) {
+      return { code: 0, out: "main\ny\n" };
+    }
+    if (line.includes("status --porcelain")) {
+      return { code: 0, out: cmd.includes("/s/.wt/x") ? " M a\n?? b\n" : "" };
+    }
+    return { code: 1, out: "" };
+  };
+  // no Google here (Google's own test below; never the real Keychain)
+  const nog: Device.Reads = { events: async () => [], docs: async () => [], text: async () => "" };
+  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: ["/s"] }, exec, new Date(2026, 10, 12), nog) as any;
+  expect(msg.$).toBe("inbox");
+  const inbox = msg.inbox;
+  expect(inbox.login).toBe("me");
+  expect(inbox.mine.map((p: any) => p.number)).toEqual([3]);
+  expect([inbox.merged, inbox.today]).toEqual([4, 1]);
+  expect(inbox.notes.map((n: any) => n.kind)).toEqual(["assign"]);
+  expect(inbox.tickets).toBe(null);
+  expect(inbox.digest).toMatchObject({ repos: ["up/s"], merged: [{ number: 9, author: "bo" }], open: [] }); // a fork's upstream, where the team's PRs are
+  expect(inbox.spaces).toEqual(["s"]);
+  expect(inbox.errors).toEqual(["acli: ✗ Error: unauthorized: use 'acli jira auth login' to authenticate"]);
+  // x has changes, y is merged and clean, z is clean and not merged (left out)
+  expect(inbox.clean).toEqual([
+    { repo: "s", path: "/s/.wt/x", branch: "x", changes: 2, merged: false },
+    { repo: "s", path: "/s/.wt/y", branch: "y", changes: 0, merged: true },
+  ]);
+  // what it ran reads only: no write, no push
+  expect(ran.every((c) => ["gh", "acli", "git"].includes(c[0]))).toBe(true);
+  expect(ran.some((c) => c.filter((a) => !a.startsWith("query=")).join(" ").match(/\b(push|commit|create|edit|delete|POST)\b/))).toBe(false);
+  // gh missing: said, the rest still read
+  const none = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, async (cmd) => (cmd[0] === "gh" ? { code: 127, out: "not found" } : exec(cmd)), new Date(), nog) as any;
+  expect(none.inbox.errors.some((e: string) => e.startsWith("gh: "))).toBe(true);
+  expect(none.inbox.mine).toEqual([]);
+  // no space on GitHub: no digest, and its search not run
+  ran.length = 0;
+  const bare = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, exec, new Date(), nog) as any;
+  expect(bare.inbox.digest).toBe(null);
+  expect(ran.some((c) => c.join(" ").includes("query digest"))).toBe(false);
+});
+
+// spaces found, not listed: git repos under the roots (UNII_SPACES; by
+// default /Volumes/dev/git and ~/.claude) and the home repo, 4 folders
+// deep at most, not inside a repo, node_modules or a hidden folder; a
+// linked worktree (its .git a file) not a space; newest activity first;
+// active: its git files changed in the last 14 days
+test("spaces are found under the roots, newest first; active ones by their git files", () => {
+  const root = fs.mkdtempSync(os.tmpdir() + "/legion-roots-");
+  const repo = (p: string, days: number) => {
+    fs.mkdirSync(root + "/" + p + "/.git", { recursive: true });
+    fs.writeFileSync(root + "/" + p + "/.git/HEAD", "ref: refs/heads/main\n");
+    const t = new Date(Date.now() - days * 86400e3);
+    fs.utimesSync(root + "/" + p + "/.git/HEAD", t, t);
+  };
+  repo("a", 1);
+  repo("team/b", 0);
+  repo("a/inner", 0);             // inside a repo: not looked for
+  repo("node_modules/x", 0);      // skipped
+  repo("team/.hidden/y", 0);      // skipped
+  repo("old", 30);
+  repo("w/x/y/z/deep", 0);        // 5 deep: past the limit
+  fs.mkdirSync(root + "/wt");
+  fs.writeFileSync(root + "/wt/.git", "gitdir: " + root + "/a/.git/worktrees/wt\n"); // a linked worktree
+  const found = Device.device_discover([root], Date.now());
+  expect(found.map((s) => s.path.slice(root.length + 1))).toEqual(["team/b", "a", "old"]);
+  expect(found.map((s) => Device.device_active(s, Date.now()))).toEqual([true, true, false]);
+  // the home repo always, once, first; a root that is a repo is a space
+  const home = Device.device_discover([root + "/a", root], Date.now(), root + "/old");
+  expect(home.map((s) => s.path.slice(root.length + 1))).toEqual(["old", "team/b", "a"]);
+  expect(Device.device_roots(undefined)).toEqual(["/Volumes/dev/git", os.homedir() + "/.claude"]);
+  expect(Device.device_roots(" ~/x , /y ")).toEqual([os.homedir() + "/x", "/y"]);
+});
+
+// Google (RED ZONE draft, Google.ts): the device reads today's and
+// tomorrow's events and the transcript Docs with the user's grant; signed
+// out or failing: nothing from Google, the reason said (fail closed); a
+// transcript's text only when the server asks for that Doc
+test("Google on the device: events and Docs with the inbox; signed out said; a transcript read only when asked", async () => {
+  const quiet: Device.Exec = async () => ({ code: 1, out: "" });
+  const g: Device.Reads = {
+    events: async () => [{ id: "e1", title: "Weekly", start: "2026-11-12T13:30:00Z", end: "", meet: "https://meet.google.com/abc", people: 3 }],
+    docs: async () => [{ id: "doc_1234567890", title: "Standup - Transcript", at: "", url: "https://docs.google.com/document/d/doc_1234567890" }],
+    text: async (id) => "said in " + id,
+  };
+  const m = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), g) as any;
+  expect(m.inbox.google).toEqual({ events: await g.events(new Date()), docs: await g.docs(new Date()) });
+  const out = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), { ...g, events: async () => { throw new Error("not signed in: legion google-login"); } }) as any;
+  expect(out.inbox.google).toBe(null);
+  expect(out.inbox.errors).toContain("google: not signed in: legion google-login");
+  // one read failing: none of Google's shown (fail closed), not half
+  const half = await Device.device_inbox({ work: "/w", computer: false, spaces: [] }, quiet, new Date(), { ...g, docs: async () => { throw new Error("Google: HTTP 403."); } }) as any;
+  expect(half.inbox.google).toBe(null);
+  expect(await Device.device_transcript("doc_1234567890", g)).toEqual({ $: "transcript", id: "doc_1234567890", text: "said in doc_1234567890" });
+  expect(await Device.device_transcript("doc_1234567890", { ...g, text: async () => { throw new Error("Google: HTTP 403."); } })).toEqual({ $: "transcript", id: "doc_1234567890", error: "Google: HTTP 403." });
 });

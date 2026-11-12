@@ -233,3 +233,13 @@ test("modes on the web: the chip, the plan card and waiting calls", () => {
   View.view_hear(v, { $: "state", ...v, plan: null, calls: [] } as any);
   expect(Html.waiting_html(v)).toEqual([]);
 });
+
+// the cockpit's pages in the header's switch: Home and Inbox (its count:
+// review requests for the user, PRs of theirs to fix), the one shown marked
+test("the switch has the cockpit's pages: Home, Inbox with its count", () => {
+  const html = Html.mode_html("inbox", "", 0, undefined, 3).join("");
+  expect(html).toContain('href="#home"');
+  expect(html).toContain('href="#inbox" class="here">Inbox <span class="pill need">3</span>');
+  expect(Html.mode_html("home", "").join("")).toContain('href="#home" class="here"');
+  expect(Html.mode_html("home", "").join("")).not.toContain('class="pill');
+});

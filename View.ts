@@ -13,6 +13,8 @@ import type { Kind, Vendor } from "./AskAI.ts";
 import { Modes, type Mode as Perm } from "./Modes.ts";
 import { topup } from "./Import.ts";
 import * as Call from "./Call.ts";
+import type { Inbox } from "./Inbox.ts";
+import { routine_parse, when_text, type Given, type Routine } from "./Routines.ts";
 import * as Md from "./Md.ts";
 import { LABELS, type Move, Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
@@ -76,19 +78,20 @@ export type State = {
   calls?    : Waiting[];  // calls waiting for the user's yes (auto mode's reviewer couldn't check them)
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
   trouble?  : string | null; // why the last summary failed and asks again (Memory's trouble)
+  routines? : Routine[];     // the user's (Routines.ts)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[] };
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number }; // spent: est. USD (Tools.spent)
 // a call waiting for the user's yes (Tools.ask_user): its number, who
 // calls, its tool, what it does
 export type Waiting = { id: number; who: string; tool: string; what: string };
 
 // a device's report for the status line (Device.device_status): its
 // name, the folder Unii works in there, its branch, today's spend (stale)
-export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean };
+export type DeviceStatus = { device: string; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null }; // week: the last 7 days' (Cost.cost_week)
 
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
@@ -120,7 +123,11 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 
 // the web's two modes, and the agent in focus (location.hash: #chat,
 // #crew, #crew/<name>)
-export type Mode = "chat" | "crew";
+export type Mode = "chat" | "crew" | Deck;
+// the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
+// (not "Page": an agent's page is)
+export const PAGES = ["home", "inbox", "routines", "digest", "transcripts"] as const;
+export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
 // it (any depth), them by status
@@ -147,6 +154,9 @@ export type View = State & {
   pulses : Map<string, Pulse>;
   heard : Heard | null;
   alerted : Map<string, number>;
+  inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
+  themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
+  summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -172,7 +182,12 @@ export type Server =
   | { $: "note"; text: string }
   | ({ $: "ack"; id: string } & Answer)
   | { $: "jobs"; ids: string[] }
-  | { $: "job"; id: string; job: unknown };
+  | { $: "job"; id: string; job: unknown }
+  | { $: "inbox"; inbox: Inbox | null } // the cockpit's inbox, a device's latest report (Inbox.ts)
+  | { $: "fetch" }                        // to devices: read the inbox now
+  | { $: "themes"; themes: { key: string; by: Record<string, string[]> } } // the digest's themes (Chat.themes)
+  | { $: "read"; id: string }             // to devices: read that transcript Doc (Device.device_transcript)
+  | { $: "summary"; id: string; summary: Summary }; // a transcript's summary (Chat.transcript)
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -206,7 +221,15 @@ export type Client =
   | { $: "bang"; command: string } // the person's !command, run with the shell on a device
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
-  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
+  | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null } // a device's report
+  | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
+  | { $: "fetch" } // the inbox read anew by the devices
+  | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
+  | { $: "themes" } // the digest's merged PRs summarized by theme
+  | { $: "transcript"; id: string; text?: string; error?: string } // a view: that transcript summarized; a device: its text, or why not
+  | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
+  | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
+  | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
   | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
@@ -223,6 +246,13 @@ export type Link = {
   hear : (msg: Server) => void;
   lost : (up: boolean) => Promise<boolean>;
 };
+
+// a meeting transcript's summary (Chat.transcript): its Doc's title, the
+// summary, when made (ms)
+export type Summary = { title: string; text: string; at: number };
+
+// a routine act (the web's Routines page, the terminal's /routine)
+export type RoutineOp = { op: "add"; routine: Given } | { op: "toggle"; n: number; on: boolean } | { op: "drop" | "run"; n: number };
 
 // what a person does
 export type Act =
@@ -242,6 +272,12 @@ export type Act =
   | { $: "Mode"; mode?: Perm }                  // the mode set; none: the next (Shift+Tab, the chip)
   | { $: "Verdict"; yes: boolean; mode?: Perm; text?: string } // the plan waiting: approved into a mode, or sent back
   | { $: "Consent"; n: number; yes: boolean }   // a waiting call: run it, or not
+  | { $: "Review"; prs: string[]; how: "review" | "fix"; claude?: boolean } // PRs of the inbox, each to a Legion agent (claude: a Claude Code worker under a manager)
+  | { $: "Fetch" }                              // the inbox read anew (its Refresh)
+  | { $: "Archive"; names: string[] }           // agents out of the crew (Home's Archive, Archive all)
+  | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
+  | { $: "Themes" }                             // the digest summarized by theme
+  | { $: "Transcript"; id: string }             // a meeting transcript summarized
 
 // what a page draws, top to bottom
 export type Row =
@@ -381,6 +417,9 @@ export function view_new(): View {
     pulses    : new Map(),
     heard     : null,
     alerted   : new Map(),
+    inbox     : null,
+    themes    : null,
+    summaries : new Map(),
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -401,9 +440,25 @@ export function view_hear(v: View, msg: Server): Client[] {
       v.turn  = msg.turn;
       return v.fold === null ? [] : [{ $: "root" }];
     }
+    case "inbox": {
+      v.inbox = msg.inbox;
+      return [];
+    }
+    case "themes": {
+      v.themes = msg.themes.by;
+      return [];
+    }
+    case "summary": {
+      v.summaries.set(msg.id, msg.summary);
+      return [];
+    }
+    case "read": {
+      return [];
+    }
     case "zoom":
     case "jobs":
-    case "job": {
+    case "job":
+    case "fetch": {
       return [];
     }
     case "root": {
@@ -579,6 +634,25 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Consent": {
       return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Review": {
+      return act.prs.length === 0 ? [] : [{ $: "review", prs: act.prs, how: act.how, claude: act.claude === true }];
+    }
+    case "Fetch": {
+      return [{ $: "fetch" }];
+    }
+    case "Archive": {
+      return act.names.map((name) => ({ $: "dismiss", name }));
+    }
+    case "Themes": {
+      return [{ $: "themes" }];
+    }
+    case "Transcript": {
+      return [{ $: "transcript", id: act.id }];
+    }
+    case "Routine": {
+      const { $, ...op } = act;
+      return [{ $: "routine", ...op }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -995,6 +1069,36 @@ export function view_questions_note(v: View): string {
   return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
 }
 
+// the terminal's /routines: each with its number, when, tier, on or off
+export function view_routines_note(v: View): string {
+  const rs = v.routines ?? [];
+  if (rs.length === 0) {
+    return "No routines. Add one: /routine add daily 09:00 Name: task (or every 4h, or on review).";
+  }
+  return ["Your routines:", ...rs.map((r) => r.id + ". " + r.name + " · " + when_text(r.when) + " · " + r.tier + " · " + (r.on ? "on" : "off")),
+    "/routine run|on|off|drop <n>; /routine add daily 09:00 | every 4h | on review, then name: task."].join("\n");
+}
+
+// /routine's argument: add <when> <name>: <task>, or run|on|off|drop <n>
+export function view_routine_cmd(v: View, arg: string): Act | string {
+  const [verb, ...rest] = arg.trim().split(/\s+/);
+  if (verb === "add") {
+    const given = routine_parse(arg.trim().slice(3));
+    return typeof given === "string" ? given : { $: "Routine", op: "add", routine: given };
+  }
+  const ops: Record<string, (n: number) => Act> = {
+    run  : (n) => ({ $: "Routine", op: "run", n }),
+    drop : (n) => ({ $: "Routine", op: "drop", n }),
+    on   : (n) => ({ $: "Routine", op: "toggle", n, on: true }),
+    off  : (n) => ({ $: "Routine", op: "toggle", n, on: false }),
+  };
+  const r = (v.routines ?? []).find((x) => String(x.id) === rest[0]);
+  if (ops[verb ?? ""] === undefined) {
+    return "Use /routine add, run, on, off or drop: /routines lists them.";
+  }
+  return r === undefined ? "No routine " + (rest[0] ?? "") + ": /routines lists them." : ops[verb!](r.id);
+}
+
 // /answer's argument, "<n> <text>", as an Answer: a text that is just the
 // number of one of its offered answers means that answer; else why not
 export function view_answer(v: View, arg: string): Act | string {
@@ -1018,15 +1122,18 @@ export function view_drop(v: View, arg: string): Act | string {
 
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
+  }
+  if (m[1] !== "crew") {
+    return { mode: m[1] as Deck, name: null };
   }
   return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
 }
 
 export function view_hash(mode: Mode, name: string | null): string {
-  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+  return mode !== "crew" ? "#" + mode : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 
 // the Claude Code workers waiting for the person's approval, by name
