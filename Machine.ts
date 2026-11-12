@@ -16,6 +16,7 @@ import * as path from "node:path";
 import type { Out } from "./Agent.ts";
 import { CAP, clip, clip_end } from "./Clip.ts";
 import { Computer } from "./Computer.ts";
+import { Hooks, type Source } from "./Hooks.ts";
 
 // Types
 // =====
@@ -130,7 +131,9 @@ export function spec(name: string, info: string, fields: object, need: string[])
 export namespace Machine {
 
   // in <work>/<its caller>, Unii's (main) in the home repo if there is one
-  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal, home?: string): Promise<Out> {
+  // (hooks: the settings files whose Claude Code hooks gate it, Hooks.ts;
+  // by default Claude Code's own for the dir's project)
+  export async function run(job: Job, work: string, signal: AbortSignal, away?: AbortSignal, home?: string, hooks?: Source[]): Promise<Out> {
     const tilde = (p: string) => (p.startsWith("~/") ? os.homedir() + p.slice(1) : p);
     const root = tilde(work);
     const cwd = job.cwd === "main" && home ? tilde(home) : path.join(root, path.basename(job.cwd));
@@ -138,35 +141,56 @@ export namespace Machine {
     const file = path.resolve(cwd, String(input.path));
     try {
       fs.mkdirSync(cwd, { recursive: true });
-      switch (job.name) {
-        case "shell": {
-          return await Machine.shell(cwd, String(input.command), signal, away);
-        }
-        case "read": {
-          return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
-        }
-        case "write": {
-          return Machine.write(file, String(input.path), String(input.content));
-        }
-        case "edit": {
-          return Machine.edit(cwd, input.edits);
-        }
-        case "computer": {
-          return await Computer.act(input, signal);
-        }
-        case "claude": {
-          const dir = input.dir ? tilde(String(input.dir)) : cwd;
-          if (!fs.existsSync(dir)) {
-            return { text: "No directory " + input.dir + " here.", fail: true };
-          }
-          return await Machine.claude(dir, String(input.task), signal);
-        }
-        default: {
-          return { text: "No tool " + job.name + ".", fail: true };
-        }
+      const calls = Hooks.calls(job, cwd);
+      if (calls.length === 0) {
+        return await tool(job, cwd, file, signal, away);
       }
+      const src   = hooks ?? Hooks.sources(Hooks.project(cwd));
+      const gates = await Promise.all(calls.map((c) => Hooks.pre(src, c.tool, c.input, cwd, job.cwd, signal)));
+      const deny  = gates.find((g) => g.deny !== null)?.deny;
+      if (deny) {
+        return { text: "Refused by a hook: " + deny, fail: true };
+      }
+      const out   = await tool(job, cwd, file, signal, away);
+      const notes = (await Promise.all(calls.map((c) => Hooks.post(src, c.tool, c.input, out, cwd, job.cwd, signal)))).flat();
+      const warn  = gates.flatMap((g) => g.warn).map((w) => "[hook] " + w);
+      const text  = [...warn, out.text, ...notes.map((n) => "[hook] " + n)].join("\n");
+      return { ...out, text };
     } catch (err: any) {
       return { text: String(err?.message ?? err), fail: true };
+    }
+  }
+
+  // runs a job's tool, ungated
+  async function tool(job: Job, cwd: string, file: string, signal: AbortSignal, away?: AbortSignal): Promise<Out> {
+    const tilde = (p: string) => (p.startsWith("~/") ? os.homedir() + p.slice(1) : p);
+    const input = job.input;
+    switch (job.name) {
+      case "shell": {
+        return await Machine.shell(cwd, String(input.command), signal, away);
+      }
+      case "read": {
+        return Machine.read(file, Number(input.offset ?? 1), Number(input.limit ?? Infinity), Number(input.at ?? 0));
+      }
+      case "write": {
+        return Machine.write(file, String(input.path), String(input.content));
+      }
+      case "edit": {
+        return Machine.edit(cwd, input.edits);
+      }
+      case "computer": {
+        return await Computer.act(input, signal);
+      }
+      case "claude": {
+        const dir = input.dir ? tilde(String(input.dir)) : cwd;
+        if (!fs.existsSync(dir)) {
+          return { text: "No directory " + input.dir + " here.", fail: true };
+        }
+        return await Machine.claude(dir, String(input.task), signal);
+      }
+      default: {
+        return { text: "No tool " + job.name + ".", fail: true };
+      }
     }
   }
 

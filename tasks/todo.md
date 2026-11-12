@@ -254,6 +254,44 @@ fly, and an agent can relabel itself.
       terminal no title, tile no repos, tree tooltip no repos) killed; suite 199 pass, 3 known fails;
       headless renders of the labelled demo crew checked.
 
+## Claude Code parity: guard hooks, tools, `!` (feat/crew-ui)
+Intent: Legion's device tools get gated by the same Claude Code hooks as Claude Code itself (above all the
+OnCorps guard in managed settings), it gains the Claude Code tools it lacks, and `!cmd` runs a shell
+command from the input box. Decided with the user 2026-11-12: hooks from managed + user + project
+settings (no plugin hooks yet); fail closed only for managed hooks; tools glob, grep, todo (no webfetch:
+SearXNG search covers finding pages); `!` in the TUI and on the web.
+Constraints: device side only (Machine.ts imports nothing of the server); guard.py runs unchanged (it
+sees Claude Code tool names and input shapes); the `claude` worker is real Claude Code, already guarded.
+- [x] H1 (RED ZONE, DRAFT: committed, awaiting the user's sign-off) Hooks.ts: load PreToolUse/PostToolUse from
+      /Library/Application Support/ClaudeCode/managed-settings.json (+ managed-settings.d),
+      ~/.claude/settings.json, <repo>/.claude/settings.json and settings.local.json; match by tool regex;
+      run each with Claude Code's stdin JSON ({hook_event_name, tool_name, tool_input, cwd, session_id});
+      exit 2 or permissionDecision "deny" refuses the call with the reason; systemMessage shown as a
+      warning; 60 s timeout. A managed hook that can't run (missing, crash, timeout) refuses; others warn.
+      Names: shell→Bash {command}, read→Read {file_path, offset, limit}, write→Write {file_path, content},
+      edit→Edit {file_path, old_string, new_string, replace_all} once per edit, glob→Glob, grep→Grep.
+      Wired into Machine.run before the tool; PostToolUse after. → verify: Hooks.test.ts with fake hooks
+      (deny exit 2, deny JSON, warn, crash managed vs user, timeout, matcher miss) + the real guard.py
+      refusing `git push --force origin main`-class critical commands; mutants killed.
+      Proof: Hooks.test.ts 10/10 written before Hooks.ts (incl. the installed guard.py refusing a critical
+      command); 10/10 mutants killed (managed fails open, exit 2 ignored, deny/ask ignored,
+      allowManagedHooksOnly ignored, user disableAllHooks drops managed, no timeout, unreadable managed
+      file ignored, only first edit gated, Machine.run ignores deny); live Machine.run with default
+      sources: the real managed guard refuses `echo … rm -rf /`, allows `echo hello`; suite 209 pass,
+      the 3 known fails; tsc: Machine.ts 18 → 18, Hooks.ts only missing bun/node type noise.
+      Invariants for review: a managed hook that can't run, an unreadable managed file, a managed
+      non-command hook or a bad managed matcher refuse (closed); user/project hooks can't switch off
+      managed ones; OC_GUARD_BYPASS is read from the device's env, never the command's.
+- [ ] T1 glob + grep device tools (Machine.ts TOOLS): glob by pattern sorted by mtime; grep via rg if on
+      PATH, else a JS walk; output capped like read. → verify: Machine.test.ts cases.
+- [ ] T2 todo: a per-agent checklist tool (set the whole list), kept on the agent, sent in the crew and
+      pulse, drawn in the focus card and /crew full. → verify: Tools/View/Html/Paint tests.
+- [ ] B1 `!cmd` in the TUI: runs Machine.shell in main's dir (no hooks: the user typed it, as in Claude
+      Code), its command and output go to the chat as an entry the orchestrator sees. → verify: Term/View
+      test + PTY smoke.
+- [ ] B2 `!cmd` on the web: sent as a user shell job to the chat's device (an open TUI or `legion device`);
+      "no device" when none. → verify: Server/Device tests + headless click.
+
 ## Later
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.
 - Upstream test `Cloud.test.ts` "link_ask caps links … a day" fails in the full suite at some times of day (also at HEAD without local changes); passes alone.
