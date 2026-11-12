@@ -118,6 +118,7 @@ const C = {
   page    : "",
   before  : null as Record<string, string> | null,
   stamped : -1,
+  pal     : 0, // the palette's pick
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -292,6 +293,20 @@ function chat(): void {
   document.addEventListener("change", page_change);
   $("#page").addEventListener("click", page_click);
   $("#picks").addEventListener("click", page_click);
+  $("#side").addEventListener("click", page_click);
+  document.addEventListener("keydown", palette_keys);
+  $("#pq").oninput = () => {
+    C.pal = 0;
+    palette_draw();
+  };
+  $("#palette").addEventListener("click", (ev) => {
+    const k = (ev.target as HTMLElement).closest<HTMLElement>("[data-pi]")?.dataset.pi;
+    if (k !== undefined) {
+      palette_run(Number(k));
+    } else if (ev.target === $("#palette")) {
+      $<HTMLDialogElement>("#palette").close();
+    }
+  });
   $<HTMLInputElement>("#pfilter").oninput = (ev) => {
     C.filter = (ev.target as HTMLInputElement).value;
     draw(true);
@@ -1072,6 +1087,7 @@ function crew_bars(): void {
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = View.view_questions(v).length + View.view_waiting(v);
   markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox)));
+  side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
     $("#crew").hidden = true;
@@ -1216,6 +1232,87 @@ function page_bars(mode: View.Mode): boolean {
   return true;
 }
 
+// the sidebar (not in the Crew, whose column it would cover, nor in focus
+// mode: style.css) and the bottom bar's counts
+function side_bars(mode: View.Mode): void {
+  const side = !P.guest && mode !== "crew";
+  document.body.classList.toggle("sidemode", side);
+  $("#side").hidden = !side;
+  markup($("#side"), side ? Pages.side_html(v, mode, Date.now()) : []);
+  $("#bar").textContent = P.guest ? "" : Cockpit.bar_text(v);
+}
+
+// New agent: the chat, its box saying /agent (Enter starts it)
+function new_agent(): void {
+  location.hash = "#chat";
+  BOX.value = "/agent ";
+  BOX.dispatchEvent(new Event("input"));
+  setTimeout(() => BOX.focus());
+}
+
+// the palette: ⌘K, Ctrl+K, Ctrl+P or ⌘⇧P opens it anywhere; the arrows
+// pick, Enter runs, Esc closes
+function palette_keys(ev: KeyboardEvent): void {
+  const dialog = $<HTMLDialogElement>("#palette");
+  const opens = (ev.metaKey || ev.ctrlKey) && (ev.key === "k" || ev.key === "K" || (ev.key.toLowerCase() === "p" && (ev.ctrlKey || ev.shiftKey)));
+  if (opens && !P.guest) {
+    ev.preventDefault();
+    palette_open();
+    return;
+  }
+  if (!dialog.open) {
+    return;
+  }
+  const items = Cockpit.palette(v, $<HTMLInputElement>("#pq").value);
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    C.pal = Math.max(0, Math.min(items.length - 1, C.pal + (ev.key === "ArrowDown" ? 1 : -1)));
+    palette_draw();
+  } else if (ev.key === "Enter") {
+    ev.preventDefault();
+    palette_run(C.pal);
+  }
+}
+
+function palette_open(): void {
+  const dialog = $<HTMLDialogElement>("#palette");
+  $<HTMLInputElement>("#pq").value = "";
+  C.pal = 0;
+  palette_draw();
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  $("#pq").focus();
+}
+
+function palette_draw(): void {
+  const items = Cockpit.palette(v, $<HTMLInputElement>("#pq").value);
+  markup($("#palette .plist"), Pages.palette_html(items, C.pal));
+  document.querySelector("#palette .pi.here")?.scrollIntoView({ block: "nearest" });
+}
+
+// an item run: a page, a link opened, an act, a command
+function palette_run(k: number): void {
+  const item = Cockpit.palette(v, $<HTMLInputElement>("#pq").value)[k];
+  $<HTMLDialogElement>("#palette").close();
+  if (item === undefined) {
+    return;
+  }
+  const go = item.go;
+  if ("href" in go) {
+    location.hash = go.href;
+  } else if ("open" in go) {
+    window.open(go.open, "_blank", "noopener");
+  } else if ("act" in go) {
+    act(go.act);
+  } else if (go.cmd === "new-agent") {
+    new_agent();
+  } else {
+    document.body.classList.toggle("focus");
+  }
+  draw(true);
+}
+
 // the inbox drawn; entered, its stamps then kept to tell what changed
 // the next time; the cursor kept on a row still there
 function inbox_bars(): void {
@@ -1263,13 +1360,23 @@ function page_click(ev: MouseEvent): void {
   // New agent: the chat, its box saying /agent (Enter starts it); Focus:
   // the side columns put away, or back
   if (el.closest("[data-new-agent]") !== null) {
-    location.hash = "#chat";
-    BOX.value = "/agent ";
-    BOX.dispatchEvent(new Event("input"));
-    setTimeout(() => BOX.focus());
+    new_agent();
   }
   if (el.closest("[data-focus]") !== null) {
     document.body.classList.toggle("focus");
+  }
+  if (el.closest("[data-palette]") !== null) {
+    palette_open();
+  }
+  if (el.closest("[data-add-machine]") !== null) {
+    $("#machine").showPopover();
+  }
+  // a space: the inbox, filtered by its repo
+  const space = el.closest<HTMLElement>("[data-space]")?.dataset.space;
+  if (space !== undefined) {
+    C.filter = space;
+    $<HTMLInputElement>("#pfilter").value = space;
+    location.hash = "#inbox";
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));
@@ -1295,7 +1402,9 @@ function page_change(ev: Event): void {
 
 // the inbox's keys (not while typing, but Esc in the filter)
 function page_keys(ev: KeyboardEvent): void {
-  if (View.view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey) {
+  // a popover or the palette open: its keys (Esc closes it)
+  const over = document.querySelector(":popover-open, dialog[open]") !== null;
+  if (View.view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey || over) {
     return;
   }
   const filter = $<HTMLInputElement>("#pfilter");

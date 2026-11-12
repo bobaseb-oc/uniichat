@@ -175,3 +175,51 @@ test("home: the apps' lines and the activity, newest first", () => {
   expect(Cockpit.home_apps(v)).toMatchObject({ inbox: "1 PR failing", questions: "1 open" });
   expect(Cockpit.home_activity(v).map((n) => n.title)).toEqual(["new", "old"]);
 });
+
+// Sidebar, bar, palette
+// ---------------------
+
+test("the sidebar's agents: Unii's own, grouped by their ticket (none last), each with how many under it", () => {
+  const v = View.view_new();
+  v.crew = [
+    agent("A", "working", { title: "review o/r#5 AO-10852" }), agent("B", "done", { title: "AO-10852 docs" }),
+    agent("C", "working", { title: "triage" }), agent("D", "working", { parent: "A" }), agent("E", "failed", { title: "AO-1201 fix" }),
+  ];
+  expect(Cockpit.side_groups(v, NOW).map((g) => [g.ticket, g.agents.map((a) => a.name + (a.under ? "+" + a.under : ""))])).toEqual([
+    ["AO-10852", ["A+1", "B"]], ["AO-1201", ["E"]], [null, ["C"]],
+  ]);
+});
+
+test("the spaces: repos the agents, the worktrees and the device work in, each with its agents and worktrees to clean", () => {
+  const v = View.view_new();
+  v.crew = [agent("A", "working", { repos: ["web", "api"] }), agent("B", "done", { repos: ["web"] })];
+  v.inbox = inbox({ clean: [{ repo: "api", path: "/p", branch: "b", changes: 2, merged: false }, { repo: "ops", path: "/q", branch: "c", changes: 0, merged: true }] });
+  v.status = { device: "mac", dir: "legion", branch: "main", spend: null, stale: false };
+  expect(Cockpit.side_spaces(v)).toEqual([
+    { repo: "web", agents: 2, clean: 0 }, { repo: "api", agents: 1, clean: 1 }, { repo: "ops", agents: 0, clean: 1 }, { repo: "legion", agents: 0, clean: 0 },
+  ]);
+});
+
+test("the bar: need you, working, ready (waiting for a word), done", () => {
+  const v = View.view_new();
+  v.crew = [agent("A", "working"), agent("A2", "working"), agent("B", "waiting"), agent("C", "done"), agent("D", "stopped"), agent("E", "failed")];
+  expect(Cockpit.bar_text(v)).toBe("1 need you · 2 working · 1 ready · 2 done");
+});
+
+test("the palette: pages, commands, agents and inbox PRs; the words typed filter them, all must match, best first", () => {
+  const v = View.view_new();
+  v.crew = [agent("Mgr", "working", { title: "Fix flaky login" })];
+  v.inbox = inbox({ reviews: [pr({ number: 5, title: "Add custodians" })] });
+  const all = Cockpit.palette(v, "");
+  expect(all.slice(0, 6).map((i) => i.label)).toEqual(["Home", "Inbox", "Chat", "Crew", "Routines", "Digest"]);
+  expect(all.some((i) => i.label === "New agent…")).toBe(true);
+  expect(all.find((i) => i.label === "Fix flaky login")!.go).toEqual({ href: "#crew/Mgr" });
+  expect(all.find((i) => i.label === "Add custodians")!.go).toEqual({ open: "https://github.com/o/r/pull/5" });
+  expect(Cockpit.palette(v, "flaky log").map((i) => i.label)).toEqual(["Fix flaky login"]);
+  expect(Cockpit.palette(v, "inb")[0].label).toBe("Inbox"); // a label starting so first
+  expect(Cockpit.palette(v, "plan mode")[0].go).toEqual({ act: { $: "Mode", mode: "plan" } });
+  expect(Cockpit.palette(v, "zzz")).toEqual([]);
+  expect(Cockpit.palette(v, "inbox page").map((i) => i.label)).toEqual(["Inbox"]); // every word, not any
+  v.crew.push(agent("T", "working", { title: "Inbox triage" }));
+  expect(Cockpit.palette(v, "inbox").map((i) => i.label)).toEqual(["Inbox", "Inbox triage", "Refresh the inbox"]); // starting so first
+});

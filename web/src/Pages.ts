@@ -138,3 +138,39 @@ export function home_html(v: View.View, now: Date, routines = 0): string[] {
     + `<section><h3>Activity</h3>${Cockpit.home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
+
+// Sidebar, palette
+// ================
+
+const MARK: Record<string, string> = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+
+// the sidebar: search or run (the palette), the pages (the one shown
+// marked; the inbox's count, the crew's pill), Unii's agents by ticket,
+// the spaces (a click: the inbox filtered by it), Settings, Add machine
+export function side_html(v: View.View, mode: View.Mode, now: number): string[] {
+  const here = (m: string) => (m === mode ? ` class="here"` : "");
+  const n = (k: number) => (k === 0 ? "" : `<span class="n">${k}</span>`);
+  const working = v.crew.filter((c) => c.status === "working").length;
+  const pages = [
+    ["home", "Home", 0], ["inbox", "Inbox", Cockpit.inbox_badge(v.inbox)], ["chat", "Chat", (v.questions ?? []).length],
+    ["crew", "Crew", working], ["routines", "Routines", 0], ["digest", "Digest", 0],
+  ] as const;
+  const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
+  const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
+  const groups = Cockpit.side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc(g.ticket ?? "–")}</div>${g.agents.map((a) =>
+    `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
+  const count = v.crew.filter((c) => c.parent === "main").length;
+  const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${Cockpit.side_spaces(v).map((s) =>
+    `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}</section>`;
+  const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
+  return [search, nav, agents, spaces, foot];
+}
+
+// the palette's list: each item, the one picked marked; none: a word
+export function palette_html(items: Cockpit.Item[], sel: number): string[] {
+  if (items.length === 0) {
+    return [`<p class="meta pnone">Nothing matches.</p>`];
+  }
+  return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+}

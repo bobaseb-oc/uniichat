@@ -469,10 +469,19 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       "/agent " in the box, Archive → the server's refusal (demo agents aren't its own). Fixed after
       looking: `.chip` was the account page's button class (renamed hchip). Mutants 11/11; suite 279
       pass, 3 known; tsc 208 → 208.
-- [ ] C5 sidebar, palette, bar: a left column (search or run, page icons with badges, agents grouped
+- [x] C5 sidebar, palette, bar: a left column (search or run, page icons with badges, agents grouped
       by ticket key, spaces with their worktrees, Settings, Add machine), Ctrl+P / ⌘⇧P palette
       (pages, agents, PRs, commands, New agent), focus mode, bottom bar need you · working · ready ·
       done. → verify: tests, e2e with real clicks on the demo crew in every mode.
+      Proof: Cockpit.test 4 more (agents by ticket, none last, with how many under; spaces from agents,
+      worktrees and the device; the bar; the palette: every word must match, labels starting so first,
+      pages / commands / agents / PRs and what each does); Pages.test (side + palette markup, escaped).
+      E2E on the demo: sidebar 230 px on Home and Chat, hidden on the Crew (its own column), Ctrl+K →
+      palette, "inbo" → Inbox + Refresh, Enter → #inbox, a space → the inbox filtered, Add machine →
+      its popover, Esc closes it (found: the inbox's Esc key swallowed it; page keys now stand aside
+      while a popover or the palette is open), the sidebar's search button, a click on an item. Mutants
+      8/8 after 3 tests were tightened (bar counts equal, "any word" and "starts first" untested, a space
+      only a worktree has). Suite 284 pass, 3 known; tsc 56 → 56.
 - [ ] C6 routines: a prompt that starts a native agent daily at a time / every N hours / on a new
       review request (Herdr's inbox automations); kept in view.json, run by the server's tick, listed
       and toggled on #routines and by /routine in the terminal. → verify: Server tests with a fake

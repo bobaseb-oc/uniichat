@@ -5,7 +5,7 @@
 // filtered, and what changed since the user looked.
 
 import type { Clean, Inbox, Note, Pr, Ticket } from "./Inbox.ts";
-import { view_needs, view_questions, type Crew, type View } from "./View.ts";
+import { view_needs, view_questions, type Act, type Crew, type View } from "./View.ts";
 
 // a row: its key (a link, a path), its kind, what it says, under it (repo#n,
 // a ticket's status), a tag and its tone, its age; what it is
@@ -222,4 +222,84 @@ export function home_apps(v: View, routines = 0): { inbox: string; questions: st
 // the inbox's notifications, newest first, the 12 last
 export function home_activity(v: View): Note[] {
   return [...(v.inbox?.notes ?? [])].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
+}
+
+// Sidebar, bar, palette
+// =====================
+
+// a group of the sidebar's agents: their ticket (null: none), them
+export type SideAgent = { name: string; title: string; status: Crew["status"]; age: string; under: number };
+export type SideGroup = { ticket: string | null; agents: SideAgent[] };
+
+// Unii's own agents by the ticket in their title, in the order first
+// seen; those with none last
+export function side_groups(v: View, now: number): SideGroup[] {
+  const { working, done } = home_cards(v, now);
+  const groups = new Map<string | null, SideAgent[]>();
+  for (const c of [...working, ...done].sort((a, b) => v.crew.findIndex((x) => x.name === a.name) - v.crew.findIndex((x) => x.name === b.name))) {
+    const list = groups.get(c.ticket) ?? [];
+    list.push({ name: c.name, title: c.title, status: c.status, age: c.age, under: c.under });
+    groups.set(c.ticket, list);
+  }
+  const all = [...groups.entries()].map(([ticket, agents]) => ({ ticket, agents }));
+  return [...all.filter((g) => g.ticket !== null), ...all.filter((g) => g.ticket === null)];
+}
+
+// a space: a repo, the agents on it, its worktrees to clean up
+export type Space = { repo: string; agents: number; clean: number };
+
+// the repos the crew, the inbox's worktrees and the device work in
+export function side_spaces(v: View): Space[] {
+  const repos: string[] = [];
+  const add = (r: string) => r !== "" && !repos.includes(r) && repos.push(r);
+  v.crew.forEach((c) => (c.repos ?? []).forEach(add));
+  (v.inbox?.clean ?? []).forEach((c) => add(c.repo));
+  if (v.status) {
+    add(v.status.dir);
+  }
+  return repos.map((repo) => ({
+    repo, agents: v.crew.filter((c) => (c.repos ?? []).includes(repo)).length, clean: (v.inbox?.clean ?? []).filter((c) => c.repo === repo).length,
+  }));
+}
+
+// the bottom bar: "1 need you · 1 working · 1 ready · 2 done" (ready:
+// waiting for a word)
+export function bar_text(v: View): string {
+  const n = (...s: Crew["status"][]) => v.crew.filter((c) => s.includes(c.status)).length;
+  return needing(v) + " need you · " + n("working") + " working · " + n("waiting") + " ready · " + n("done", "stopped") + " done";
+}
+
+// a palette item: what it says, a hint, what choosing it does (a link, a
+// page opened, an act)
+export type Go = { href: string } | { open: string } | { act: Act } | { cmd: "new-agent" | "focus" };
+export type Item = { label: string; hint: string; go: Go };
+
+const PAGE_ITEMS: Item[] = [
+  { label: "Home", hint: "page · g h", go: { href: "#home" } },
+  { label: "Inbox", hint: "page · g i", go: { href: "#inbox" } },
+  { label: "Chat", hint: "page · g m", go: { href: "#chat" } },
+  { label: "Crew", hint: "page · g c", go: { href: "#crew" } },
+  { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
+  { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
+  { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
+  { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
+  { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
+  { label: "Plan mode", hint: "command · only reading till a plan is approved", go: { act: { $: "Mode", mode: "plan" } } },
+  { label: "Auto mode", hint: "command · a reviewer checks each change", go: { act: { $: "Mode", mode: "auto" } } },
+  { label: "Full mode", hint: "command · hooks only", go: { act: { $: "Mode", mode: "full" } } },
+];
+
+// what the palette offers for the words typed: each word must be in the
+// label or the hint (any case); labels that start with the first word first
+export function palette(v: View, q: string): Item[] {
+  const agents = v.crew.map((c): Item => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
+  const prs = [...(v.inbox?.reviews ?? []), ...(v.inbox?.mine ?? [])].map((p): Item => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
+  const all = [...PAGE_ITEMS, ...agents, ...prs];
+  const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
+  if (words.length === 0) {
+    return all;
+  }
+  const hits = all.filter((i) => words.every((w) => (i.label + " " + i.hint).toLowerCase().includes(w)));
+  const starts = (i: Item) => i.label.toLowerCase().startsWith(words[0]);
+  return [...hits.filter(starts), ...hits.filter((i) => !starts(i))];
 }

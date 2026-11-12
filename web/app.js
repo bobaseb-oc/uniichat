@@ -2412,6 +2412,61 @@ function home_apps(v, routines = 0) {
 function home_activity(v) {
   return [...v.inbox?.notes ?? []].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
 }
+function side_groups(v, now) {
+  const { working, done } = home_cards(v, now);
+  const groups = new Map;
+  for (const c of [...working, ...done].sort((a, b) => v.crew.findIndex((x) => x.name === a.name) - v.crew.findIndex((x) => x.name === b.name))) {
+    const list = groups.get(c.ticket) ?? [];
+    list.push({ name: c.name, title: c.title, status: c.status, age: c.age, under: c.under });
+    groups.set(c.ticket, list);
+  }
+  const all = [...groups.entries()].map(([ticket, agents]) => ({ ticket, agents }));
+  return [...all.filter((g) => g.ticket !== null), ...all.filter((g) => g.ticket === null)];
+}
+function side_spaces(v) {
+  const repos = [];
+  const add = (r) => r !== "" && !repos.includes(r) && repos.push(r);
+  v.crew.forEach((c) => (c.repos ?? []).forEach(add));
+  (v.inbox?.clean ?? []).forEach((c) => add(c.repo));
+  if (v.status) {
+    add(v.status.dir);
+  }
+  return repos.map((repo) => ({
+    repo,
+    agents: v.crew.filter((c) => (c.repos ?? []).includes(repo)).length,
+    clean: (v.inbox?.clean ?? []).filter((c) => c.repo === repo).length
+  }));
+}
+function bar_text(v) {
+  const n = (...s) => v.crew.filter((c) => s.includes(c.status)).length;
+  return needing(v) + " need you · " + n("working") + " working · " + n("waiting") + " ready · " + n("done", "stopped") + " done";
+}
+var PAGE_ITEMS = [
+  { label: "Home", hint: "page · g h", go: { href: "#home" } },
+  { label: "Inbox", hint: "page · g i", go: { href: "#inbox" } },
+  { label: "Chat", hint: "page · g m", go: { href: "#chat" } },
+  { label: "Crew", hint: "page · g c", go: { href: "#crew" } },
+  { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
+  { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
+  { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
+  { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
+  { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
+  { label: "Plan mode", hint: "command · only reading till a plan is approved", go: { act: { $: "Mode", mode: "plan" } } },
+  { label: "Auto mode", hint: "command · a reviewer checks each change", go: { act: { $: "Mode", mode: "auto" } } },
+  { label: "Full mode", hint: "command · hooks only", go: { act: { $: "Mode", mode: "full" } } }
+];
+function palette(v, q) {
+  const agents = v.crew.map((c) => ({ label: c.title ?? c.name, hint: "agent " + c.name + " · " + c.status, go: { href: "#crew/" + encodeURIComponent(c.name) } }));
+  const prs = [...v.inbox?.reviews ?? [], ...v.inbox?.mine ?? []].map((p) => ({ label: p.title, hint: p.repo + "#" + p.number + " · " + p.state, go: { open: p.url } }));
+  const all = [...PAGE_ITEMS, ...agents, ...prs];
+  const words = q.toLowerCase().split(/\s+/).filter((w) => w !== "");
+  if (words.length === 0) {
+    return all;
+  }
+  const hits = all.filter((i) => words.every((w) => (i.label + " " + i.hint).toLowerCase().includes(w)));
+  const starts = (i) => i.label.toLowerCase().startsWith(words[0]);
+  return [...hits.filter(starts), ...hits.filter((i) => !starts(i))];
+}
 
 // web/src/Pages.ts
 var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
@@ -2503,6 +2558,34 @@ function home_html(v, now, routines = 0) {
   const side = `<div class="hside"><section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
+var MARK = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
+function side_html(v, mode, now) {
+  const here = (m) => m === mode ? ` class="here"` : "";
+  const n = (k) => k === 0 ? "" : `<span class="n">${k}</span>`;
+  const working = v.crew.filter((c) => c.status === "working").length;
+  const pages = [
+    ["home", "Home", 0],
+    ["inbox", "Inbox", inbox_badge(v.inbox)],
+    ["chat", "Chat", (v.questions ?? []).length],
+    ["crew", "Crew", working],
+    ["routines", "Routines", 0],
+    ["digest", "Digest", 0]
+  ];
+  const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
+  const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
+  const groups = side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc(g.ticket ?? "–")}</div>${g.agents.map((a) => `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
+  const count = v.crew.filter((c) => c.parent === "main").length;
+  const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${side_spaces(v).map((s) => `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}</section>`;
+  const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
+  return [search, nav, agents, spaces, foot];
+}
+function palette_html(items, sel) {
+  if (items.length === 0) {
+    return [`<p class="meta pnone">Nothing matches.</p>`];
+  }
+  return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+}
 
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
@@ -2551,7 +2634,8 @@ var C = {
   filter: "",
   page: "",
   before: null,
-  stamped: -1
+  stamped: -1,
+  pal: 0
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2693,6 +2777,20 @@ function chat() {
   document.addEventListener("change", page_change);
   $("#page").addEventListener("click", page_click);
   $("#picks").addEventListener("click", page_click);
+  $("#side").addEventListener("click", page_click);
+  document.addEventListener("keydown", palette_keys);
+  $("#pq").oninput = () => {
+    C.pal = 0;
+    palette_draw();
+  };
+  $("#palette").addEventListener("click", (ev) => {
+    const k = ev.target.closest("[data-pi]")?.dataset.pi;
+    if (k !== undefined) {
+      palette_run(Number(k));
+    } else if (ev.target === $("#palette")) {
+      $("#palette").close();
+    }
+  });
   $("#pfilter").oninput = (ev) => {
     C.filter = ev.target.value;
     draw(true);
@@ -3319,6 +3417,7 @@ function crew_bars() {
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = view_questions(v).length + view_waiting(v);
   markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox)));
+  side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
     $("#crew").hidden = true;
@@ -3434,6 +3533,75 @@ function page_bars(mode) {
   C.page = mode;
   return true;
 }
+function side_bars(mode) {
+  const side = !P.guest && mode !== "crew";
+  document.body.classList.toggle("sidemode", side);
+  $("#side").hidden = !side;
+  markup($("#side"), side ? side_html(v, mode, Date.now()) : []);
+  $("#bar").textContent = P.guest ? "" : bar_text(v);
+}
+function new_agent() {
+  location.hash = "#chat";
+  BOX.value = "/agent ";
+  BOX.dispatchEvent(new Event("input"));
+  setTimeout(() => BOX.focus());
+}
+function palette_keys(ev) {
+  const dialog = $("#palette");
+  const opens = (ev.metaKey || ev.ctrlKey) && (ev.key === "k" || ev.key === "K" || ev.key.toLowerCase() === "p" && (ev.ctrlKey || ev.shiftKey));
+  if (opens && !P.guest) {
+    ev.preventDefault();
+    palette_open();
+    return;
+  }
+  if (!dialog.open) {
+    return;
+  }
+  const items = palette(v, $("#pq").value);
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    C.pal = Math.max(0, Math.min(items.length - 1, C.pal + (ev.key === "ArrowDown" ? 1 : -1)));
+    palette_draw();
+  } else if (ev.key === "Enter") {
+    ev.preventDefault();
+    palette_run(C.pal);
+  }
+}
+function palette_open() {
+  const dialog = $("#palette");
+  $("#pq").value = "";
+  C.pal = 0;
+  palette_draw();
+  if (!dialog.open) {
+    dialog.showModal();
+  }
+  $("#pq").focus();
+}
+function palette_draw() {
+  const items = palette(v, $("#pq").value);
+  markup($("#palette .plist"), palette_html(items, C.pal));
+  document.querySelector("#palette .pi.here")?.scrollIntoView({ block: "nearest" });
+}
+function palette_run(k) {
+  const item = palette(v, $("#pq").value)[k];
+  $("#palette").close();
+  if (item === undefined) {
+    return;
+  }
+  const go = item.go;
+  if ("href" in go) {
+    location.hash = go.href;
+  } else if ("open" in go) {
+    window.open(go.open, "_blank", "noopener");
+  } else if ("act" in go) {
+    act(go.act);
+  } else if (go.cmd === "new-agent") {
+    new_agent();
+  } else {
+    document.body.classList.toggle("focus");
+  }
+  draw(true);
+}
 function inbox_bars() {
   const now = Date.now();
   const all = inbox_sections(v.inbox, v.crew, "", now);
@@ -3471,13 +3639,22 @@ function page_click(ev) {
     C.cursor = row;
   }
   if (el.closest("[data-new-agent]") !== null) {
-    location.hash = "#chat";
-    BOX.value = "/agent ";
-    BOX.dispatchEvent(new Event("input"));
-    setTimeout(() => BOX.focus());
+    new_agent();
   }
   if (el.closest("[data-focus]") !== null) {
     document.body.classList.toggle("focus");
+  }
+  if (el.closest("[data-palette]") !== null) {
+    palette_open();
+  }
+  if (el.closest("[data-add-machine]") !== null) {
+    $("#machine").showPopover();
+  }
+  const space = el.closest("[data-space]")?.dataset.space;
+  if (space !== undefined) {
+    C.filter = space;
+    $("#pfilter").value = space;
+    location.hash = "#inbox";
   }
   if (el.closest("[data-open-picks]") !== null) {
     [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));
@@ -3499,7 +3676,8 @@ function page_change(ev) {
   draw(true);
 }
 function page_keys(ev) {
-  if (view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey) {
+  const over = document.querySelector(":popover-open, dialog[open]") !== null;
+  if (view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey || over) {
     return;
   }
   const filter = $("#pfilter");

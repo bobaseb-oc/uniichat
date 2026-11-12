@@ -109,3 +109,27 @@ test("home: greeting, stats, agent cards with their acts, apps, activity", async
   expect(html).toContain("data-new-agent");
   expect(html).toContain("data-focus");
 });
+
+// the sidebar (Pages.side_html): search or run, the pages (the shown one
+// marked, the inbox's count), agents by ticket, spaces (a click filters
+// the inbox), Settings, Add machine; the palette's list, its pick marked
+test("the sidebar and the palette", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  v.crew = [{ name: "A", parent: "main", tier: "worker", model: "m", status: "working", since: NOW, title: "AO-1 <fix>", repos: ["web"] }];
+  v.inbox = inbox({ reviews: [pr()] });
+  const side = Pages.side_html(v, "inbox", NOW).join("");
+  expect(side).toContain("data-palette");
+  expect(side).toContain('href="#inbox" class="here"');
+  expect(side).toContain('<span class="n">1</span>');
+  expect(side).toContain("AO-1 &lt;fix&gt;");
+  expect(side).toContain('href="#crew/A"');
+  expect(side).toContain('data-space="web"');
+  expect(side).toContain('data-go="/account"');
+  expect(side).toContain("data-add-machine");
+  const items = Cockpit.palette(v, "");
+  const list = Pages.palette_html(items, 1).join("");
+  expect(list).toContain('class="pi here" data-pi="1"');
+  expect(list).toContain("AO-1 &lt;fix&gt;");
+  expect(Pages.palette_html([], 0).join("")).toContain("Nothing matches");
+});
