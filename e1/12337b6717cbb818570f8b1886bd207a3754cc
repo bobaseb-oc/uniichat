@@ -1,0 +1,16 @@
+Tools.ts
+  h_3b3487e502aca2 175-177
+prompt.txt
+  h_3b3487e502aca2 37-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e112337b6717cbb818570f8b1886bd207a3754cc",
+  "prompts": {},
+  "humans": {
+    "h_3b3487e502aca2": {
+      "author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
