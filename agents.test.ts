@@ -374,6 +374,18 @@ test("a payer's refusal holds the agents' trees with the chat's: asked once, bui
   Memory.stop(mem);
 }));
 
+// the manager Claude Code workers report to (only managers start them):
+// stopped, so a report waits in its chat and starts no call of its own
+// (one revived elsewhere runs on); the reports it was told
+function manager(tools: any): string {
+  const name = Memory.agent_new(tools.mem);
+  const role = { $: "sub", tier: "manager", effort: null, model: null } as const;
+  Memory.agent_push(tools.mem, name, "note", Tools.note(role, "main"));
+  tools.agents.set(name, { name, parent: "main", role, call: null, live: [], calls: {}, stop: true, replies: [], user: false });
+  return name;
+}
+const told = (mem: any, boss: string) => (Memory.agent(mem, boss) ?? []).filter((r: any) => r.kind === "work").map((r: any) => r.text);
+
 // a Claude Code worker (spawn as "claude") asks the person first: no job
 // on its device till approved; approved, its job runs there and its
 // transcript and result reach its tree and its starter; denied, it says so
@@ -381,14 +393,15 @@ test("a Claude Code worker asks first; approved it runs on its device and report
   const mem = Memory.load(DIR + "/claude", () => SHARE);
   const reports: string[] = [];
   const tools = served(mem, reports);
+  const boss = manager(tools);
   const sent: any[] = [];
   Tools.attach(tools, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
   const go = new AbortController().signal;
-  const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the bug"], as: "claude", device: "mac", dir: "~/repos/x" }, go, "1");
+  const out = await Tools.call(tools, boss, "spawn", { tasks: ["fix the bug"], as: "claude", device: "mac", dir: "~/repos/x" }, go, "1");
   expect(out.fail).toBe(false);
-  const name = [...tools.agents.keys()][0];
+  const name = [...tools.agents.keys()][1];
   // labelled by its dir's folder, as no repos were given
-  expect(Tools.crew(tools)[0]).toMatchObject({ name, tier: "claude", status: "asking", repos: ["x"] });
+  expect(Tools.crew(tools)[1]).toMatchObject({ name, parent: boss, tier: "claude", status: "asking", repos: ["x"] });
   expect(sent.filter((m) => m.$ === "job")).toEqual([]);
 
   expect(Tools.approve(tools, name, true)).toContain("Approved");
@@ -396,20 +409,21 @@ test("a Claude Code worker asks first; approved it runs on its device and report
   const job = sent.find((m) => m.$ === "job");
   expect(job.job).toMatchObject({ name: "claude", cwd: name, input: { dir: "~/repos/x" } });
   expect(job.job.input.task).toContain("fix the bug");
-  expect(Tools.crew(tools)[0].status).toBe("working");
+  expect(Tools.crew(tools)[1].status).toBe("working");
   Tools.done(tools, "mac", job.id, { text: "unii: on it\n\nResult ($0.0100): fixed it", fail: false });
-  await until(() => reports.length === 1);
-  expect(reports[0]).toContain("fixed it");
+  await until(() => told(mem, boss).length === 1);
+  expect(told(mem, boss)[0]).toContain("fixed it");
   expect(Memory.agent(mem, name)!.some((r) => r.kind === "echo" && r.text.includes("unii: on it"))).toBe(true);
   expect(Tools.approve(tools, name, true)).toContain("No Claude Code worker");
 
-  await Tools.call(tools, "main", "spawn", { tasks: ["another"], as: "claude", device: "mac" }, go, "2");
-  const other = [...tools.agents.keys()][1];
+  await Tools.call(tools, boss, "spawn", { tasks: ["another"], as: "claude", device: "mac" }, go, "2");
+  const other = [...tools.agents.keys()][2];
   Tools.approve(tools, other, false);
-  await until(() => reports.length === 2);
-  expect(reports[1]).toContain("denied");
+  await until(() => told(mem, boss).length === 2);
+  expect(told(mem, boss)[1]).toContain("denied");
   expect(sent.filter((m) => m.$ === "job")).toHaveLength(1);
-  expect((await Tools.call(tools, "main", "spawn", { tasks: ["x"], as: "claude", device: "nowhere" }, go, "3")).fail).toBe(true);
+  expect((await Tools.call(tools, boss, "spawn", { tasks: ["x"], as: "claude", device: "nowhere" }, go, "3")).fail).toBe(true);
+  expect(reports).toEqual([]);
   Tools.close(tools);
   Memory.stop(mem);
 }));
@@ -423,8 +437,9 @@ test("a Claude Code worker running as its chat moves still reports, from the new
   const here = served(mem, reports);
   const sent: any[] = [];
   Tools.attach(here, "t1", "mac", "u", { send: (m) => sent.push(m), live: () => true, computer: false, work: "~/w" });
-  await Tools.call(here, "main", "spawn", { tasks: ["long work"], as: "claude", device: "mac" }, new AbortController().signal, "1");
-  const name = [...here.agents.keys()][0];
+  const boss = manager(here);
+  await Tools.call(here, boss, "spawn", { tasks: ["long work"], as: "claude", device: "mac" }, new AbortController().signal, "1");
+  const name = [...here.agents.keys()][1];
   Tools.approve(here, name, true);
   await until(() => sent.some((m) => m.$ === "job"));
   const id = sent.find((m) => m.$ === "job").id;
@@ -434,8 +449,8 @@ test("a Claude Code worker running as its chat moves still reports, from the new
   Tools.take(there, moved, (() => { throw new Error("no call moves"); }) as any);
   expect(Tools.crew(there).find((c) => c.name === name)?.status).toBe("working");
   Tools.done(there, "mac", id, { text: "Result ($0.0100): done there", fail: false });
-  await until(() => reports.length === 1);
-  expect(reports[0]).toContain("done there");
+  await until(() => told(mem, boss).length === 1);
+  expect(told(mem, boss)[0]).toContain("done there");
   Tools.close(there);
   Memory.stop(mem);
 }));

@@ -237,3 +237,22 @@ test("todo: an agent sets its own checklist, cleaned and capped, in the crew; ma
   expect((await todo("Wkr", { items: [] })).fail).toBe(false);
   expect(Tools.crew(tools).find((c) => c.name === "Wkr")!.todo).toBeUndefined();
 });
+
+// Claude Code workers are started by managers only: the orchestrator's
+// spawn offers no "claude" (nor its device and dir), and refuses one sent
+// anyway, starting nothing; a manager's spawn still offers it
+test("the orchestrator can't spawn a Claude Code worker; a manager can", async () => {
+  const tools = Tools.serve({} as any, { change: () => {} } as any);
+  tools.agents.set("Mgr", { name: "Mgr", parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any);
+  const spawn = (who: string) => Tools.list(tools, who).find((t) => t.name === "spawn")!.schema as any;
+  expect(spawn("main").properties.as.enum).not.toContain("claude");
+  expect(spawn("main").properties.as.description).not.toContain("claude");
+  expect(spawn("main").properties.device).toBeUndefined();
+  expect(spawn("main").properties.dir).toBeUndefined();
+  expect(spawn("Mgr").properties.as.enum).toContain("claude");
+  expect(spawn("Mgr").properties.device).toBeDefined();
+  const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix it"], as: "claude", device: "mac" }, new AbortController().signal, "1");
+  expect(out.fail).toBe(true);
+  expect(out.text).toContain("manager");
+  expect([...tools.agents.keys()]).toEqual(["Mgr"]);
+});

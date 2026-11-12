@@ -330,7 +330,7 @@ const OWN: Spec[] = [
   ...SEARCH,
 ];
 const SPAWN = "Start one agent per task, in parallel, and return their names at once. Each one's report reaches you as a message \"[Name] report\" when it finishes. An agent sees its task, the user's instructions and the latest lines of your chat, and can zoom into the rest, but knows what you want only from its task: say all it needs.";
-const AS = "manager (the default): splits its task among workers of its own and checks their work, for a task of several parts; worker: does its task itself, for a part; claude: Claude Code itself does it on a device (give device, and dir: the repo there), in auto mode, once the user approves it: for coding work in a repo.";
+const AS = "manager (the default): splits its task among workers of its own and checks their work, for a task of several parts; worker: does its task itself, for a part.";
 const AS_WORKER = "worker (the default): does its task itself; claude: Claude Code itself does it on a device (give device, and dir: the repo there), in auto mode, once the user approves it: for coding work in a repo.";
 const MODEL = { type: "string", enum: LABELS, description: "The model it runs on: its tier's (the default) or a cheaper one below it, as for a simple task." };
 function boss(main: boolean): Spec[] {
@@ -339,11 +339,13 @@ function boss(main: boolean): Spec[] {
     repos: { type: "array", items: { type: "array", items: STR }, description: "The repos each task's work touches, in order: shown with its label." },
   };
   const tasks = { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as their model does." }, model: MODEL };
-  const as = { as: { type: "string", enum: main ? ["manager", "worker", "claude"] : ["worker", "claude"], description: main ? AS : AS_WORKER } };
+  // Claude Code workers come from managers only (as: "claude"), so only
+  // theirs offers it, and the device and dir it needs
+  const as = { as: { type: "string", enum: main ? ["manager", "worker"] : ["worker", "claude"], description: main ? AS : AS_WORKER } };
   const where = { device: { type: "string", description: "For claude: the device to run on, one listed under Devices." }, dir: { type: "string", description: "For claude: the directory there to work in (a repo); by default its own work dir." } };
   const whom = main ? "an agent (a manager, a worker or a computer task)" : "a worker of yours";
   return [
-    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...labels, ...as, ...where }, ["tasks"]),
+    spec("spawn", main ? SPAWN : SPAWN.replace("Start one agent", "Start one worker"), { ...tasks, ...labels, ...as, ...(main ? {} : where) }, ["tasks"]),
     spec("tell", "Send a message to " + whom + ", by name. One at work reads it between its tool calls, and its report answers it; an idle one goes on from its chat, and its reply reaches you as a message \"[Name] reply\".", { name: STR, message: STR }, ["name", "message"]),
     spec("stop", "Stop " + (main ? "agents" : "workers of yours") + " at work, by name, at once, and the workers under them: their request and tool call running are cut, which telling them to stop can't do. Each one's report, so far, reaches you as a message. A stopped one can be told to go on later.", { names: { type: "array", items: STR } }, ["names"]),
   ];
@@ -552,6 +554,9 @@ export namespace Tools {
           return { text: "No effort " + effort + "; one of " + EFFORTS.join(", ") + ".", fail: true };
         }
         const labels = Tools.labels(args.titles, args.repos);
+        if (args.as === "claude" && who === "main") {
+          return { text: "Unii doesn't start Claude Code workers: tell a manager to start one (spawn as: \"claude\"), saying why.", fail: true };
+        }
         if (args.as === "claude") {
           return Tools.claude(tools, who, String(args.device ?? ""), (args.tasks ?? []).map(String), args.dir ? String(args.dir) : null, labels);
         }
