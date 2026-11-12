@@ -113,7 +113,9 @@ export function picks_html(sections: Cockpit.Section[], picks: Set<string>, clau
 // Home
 // ====
 
-function card_html(c: Cockpit.Card, archive: boolean): string {
+// a card: Archive only for an agent no longer at work
+function card_html(c: Cockpit.Card): string {
+  const archive = !["working", "waiting", "asking"].includes(c.status);
   const chips = [c.repo, c.ticket, c.pr].filter((x): x is string => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
   const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
   const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
@@ -132,7 +134,7 @@ export function home_html(v: View.View, now: Date): string[] {
   const stats = `<div class="stats">${Cockpit.home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
   const { working, done } = Cockpit.home_cards(v, now.getTime());
   const group = (title: string, cards: Cockpit.Card[], archive: boolean) => cards.length === 0 ? "" :
-    `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
+    `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map(card_html).join("")}</div>`;
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
   const apps = Cockpit.home_apps(v);
   const app = (href: string, name: string, line: string) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;

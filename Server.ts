@@ -1708,7 +1708,7 @@ export namespace Chat {
         continue;
       }
       for (const p of mine.filter((x) => !seen.includes(x.url)).slice(0, Chat.AUTOS)) {
-        const label = { title: "review " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+        const label = Chat.pr_label(p, "review");
         const task = Chat.review_task(p, "review", false) + (r.task === "" ? "" : "\n\nAlso: " + r.task);
         const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, task, true, label);
         Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ": " + label.title + ".");
@@ -1774,6 +1774,11 @@ export namespace Chat {
     return claude ? "Start one Claude Code worker (spawn as: \"claude\") on the user's device to do this, in a checkout of " + p.repo + ", and report what it did: " + task : task;
   }
 
+  // a PR agent's label: "review o/r#5", its repo
+  export function pr_label(p: Inbox.Pr, how: "review" | "fix"): { title: string; repos: string[] } {
+    return { title: how + " " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+  }
+
   // the cockpit's Review / Fix: each PR the inbox holds to its own agent
   // (a native worker; a manager running a Claude Code worker if asked),
   // started by the user; any PR not in the inbox refuses them all
@@ -1801,7 +1806,7 @@ export namespace Chat {
     // wait on its latest lines' summaries), so none waits
     const tier = claude ? "manager" : "worker";
     for (const p of found as Inbox.Pr[]) {
-      const label = { title: msg.how + " " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+      const label = Chat.pr_label(p, msg.how);
       const name = Tools.start(chat.tools, "main", { $: "sub", tier, effort: null, model: null }, Chat.review_task(p, msg.how, claude), true, label);
       Chat.note(chat, "Started " + name + " (by the user): " + label.title);
     }

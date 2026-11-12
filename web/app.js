@@ -2626,7 +2626,8 @@ function picks_html(sections, picks, claude) {
   const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
   return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
 }
-function card_html(c, archive) {
+function card_html(c) {
+  const archive = !["working", "waiting", "asking"].includes(c.status);
   const chips = [c.repo, c.ticket, c.pr].filter((x) => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
   const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
   const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
@@ -2638,7 +2639,7 @@ function home_html(v, now) {
   const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(home_greeting(now))}</h2><p class="meta">${esc(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
   const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
   const { working, done } = home_cards(v, now.getTime());
-  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map((c) => card_html(c, archive)).join("")}</div>`;
+  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map(card_html).join("")}</div>`;
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
   const apps = home_apps(v);
   const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
