@@ -18,6 +18,8 @@ import * as Import from "../../Import.ts";
 import { theme_css } from "../../Theme.ts";
 import * as View from "../../View.ts";
 import * as Html from "./Html.ts";
+import * as Pages from "./Pages.ts";
+import * as Cockpit from "../../Cockpit.ts";
 
 // Types
 // =====
@@ -100,6 +102,22 @@ const P = {
   watching : "",
   watched  : null as WebSocket | null,
   qhide    : false, // the questions' pane put away (the header's ? button)
+};
+
+// the cockpit's pages' own (Pages.InboxUi): sections shut, the cursor's
+// row, rows picked, the row whose details show, Claude Code ticked, the
+// filter; the page shown last, the inbox's stamps when it was entered
+// (what changed since the user looked), the inbox last stamped
+const C = {
+  shut    : new Set<string>(),
+  cursor  : null as string | null,
+  picks   : new Set<string>(),
+  detail  : null as string | null,
+  claude  : false,
+  filter  : "",
+  page    : "",
+  before  : null as Record<string, string> | null,
+  stamped : -1,
 };
 
 function $<T extends HTMLElement>(sel: string): T {
@@ -270,6 +288,14 @@ function chat(): void {
   $("#questions").onsubmit = answer;
   $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
+  document.addEventListener("keydown", page_keys);
+  document.addEventListener("change", page_change);
+  $("#page").addEventListener("click", page_click);
+  $("#picks").addEventListener("click", page_click);
+  $<HTMLInputElement>("#pfilter").oninput = (ev) => {
+    C.filter = (ev.target as HTMLInputElement).value;
+    draw(true);
+  };
   crew_route();
   // a phone's keyboard up or down: the bottom stays in sight, if at it
   visualViewport!.onresize = () => draw(true);
@@ -526,6 +552,7 @@ function hear(msg: View.Server): void {
   }
   if (DEMO !== null && msg.$ === "state") {
     v.crew = DEMO;
+    v.inbox ??= Demo.demo_inbox(Date.now());
     Demo.demo_pulses(DEMO).forEach((p) => View.view_hear(v, p));
   }
   const now = View.view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
@@ -1029,7 +1056,7 @@ function bars(): void {
 function crew_route(): void {
   const r = View.view_route(location.hash);
   const at = v.page?.name ?? null;
-  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+  if (r.mode !== "crew" ? at !== null && P.crew : r.name !== at) {
     act({ $: "Goto", name: r.name });
   }
   P.crew = r.mode === "crew";
@@ -1044,7 +1071,15 @@ function crew_bars(): void {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = View.view_questions(v).length + View.view_waiting(v);
-  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode));
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox)));
+  if (page_bars(mode)) {
+    $("#questions").hidden = true;
+    $("#crew").hidden = true;
+    $("#grid").hidden = true;
+    document.body.classList.remove("qmode", "gridmode");
+    watch();
+    return;
+  }
   // the question backlog, beside the chat, till put away
   const pane = !crew && asked > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
@@ -1133,17 +1168,156 @@ function answer(ev: SubmitEvent): void {
   input.value = "";
 }
 
-// g, then c or m within a second: the Crew, or the chat
+// g, then c, m, h, i, r or d within a second: the Crew, the chat, Home,
+// the Inbox, Routines, the Digest
 function crew_keys(ev: KeyboardEvent): void {
   const typing = ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null;
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat" } as Record<string, string>)[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest" } as Record<string, string>)[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
   }
+}
+
+// Cockpit
+// =======
+// The cockpit's pages by location.hash (View.PAGES: #home, #inbox, ...),
+// drawn by Pages.ts from Cockpit.ts in #page, the log and the box put away.
+// The inbox: j/k (or the arrows) move, space folds, Tab shows details,
+// Enter opens, v picks, / filters, Esc drops the picks.
+
+// the page shown (none: the chat or the Crew); whether one is
+function page_bars(mode: View.Mode): boolean {
+  const page = (View.PAGES as readonly string[]).includes(mode) && !P.guest;
+  document.body.classList.toggle("pagemode", page);
+  $("#page").hidden = !page;
+  $("#log").hidden = page;
+  $("#pfilter").hidden = mode !== "inbox";
+  if (!page) {
+    C.page = "";
+    $("#picks").hidden = true;
+    return false;
+  }
+  if (mode === "inbox") {
+    inbox_bars();
+  } else {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), [`<div class="phead"><h2>${mode[0].toUpperCase() + mode.slice(1)}</h2></div>`]);
+    markup($("#page .pbody"), []);
+  }
+  C.page = mode;
+  return true;
+}
+
+// the inbox drawn; entered, its stamps then kept to tell what changed
+// the next time; the cursor kept on a row still there
+function inbox_bars(): void {
+  const now = Date.now();
+  const all = Cockpit.inbox_sections(v.inbox, v.crew, "", now);
+  if (C.page !== "inbox") {
+    const kept_ = localStorage.getItem(kept("inbox-seen"));
+    C.before = kept_ === null ? null : JSON.parse(kept_);
+  }
+  if (v.inbox !== null && v.inbox.at !== C.stamped) {
+    C.stamped = v.inbox.at;
+    localStorage.setItem(kept("inbox-seen"), JSON.stringify(Cockpit.inbox_seen(all)));
+  }
+  const sections = Cockpit.inbox_sections(v.inbox, v.crew, C.filter, now);
+  const keys = new Set(sections.flatMap((x) => x.rows.map((r) => r.key)));
+  C.cursor = C.cursor !== null && keys.has(C.cursor) ? C.cursor : null;
+  markup($("#page .ptop"), [Pages.inbox_head(v.inbox, Cockpit.inbox_changed(all, C.before))]);
+  markup($("#page .pbody"), Pages.inbox_html(sections, C));
+  const picks = Pages.picks_html(sections, C.picks, C.claude);
+  $("#picks").hidden = picks === "";
+  markup($("#picks"), picks === "" ? [] : [picks]);
+}
+
+// the inbox's sections now, as drawn (filtered)
+function inbox_now(): Cockpit.Section[] {
+  return Cockpit.inbox_sections(v.inbox, v.crew, C.filter, Date.now());
+}
+
+// a click in a page: a section folded, a row put under the cursor (again:
+// its details shown or hidden), the picks opened or dropped; a Review's
+// act (main.ts click) drops the picks it took
+function page_click(ev: MouseEvent): void {
+  const el = ev.target as HTMLElement;
+  const fold = el.closest<HTMLElement>("[data-fold]")?.dataset.fold;
+  if (fold !== undefined && !C.shut.delete(fold)) {
+    C.shut.add(fold);
+  }
+  const row = el.closest<HTMLElement>("[data-row]")?.dataset.row;
+  if (row !== undefined && el.closest("a, button, input") === null) {
+    if (C.cursor === row) {
+      C.detail = C.detail === row ? null : row;
+    }
+    C.cursor = row;
+  }
+  if (el.closest("[data-open-picks]") !== null) {
+    [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));
+  }
+  const review = el.closest<HTMLElement>("[data-act]")?.dataset.act;
+  if (el.closest("[data-drop-picks]") !== null || (review !== undefined && JSON.parse(review).$ === "Review" && el.closest("#picks") !== null)) {
+    C.picks.clear();
+  }
+  draw(true);
+}
+
+// a row picked or not; Claude Code ticked or not
+function page_change(ev: Event): void {
+  const el = ev.target as HTMLInputElement;
+  if (el.dataset.pick !== undefined) {
+    el.checked ? C.picks.add(el.dataset.pick) : C.picks.delete(el.dataset.pick);
+  }
+  if (el.dataset.claude !== undefined) {
+    C.claude = el.checked;
+  }
+  draw(true);
+}
+
+// the inbox's keys (not while typing, but Esc in the filter)
+function page_keys(ev: KeyboardEvent): void {
+  if (View.view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const filter = $<HTMLInputElement>("#pfilter");
+  if (ev.target === filter) {
+    if (ev.key === "Escape" || ev.key === "Enter") {
+      filter.blur();
+    }
+    return;
+  }
+  if (ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null) {
+    return;
+  }
+  const sections = inbox_now();
+  const rows = sections.filter((x) => !C.shut.has(x.id)).flatMap((x) => x.rows.filter((r) => !r.old));
+  const at = rows.findIndex((r) => r.key === C.cursor);
+  const row = rows[at];
+  const keys: Record<string, () => void> = {
+    j: () => (C.cursor = rows[Math.min(at + 1, rows.length - 1)]?.key ?? null),
+    k: () => (C.cursor = rows[Math.max(at - 1, 0)]?.key ?? null),
+    " ": () => {
+      const s = sections.find((x) => x.rows.some((r) => r.key === C.cursor))?.id;
+      s !== undefined && !C.shut.delete(s) && C.shut.add(s);
+    },
+    Tab: () => (C.detail = C.detail === C.cursor ? null : C.cursor),
+    Enter: () => row?.url && window.open(row.url, "_blank", "noopener"),
+    v: () => row?.pr && (C.picks.delete(row.key) || C.picks.add(row.key)),
+    "/": () => filter.focus(),
+    Escape: () => C.picks.clear(),
+  };
+  const key = ({ ArrowDown: "j", ArrowUp: "k" } as Record<string, string>)[ev.key] ?? ev.key;
+  if (keys[key] === undefined) {
+    return;
+  }
+  ev.preventDefault();
+  keys[key]();
+  draw(true);
+  document.querySelector(`[data-row="${CSS.escape(C.cursor ?? "")}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
 // the first row in sight with a first message (no row inside it): that

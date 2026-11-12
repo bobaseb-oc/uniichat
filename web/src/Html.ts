@@ -254,16 +254,17 @@ export function focus_html(v: View.View): string {
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
 
-// Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
+// Home | Inbox (its count) | Chat | Crew, the one shown marked; the pill (View.view_pill) on Crew,
 // marked when someone needs the person
 // and the questions open (a button showing or hiding their pane)
 // and the permission mode's chip (a click: the next)
-export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm): string[] {
+export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm, inbox = 0): string[] {
   const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
+  const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
   const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
+  return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 
 export function tabs_html(tabs: View.Tab[]): string[] {

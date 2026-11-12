@@ -121,7 +121,11 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 
 // the web's two modes, and the agent in focus (location.hash: #chat,
 // #crew, #crew/<name>)
-export type Mode = "chat" | "crew";
+export type Mode = "chat" | "crew" | Deck;
+// the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
+// (not "Page": an agent's page is)
+export const PAGES = ["home", "inbox", "routines", "digest"] as const;
+export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
 // it (any depth), them by status
@@ -213,6 +217,7 @@ export type Client =
   | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean } // a device's report
   | { $: "inbox"; inbox: Inbox } // a device's inbox (Device.device_inbox)
   | { $: "fetch" } // the inbox read anew by the devices
+  | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
   | { $: "consent"; n: number; yes: boolean } // a waiting call (auto's reviewer couldn't check it): run it, or not
   | { $: "plan"; yes: boolean; mode?: Perm; text?: string }; // the plan waiting: approved (then this mode), or sent back with feedback
 
@@ -248,6 +253,8 @@ export type Act =
   | { $: "Mode"; mode?: Perm }                  // the mode set; none: the next (Shift+Tab, the chip)
   | { $: "Verdict"; yes: boolean; mode?: Perm; text?: string } // the plan waiting: approved into a mode, or sent back
   | { $: "Consent"; n: number; yes: boolean }   // a waiting call: run it, or not
+  | { $: "Review"; prs: string[]; how: "review" | "fix"; claude?: boolean } // PRs of the inbox, each to a Legion agent (claude: a Claude Code worker under a manager)
+  | { $: "Fetch" }                              // the inbox read anew (its Refresh)
 
 // what a page draws, top to bottom
 export type Row =
@@ -591,6 +598,12 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Consent": {
       return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Review": {
+      return act.prs.length === 0 ? [] : [{ $: "review", prs: act.prs, how: act.how, claude: act.claude === true }];
+    }
+    case "Fetch": {
+      return [{ $: "fetch" }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -1030,15 +1043,18 @@ export function view_drop(v: View, arg: string): Act | string {
 
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
+  }
+  if (m[1] !== "crew") {
+    return { mode: m[1] as Deck, name: null };
   }
   return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
 }
 
 export function view_hash(mode: Mode, name: string | null): string {
-  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+  return mode !== "crew" ? "#" + mode : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 
 // the Claude Code workers waiting for the person's approval, by name

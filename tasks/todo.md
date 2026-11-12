@@ -434,13 +434,26 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       Mutants 11/11 killed (one test added for a review asked of another user). Suite 253 pass, 3
       known fails; tsc: only Bun/process type noise added. Sent as its own "inbox" message (on change,
       and on join), not in every state: ~60 KB.
-- [ ] C2 inbox page (#inbox): sections Alerts / Reviews / Your PRs / Tickets / To clean up, folding,
+- [x] C2 inbox page (#inbox): sections Alerts / Reviews / Your PRs / Tickets / To clean up, folding,
       counts, filter, j/k/space/tab/enter, a details card (PR body, checks), "N changed since you
       looked", refresh, open, File issue (GitHub's new-issue page). → verify: Html/View tests, e2e.
-- [ ] C3 pick and act: pick rows (v, "pick all review requests"), a panel with Review / Fix / Open /
+- [x] C3 pick and act: pick rows (v, "pick all review requests"), a panel with Review / Fix / Open /
       Drop picks; Review and Fix start one native worker per PR (labelled repo#n, its repo), or with
       "Claude Code" ticked a manager told to use a Claude Code worker; plan mode still gates them.
       → verify: Server act tests (spawns, labels, caps, unknown PR refused), View tests.
+      Proof (C2+C3, one commit): Cockpit.test 10/10 (routes, sections, you/team/bot, old folded for
+      reviews only, tags/tones, alerts from failed agents + failing PRs + CI notes, Jira's note, filter,
+      changed-since-looked, badge, acts); Pages.test 6/6 (escaping, fold, row acts, cursor, picks, details
+      card, picked panel, head); Html.test (Home/Inbox in the switch). Server fixture: a native worker per
+      PR labelled "review o/r#5" (repos [r]), a manager with claude, user-started (no turn), only the
+      inbox's PRs, at most 10, tasks say "post nothing" / "don't push". Found on the way: started
+      through Tools.begin, the second PR waited on the first one's note being summarized; PR agents
+      now start with Tools.start, their task standing alone. E2E (headless Chrome, real clicks/keys,
+      demo inbox): 5 sections, 22 rows, badge 5, fold/unfold, j/k cursor, click → details, Tab, v → "1
+      picked", Drop picks, Fix → the server's refusal toast (demo PRs aren't the server's), filter,
+      Chat and back. Fixed after looking: links styled as `.open` blocks (class clash), PR rows of
+      the user folded as old. Mutants 15/15 killed (one test added for the acts). Suite 271 pass, 3
+      known fails; tsc 194 → 194 (a `Page` name clash with View's agent page caught and renamed Deck).
 - [ ] C4 home (#home): greeting, "N need you · M working", stat cards (agents, reviews for you, your
       PRs to fix, merged this week, agent spend today / 7 days), Working and Done cards (repo,
       ticket, PR, est. cost, age; Go to agent, Archive, Archive all), Apps (Inbox, Questions, Routines),

@@ -32,6 +32,9 @@
 <!-- the Crew grid (#crew, no agent in focus): a tile per agent Unii started -->
 <main id="grid" hidden></main>
 <main id="account" hidden></main>
+<!-- the cockpit's pages (#home, #inbox, #routines, #digest: web/src/Pages.ts); the inbox's picked rows -->
+<main id="page" hidden><div class="ptop"></div><input id="pfilter" type="search" placeholder="Filter rows… a repo, a ticket, a title, a branch" aria-label="filter the inbox" hidden><div class="pbody"></div></main>
+<aside id="picks" hidden></aside>
 <footer>
   <div id="toast" hidden></div>
   <nav id="pick"></nav>

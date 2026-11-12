@@ -37,6 +37,66 @@ function demo_pulses(crew) {
     last: c.status === "done" ? "Done: 12 tests pass." : c.status === "failed" ? "failed: the build broke" : ""
   }));
 }
+function demo_inbox(now) {
+  const at = (h) => new Date(now - h * 3600000).toISOString();
+  const pr = (repo, number, title, state, h, over = {}) => ({
+    repo,
+    number,
+    title,
+    url: "https://github.com/" + repo + "/pull/" + number,
+    author: "ann",
+    bot: false,
+    updated: at(h),
+    add: 40 + number,
+    del: number % 30,
+    files: 1 + number % 9,
+    branch: "feat/" + number,
+    state,
+    failing: state === "failing" ? ["ruff", "unit"] : [],
+    body: `## Why
+The ` + title.toLowerCase() + `.
+
+## What
+- one change
+- its test`,
+    you: true,
+    ...over
+  });
+  return {
+    at: now,
+    login: "you",
+    merged: 28,
+    today: 1,
+    errors: [],
+    reviews: [
+      pr("acme/agent-foundations", 766, "AO-10787 Add the 8 new custodians to the playbooks", "pending", 1, { author: "yiqun" }),
+      pr("acme/agent-foundations", 760, "AO-10106 Regenerate the position catalogue", "blocked", 120, { author: "bob" }),
+      pr("acme/agent-foundations", 757, "AO-10753 Add the reasoning-model profile tables", "ready", 0.3, { author: "yiqun", you: false }),
+      pr("acme/infra", 2879, "Bump the transform image to 2.0.1", "ready", 600, { author: "dependabot", bot: true, you: false }),
+      pr("acme/web", 120, "Old: the login page copy", "blocked", 24 * 90, { author: "cat" })
+    ],
+    mine: [
+      pr("acme/modeling", 78, "AO-10668 Remove the lazy config sync", "blocked", 140),
+      pr("acme/agent-foundations", 820, "Sonnet for worker subagents, Opus for the chief of staff", "failing", 4),
+      pr("acme/modeling", 76, "AO-10136 Carry the root cause keys into attribution", "ready", 280),
+      pr("acme/etl", 345, "AO-383 Draft the attribution mapping", "draft", 24 * 60),
+      pr("acme/etl", 229, "PIM-4033 Split the loader", "conflicts", 24 * 40)
+    ],
+    tickets: [
+      { key: "AO-10852", title: "Explainer results as the agent payload", status: "In Progress", priority: "High", updated: at(2), url: "" },
+      { key: "AO-10874", title: "Determinism configs tie to a root cause", status: "To Do", priority: "Medium", updated: at(30), url: "" }
+    ],
+    clean: [
+      { repo: "agent-foundations", path: "/repos/agent-foundations/.wt/summaries", branch: "ao-10668-two-sentence-summaries", changes: 16, merged: false },
+      { repo: "agent-foundations", path: "/repos/agent-foundations/.wt/attribution", branch: "ao-10767-nav-attribution", changes: 0, merged: true }
+    ],
+    notes: [
+      { kind: "ci", title: "CI failed on 1.x", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/actions", at: at(1), unread: true },
+      { kind: "review", title: "Review requested: AO-10787", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/pull/766", at: at(0.5), unread: true },
+      { kind: "assign", title: "Assigned: AO-10914 Inconsistent root cause", repo: "acme/agent-foundations", url: "https://github.com/acme/agent-foundations/issues/914", at: at(1.2), unread: false }
+    ]
+  };
+}
 
 // Clip.ts
 var CAP = 30000;
@@ -1105,6 +1165,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
+var PAGES = ["home", "inbox", "routines", "digest"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1163,6 +1224,7 @@ function view_new() {
     pulses: new Map,
     heard: null,
     alerted: new Map,
+    inbox: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1182,9 +1244,14 @@ function view_hear(v, msg) {
       v.turn = msg.turn;
       return v.fold === null ? [] : [{ $: "root" }];
     }
+    case "inbox": {
+      v.inbox = msg.inbox;
+      return [];
+    }
     case "zoom":
     case "jobs":
-    case "job": {
+    case "job":
+    case "fetch": {
       return [];
     }
     case "root": {
@@ -1350,6 +1417,12 @@ function view_act(v, act) {
     }
     case "Consent": {
       return [{ $: "consent", n: act.n, yes: act.yes }];
+    }
+    case "Review": {
+      return act.prs.length === 0 ? [] : [{ $: "review", prs: act.prs, how: act.how, claude: act.claude === true }];
+    }
+    case "Fetch": {
+      return [{ $: "fetch" }];
     }
     case "Expand": {
       if (!v.expanded.delete(act.name)) {
@@ -1590,14 +1663,17 @@ function view_questions(v) {
   return [...v.questions ?? []].sort((a, b) => a.id - b.id);
 }
 function view_route(hash) {
-  const m = /^#(chat|crew)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
+  }
+  if (m[1] !== "crew") {
+    return { mode: m[1], name: null };
   }
   return { mode: "crew", name: m[2] === undefined ? null : decodeURIComponent(m[2]) };
 }
 function view_hash(mode, name) {
-  return mode === "chat" ? "#chat" : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
+  return mode !== "crew" ? "#" + mode : "#crew" + (name === null ? "" : "/" + encodeURIComponent(name));
 }
 function ago(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -2012,12 +2088,13 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill, asked = 0, perm) {
+function mode_html(mode, pill, asked = 0, perm, inbox = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
+  const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
   const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
-  return [`<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
+  return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
 function tabs_html(tabs) {
   return tabs.map((tab) => {
@@ -2142,6 +2219,204 @@ function span_html(s) {
   }
 }
 
+// web/src/Pages.ts
+var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
+function act_html2(act) {
+  return ` data-act="${esc(JSON.stringify(act))}"`;
+}
+function link_html(url, text = "↗") {
+  return url === "" ? "" : `<a class="go" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
+}
+var FIXABLE = ["failing", "conflicts", "changes"];
+function row_acts(s, r) {
+  if (r.pr === undefined) {
+    return "";
+  }
+  if (s === "reviews") {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "review" })} title="a Legion agent reviews it">Review</button>`;
+  }
+  if ((s === "mine" || s === "alerts") && FIXABLE.includes(r.pr.state)) {
+    return `<button class="ra"${act_html2({ $: "Review", prs: [r.pr.url], how: "fix" })} title="a Legion agent fixes it">Fix</button>`;
+  }
+  return "";
+}
+function detail_html(r) {
+  const p = r.pr;
+  if (p === undefined) {
+    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc(r.clean.path)}</code></div>`;
+  }
+  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc).join(" · ")}</p>`;
+  const body = p.body.trim() === "" ? "" : `<div class="body">${esc(p.body)}</div>`;
+  return `<div class="ibd"><p class="meta">${esc(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
+}
+function row_html2(s, r, ui) {
+  const here = ui.cursor === r.key ? " here" : "";
+  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
+  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc(r.tag)}</span>`;
+  const open2 = ui.detail === r.key ? detail_html(r) : "";
+  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
+  return `<div class="ibr ${r.kind}${here}" data-row="${esc(r.key)}">${pick}<span class="sub">${esc(r.sub)}</span><span class="t">${esc(r.title)}</span>${tag}<span class="age">${esc(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
+}
+function inbox_html(sections, ui) {
+  return sections.map((s) => {
+    const shut = ui.shut.has(s.id);
+    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc(s.title)}</b><span class="meta">${esc(s.sub)}</span><span class="n">${s.count}</span></button>`;
+    const fresh = s.rows.filter((r) => !r.old).map((r) => row_html2(s.id, r, ui)).join("");
+    const old = s.rows.filter((r) => r.old);
+    const folded = old.length === 0 ? "" : `<details class="old"><summary>${old.length} older than 60 days</summary>${old.map((r) => row_html2(s.id, r, ui)).join("")}</details>`;
+    const note = s.note === undefined ? "" : `<p class="ibnote">${esc(s.note)}</p>`;
+    return `<section class="ibs${shut ? " shut" : ""}" data-sec="${s.id}">${head}<div class="ibrows">${note}${fresh}${folded}</div></section>`;
+  });
+}
+function inbox_head(inbox, changed) {
+  const issue = `<a class="pbtn" href="${esc(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
+  const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })} title="the devices read it anew">Refresh</button>`;
+  if (inbox === null) {
+    return `<div class="phead"><h2>Inbox</h2><p class="meta">No device has read the inbox yet: open a terminal (legion) or run legion device; it reads with your gh, acli and git.</p>${refresh}${issue}</div>`;
+  }
+  const at = new Date(inbox.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc(e)}</p>`).join("");
+  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
+}
+function picks_html(sections, picks, claude) {
+  if (picks.size === 0) {
+    return "";
+  }
+  const rows = sections.flatMap((s) => s.rows.filter((r) => picks.has(r.key) && r.pr !== undefined).map((r) => [s.id, r]));
+  const keys = [...new Set(rows.map(([, r]) => r.key))];
+  const reviews = keys.filter((k) => rows.some(([s, r]) => r.key === k && s === "reviews"));
+  const fixes = keys.filter((k) => rows.some(([s, r]) => r.key === k && s !== "reviews" && FIXABLE.includes(r.pr.state)));
+  const go = (label, prs, how) => prs.length === 0 ? "" : `<button class="pbtn"${act_html2(claude ? { $: "Review", prs, how, claude: true } : { $: "Review", prs, how })}>${label} ${prs.length}</button>`;
+  const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
+  return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
+}
+
+// Cockpit.ts
+var DAY2 = 86400000;
+var OLD2 = 60 * DAY2;
+function age(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d";
+}
+var TAGS = {
+  failing: ["Failing", "bad"],
+  blocked: ["Blocked: needs an approving review", "warn"],
+  ready: ["Ready to merge", "ok"],
+  conflicts: ["Conflicts: resolve them first", "bad"],
+  draft: ["Draft: mark it ready for review", ""],
+  pending: ["Checks running", ""],
+  changes: ["Changes requested", "warn"]
+};
+function since(at, now) {
+  const t = Date.parse(at);
+  return Number.isNaN(t) ? "" : age(now - t);
+}
+function pr_row(p, now) {
+  const [tag, tone] = TAGS[p.state];
+  const failing = p.state === "failing" && p.failing.length > 0 ? tag + ": " + p.failing.join(", ") : tag;
+  const t = Date.parse(p.updated);
+  return {
+    key: p.url,
+    kind: "pr",
+    title: p.title,
+    sub: p.repo + "#" + p.number,
+    url: p.url,
+    tag: failing,
+    tone,
+    age: since(p.updated, now),
+    stamp: p.updated,
+    old: !Number.isNaN(t) && now - t > OLD2,
+    pr: p
+  };
+}
+function plural(n, one, many = one + "s") {
+  return n + " " + (n === 1 ? one : many);
+}
+function holds(r, filter) {
+  const f = filter.trim().toLowerCase();
+  if (f === "") {
+    return true;
+  }
+  return [r.title, r.sub, r.pr?.branch ?? "", r.pr?.author ?? "", r.ticket?.key ?? "", r.clean?.branch ?? "", r.tag].some((x) => x.toLowerCase().includes(f));
+}
+function inbox_sections(inbox, crew, filter, now) {
+  if (inbox === null) {
+    return [];
+  }
+  const failed = crew.filter((c) => c.status === "failed").map((c) => ({
+    key: "agent:" + c.name,
+    kind: "agent",
+    title: (c.title ?? c.name) + " failed",
+    sub: c.name,
+    url: "",
+    tag: "Agent failed",
+    tone: "bad",
+    age: age(now - c.since),
+    stamp: String(c.since),
+    agent: c.name
+  }));
+  const red = inbox.mine.filter((p) => p.state === "failing").map((p) => ({ ...pr_row(p, now), key: "alert:" + p.url, title: "Failing: " + p.title }));
+  const notes = inbox.notes.filter((n) => n.kind === "ci" || n.kind === "security").map((n) => ({
+    key: "note:" + n.url + n.at,
+    kind: "note",
+    title: n.title,
+    sub: n.repo,
+    url: n.url,
+    tag: n.kind === "ci" ? "CI" : "Security",
+    tone: "bad",
+    age: since(n.at, now),
+    stamp: n.at,
+    note: n
+  }));
+  const reviews = inbox.reviews.map((p) => pr_row(p, now));
+  const you = inbox.reviews.filter((p) => p.you).length;
+  const bots = inbox.reviews.filter((p) => p.bot).length;
+  const tickets = (inbox.tickets ?? []).map((t) => ({
+    key: "ticket:" + t.key,
+    kind: "ticket",
+    title: t.key + " " + t.title,
+    sub: t.status + (t.priority ? " · " + t.priority : ""),
+    url: t.url,
+    tag: t.status,
+    tone: "",
+    age: since(t.updated, now),
+    stamp: t.updated,
+    ticket: t
+  }));
+  const clean = inbox.clean.map((c) => {
+    const where = c.repo + " " + (c.branch ?? "(detached)");
+    const title = c.changes > 0 ? plural(c.changes, "uncommitted change") + " in " + (c.merged ? "merged " : "") + where : "worktree of merged " + where + ": nothing left in it";
+    return { key: "clean:" + c.path, kind: "clean", title, sub: c.path, url: "", tag: c.merged ? "Merged" : "Uncommitted", tone: c.changes > 0 ? "warn" : "", age: "", stamp: String(c.changes), clean: c };
+  });
+  const section = (id, title, rows, sub = "", note) => {
+    const kept = rows.filter((r) => holds(r, filter));
+    return note === undefined ? { id, title, count: kept.length, sub, rows: kept } : { id, title, count: kept.length, sub, rows: kept, note };
+  };
+  const jira = inbox.tickets === null ? inbox.errors.find((e) => e.startsWith("acli")) ?? "Jira isn't read on this device (acli)." : undefined;
+  return [
+    section("alerts", "Alerts", [...failed, ...red, ...notes]),
+    section("reviews", "Reviews", reviews, you + " for you · " + (inbox.reviews.length - you - bots) + " team · " + plural(bots, "bot")),
+    section("mine", "Your PRs", inbox.mine.map((p) => ({ ...pr_row(p, now), old: false }))),
+    section("tickets", "Tickets", tickets, "", jira),
+    section("clean", "To clean up", clean)
+  ];
+}
+function inbox_seen(sections) {
+  return Object.fromEntries(sections.flatMap((s) => s.rows).map((r) => [r.key, r.stamp]));
+}
+function inbox_changed(sections, seen) {
+  if (seen === null) {
+    return 0;
+  }
+  return sections.flatMap((s) => s.rows).filter((r) => seen[r.key] !== r.stamp).length;
+}
+function inbox_badge(inbox) {
+  if (inbox === null) {
+    return 0;
+  }
+  return inbox.reviews.filter((p) => p.you).length + inbox.mine.filter((p) => ["failing", "conflicts", "changes"].includes(p.state)).length;
+}
+
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
 var DESK = matchMedia("(hover: hover)");
@@ -2179,6 +2454,17 @@ var P = {
   watching: "",
   watched: null,
   qhide: false
+};
+var C = {
+  shut: new Set,
+  cursor: null,
+  picks: new Set,
+  detail: null,
+  claude: false,
+  filter: "",
+  page: "",
+  before: null,
+  stamped: -1
 };
 function $(sel) {
   return document.querySelector(sel);
@@ -2316,6 +2602,14 @@ function chat() {
   $("#questions").onsubmit = answer;
   $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
+  document.addEventListener("keydown", page_keys);
+  document.addEventListener("change", page_change);
+  $("#page").addEventListener("click", page_click);
+  $("#picks").addEventListener("click", page_click);
+  $("#pfilter").oninput = (ev) => {
+    C.filter = ev.target.value;
+    draw(true);
+  };
   crew_route();
   visualViewport.onresize = () => draw(true);
   document.onscroll = () => {
@@ -2531,6 +2825,7 @@ function hear(msg) {
   }
   if (DEMO !== null && msg.$ === "state") {
     v.crew = DEMO;
+    v.inbox ??= demo_inbox(Date.now());
     demo_pulses(DEMO).forEach((p) => view_hear(v, p));
   }
   const now = view_pick(v).filter((k) => was.length > 0 && !was.some((w) => w.text === k.text));
@@ -2925,7 +3220,7 @@ function bars() {
 function crew_route() {
   const r = view_route(location.hash);
   const at = v.page?.name ?? null;
-  if (r.mode === "chat" ? at !== null && P.crew : r.name !== at) {
+  if (r.mode !== "crew" ? at !== null && P.crew : r.name !== at) {
     act({ $: "Goto", name: r.name });
   }
   P.crew = r.mode === "crew";
@@ -2936,7 +3231,15 @@ function crew_bars() {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = view_questions(v).length + view_waiting(v);
-  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode));
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox)));
+  if (page_bars(mode)) {
+    $("#questions").hidden = true;
+    $("#crew").hidden = true;
+    $("#grid").hidden = true;
+    document.body.classList.remove("qmode", "gridmode");
+    watch();
+    return;
+  }
   const pane = !crew && asked > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
@@ -3013,11 +3316,127 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
   }
+}
+function page_bars(mode) {
+  const page = PAGES.includes(mode) && !P.guest;
+  document.body.classList.toggle("pagemode", page);
+  $("#page").hidden = !page;
+  $("#log").hidden = page;
+  $("#pfilter").hidden = mode !== "inbox";
+  if (!page) {
+    C.page = "";
+    $("#picks").hidden = true;
+    return false;
+  }
+  if (mode === "inbox") {
+    inbox_bars();
+  } else {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), [`<div class="phead"><h2>${mode[0].toUpperCase() + mode.slice(1)}</h2></div>`]);
+    markup($("#page .pbody"), []);
+  }
+  C.page = mode;
+  return true;
+}
+function inbox_bars() {
+  const now = Date.now();
+  const all = inbox_sections(v.inbox, v.crew, "", now);
+  if (C.page !== "inbox") {
+    const kept_ = localStorage.getItem(kept("inbox-seen"));
+    C.before = kept_ === null ? null : JSON.parse(kept_);
+  }
+  if (v.inbox !== null && v.inbox.at !== C.stamped) {
+    C.stamped = v.inbox.at;
+    localStorage.setItem(kept("inbox-seen"), JSON.stringify(inbox_seen(all)));
+  }
+  const sections = inbox_sections(v.inbox, v.crew, C.filter, now);
+  const keys = new Set(sections.flatMap((x) => x.rows.map((r) => r.key)));
+  C.cursor = C.cursor !== null && keys.has(C.cursor) ? C.cursor : null;
+  markup($("#page .ptop"), [inbox_head(v.inbox, inbox_changed(all, C.before))]);
+  markup($("#page .pbody"), inbox_html(sections, C));
+  const picks = picks_html(sections, C.picks, C.claude);
+  $("#picks").hidden = picks === "";
+  markup($("#picks"), picks === "" ? [] : [picks]);
+}
+function inbox_now() {
+  return inbox_sections(v.inbox, v.crew, C.filter, Date.now());
+}
+function page_click(ev) {
+  const el = ev.target;
+  const fold = el.closest("[data-fold]")?.dataset.fold;
+  if (fold !== undefined && !C.shut.delete(fold)) {
+    C.shut.add(fold);
+  }
+  const row = el.closest("[data-row]")?.dataset.row;
+  if (row !== undefined && el.closest("a, button, input") === null) {
+    if (C.cursor === row) {
+      C.detail = C.detail === row ? null : row;
+    }
+    C.cursor = row;
+  }
+  if (el.closest("[data-open-picks]") !== null) {
+    [...C.picks].forEach((url) => window.open(url, "_blank", "noopener"));
+  }
+  const review = el.closest("[data-act]")?.dataset.act;
+  if (el.closest("[data-drop-picks]") !== null || review !== undefined && JSON.parse(review).$ === "Review" && el.closest("#picks") !== null) {
+    C.picks.clear();
+  }
+  draw(true);
+}
+function page_change(ev) {
+  const el = ev.target;
+  if (el.dataset.pick !== undefined) {
+    el.checked ? C.picks.add(el.dataset.pick) : C.picks.delete(el.dataset.pick);
+  }
+  if (el.dataset.claude !== undefined) {
+    C.claude = el.checked;
+  }
+  draw(true);
+}
+function page_keys(ev) {
+  if (view_route(location.hash).mode !== "inbox" || ev.metaKey || ev.ctrlKey || ev.altKey) {
+    return;
+  }
+  const filter = $("#pfilter");
+  if (ev.target === filter) {
+    if (ev.key === "Escape" || ev.key === "Enter") {
+      filter.blur();
+    }
+    return;
+  }
+  if (ev.target instanceof HTMLElement && ev.target.closest("textarea, input, [contenteditable]") !== null) {
+    return;
+  }
+  const sections = inbox_now();
+  const rows = sections.filter((x) => !C.shut.has(x.id)).flatMap((x) => x.rows.filter((r) => !r.old));
+  const at = rows.findIndex((r) => r.key === C.cursor);
+  const row = rows[at];
+  const keys = {
+    j: () => C.cursor = rows[Math.min(at + 1, rows.length - 1)]?.key ?? null,
+    k: () => C.cursor = rows[Math.max(at - 1, 0)]?.key ?? null,
+    " ": () => {
+      const s = sections.find((x) => x.rows.some((r) => r.key === C.cursor))?.id;
+      s !== undefined && !C.shut.delete(s) && C.shut.add(s);
+    },
+    Tab: () => C.detail = C.detail === C.cursor ? null : C.cursor,
+    Enter: () => row?.url && window.open(row.url, "_blank", "noopener"),
+    v: () => row?.pr && (C.picks.delete(row.key) || C.picks.add(row.key)),
+    "/": () => filter.focus(),
+    Escape: () => C.picks.clear()
+  };
+  const key = { ArrowDown: "j", ArrowUp: "k" }[ev.key] ?? ev.key;
+  if (keys[key] === undefined) {
+    return;
+  }
+  ev.preventDefault();
+  keys[key]();
+  draw(true);
+  document.querySelector(`[data-row="${CSS.escape(C.cursor ?? "")}"]`)?.scrollIntoView({ block: "nearest" });
 }
 function anchor() {
   for (const r of document.querySelectorAll("#log [data-a]")) {

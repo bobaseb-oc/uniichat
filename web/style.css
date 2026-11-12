@@ -516,3 +516,54 @@ header > .imping { display: flex; flex-direction: column; justify-content: cente
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
 @keyframes gone { to { opacity: 0; } }
 @keyframes hold { to { visibility: visible; } }
+
+/* The cockpit's pages (#home, #inbox, #routines, #digest: Pages.ts): a
+   wide column, the box put away; the inbox's sections fold, its rows a
+   line each (what, where, a tag by its tone, its age, its acts), the
+   cursor's marked, its details under it; picked rows' panel at the right */
+body.pagemode footer :is(.composer, #pick, #pics, #tabs) { display: none; }
+#page { width: min(1100px, 100% - 40px); margin: 0 auto; padding: 16px 0 40px; font: 13.5px/20px var(--sans); }
+body.pagemode:has(#picks:not([hidden])) #page { margin-right: calc(var(--crew) + 20px); }
+#page .phead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 10px; }
+#page .phead h2 { margin: 0; font: 600 20px/1.2 var(--brand); }
+#page .phead .meta { flex: 1; margin: 0; }
+#page .phead .err { flex-basis: 100%; margin: 0; color: var(--del); font: 12px/18px var(--mono); }
+#page .meta { color: var(--mid); }
+.pbtn { display: inline-block; padding: 3px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--paper); color: var(--ink); font: 500 12.5px/18px var(--sans); text-decoration: none; cursor: pointer; }
+.pbtn:hover { background: var(--block); }
+#pfilter { width: 100%; margin: 0 0 12px; padding: 7px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--lift); color: inherit; font: inherit; }
+.ibs { border-top: 1px solid var(--hair); }
+.ibt { display: flex; width: 100%; align-items: baseline; gap: 8px; padding: 9px 4px; text-align: left; }
+.ibt:hover { background: var(--block); }
+.ibt .caret { width: 1em; color: var(--mid); }
+.ibt .meta { flex: 1; font-size: 12.5px; }
+.ibt .n { color: var(--mid); font: 500 12px var(--mono); }
+.ibs.shut .ibrows { display: none; }
+.ibrows { padding-bottom: 8px; }
+.ibr { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 3px 6px 3px 26px; border-radius: 6px; }
+.ibr:hover { background: var(--block); }
+.ibr.here { background: var(--hover); box-shadow: inset 2px 0 var(--accent); }
+.ibr .pk { flex: none; width: 14px; margin: 0; }
+.ibr .sub { flex: none; max-width: 32%; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mid); font: 12px var(--mono); }
+.ibr .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ibr .tag { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; border: 1px solid var(--hair); border-radius: 9px; color: var(--mid); font-size: 12px; }
+.ibr .tag.bad { border-color: var(--del); color: var(--del); }
+.ibr .tag.warn { border-color: #d29922; color: #b07a00; }
+.ibr .tag.ok { border-color: var(--add); color: var(--add); }
+.ibr .age { flex: none; width: 3.2em; text-align: right; color: var(--soft); font: 12px var(--mono); }
+.ibr .ra { flex: none; padding: 0 8px; border-radius: 6px; background: var(--block); font-size: 12px; }
+.ibr .ra:hover { background: var(--accent); color: var(--paper); }
+.ibr .go { flex: none; width: 1.4em; text-align: center; color: var(--mid); text-decoration: none; }
+.ibr .go:hover { color: var(--ink); }
+.ibr.clean .sub { order: 3; max-width: 25%; }
+.ibd { margin: 2px 6px 8px 48px; padding: 8px 10px; border-left: 2px solid var(--accent); background: var(--block); border-radius: 0 8px 8px 0; }
+.ibd p { margin: 0 0 4px; }
+.ibd .fail { color: var(--del); font: 12px var(--mono); }
+.ibd .body { max-height: 260px; overflow: auto; white-space: pre-wrap; font: 12.5px/18px var(--sans); }
+.ibnote { margin: 4px 0 4px 26px; color: var(--mid); font: 12px/18px var(--mono); }
+details.old summary { padding: 4px 26px; color: var(--mid); font-size: 12.5px; cursor: pointer; }
+#picks { position: fixed; inset: var(--head) 0 0 auto; z-index: 3; width: var(--crew); overflow-y: auto; padding: 14px 12px; border-left: 1px solid var(--hair); background: var(--paper); font: 13.5px/20px var(--sans); }
+#picks ul { margin: 8px 0; padding-left: 18px; color: var(--mid); font-size: 12.5px; }
+#picks .cc { display: block; margin: 8px 0; font-size: 12.5px; }
+#picks .acts { display: flex; flex-wrap: wrap; gap: 6px; }
+#picks .meta { margin: 2px 0 0; color: var(--mid); font-size: 12.5px; }

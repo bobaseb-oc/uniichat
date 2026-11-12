@@ -1357,6 +1357,9 @@ export namespace Chat {
       case "inbox": {
         return Chat.inboxed(chat, device, msg.inbox);
       }
+      case "review": {
+        return Chat.review(chat, id, msg);
+      }
       case "fetch": {
         Chat.all(chat, { $: "fetch" });
         return {};
@@ -1523,6 +1526,54 @@ export namespace Chat {
     }
     chat.inbox = inbox;
     Chat.all(chat, { $: "inbox", inbox });
+    return {};
+  }
+
+  // the most inbox PRs one Review starts agents for
+  export const REVIEWS = 10;
+
+  // what an agent is told for a PR it reviews or fixes (claude: it's a
+  // manager, to run a Claude Code worker for it); nothing goes to GitHub
+  export function review_task(p: Inbox.Pr, how: "review" | "fix", claude: boolean): string {
+    const it = p.repo + "#" + p.number + " " + JSON.stringify(p.title) + " (" + p.url + "), branch " + p.branch;
+    const why = p.state === "failing" ? "failing checks: " + p.failing.join(", ") : p.state === "conflicts" ? "conflicts with its base" : "changes requested in review";
+    const task = how === "review"
+      ? "Review " + it + ". Read it with `gh pr view` and `gh pr diff` in a checkout of " + p.repo + ", and run its tests if you can. Report: approve, or the blocking findings, each with file:line and why. Post nothing to GitHub: the user posts."
+      : "Fix " + it + ": " + why + ". Work in its own worktree of " + p.repo + " on that branch; make the checks pass, or resolve the conflicts, or answer the review, with tests. Commit there. Don't push or comment on GitHub: report what you changed and the command to push.";
+    return claude ? "Start one Claude Code worker (spawn as: \"claude\") on the user's device to do this, in a checkout of " + p.repo + ", and report what it did: " + task : task;
+  }
+
+  // the cockpit's Review / Fix: each PR the inbox holds to its own agent
+  // (a native worker; a manager running a Claude Code worker if asked),
+  // started by the user; any PR not in the inbox refuses them all
+  export async function review(chat: Chat, id: string, msg: any): Promise<Answer> {
+    const prs: unknown = msg.prs;
+    if (msg.how !== "review" && msg.how !== "fix") {
+      return { error: "A review or a fix." };
+    }
+    if (!Array.isArray(prs) || prs.length === 0 || prs.length > Chat.REVIEWS) {
+      return { error: "Give 1 to " + Chat.REVIEWS + " PRs." };
+    }
+    const held = [...(chat.inbox?.reviews ?? []), ...(chat.inbox?.mine ?? [])];
+    const found = prs.map((url) => held.find((p) => p.url === url));
+    const missing = prs.find((_, k) => found[k] === undefined);
+    if (missing !== undefined) {
+      return { error: "Not in the inbox: " + String(missing).slice(0, 200) + "." };
+    }
+    const refused = await Chat.afford(chat);
+    if (refused !== null) {
+      return refused;
+    }
+    Chat.mark(chat, id, {});
+    const claude = msg.claude === true;
+    // a PR's task stands alone: no brief of the chat (whose view would
+    // wait on its latest lines' summaries), so none waits
+    const tier = claude ? "manager" : "worker";
+    for (const p of found as Inbox.Pr[]) {
+      const label = { title: msg.how + " " + p.repo + "#" + p.number, repos: [p.repo.split("/").pop()!] };
+      const name = Tools.start(chat.tools, "main", { $: "sub", tier, effort: null, model: null }, Chat.review_task(p, msg.how, claude), true, label);
+      Chat.note(chat, "Started " + name + " (by the user): " + label.title);
+    }
     return {};
   }
 

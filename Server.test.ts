@@ -318,6 +318,53 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 
+// PRs of the inbox reviewed or fixed (the cockpit's Review / Fix): a native
+// Legion worker each, labelled by its PR and repo, started by the user (its
+// report takes no turn); with claude, a manager told to run a Claude Code
+// worker; only PRs the inbox holds, at most Chat.REVIEWS at once
+const REVIEW = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { AskAI } = await import(${JSON.stringify(import.meta.dir + "/AskAI.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const { Tools } = await import(${JSON.stringify(import.meta.dir + "/Tools.ts")});
+AskAI.ask = (ask, on) => AskAI.tie(on, ask.bill, () => {}, () => {})[0];
+const asked = [];
+const start = Tools.start;
+Tools.start = (...args) => { asked.push(args[3] + " | user: " + args[4]); return start(...args); };
+const pr = (n, state) => ({ repo: "o/r", number: n, title: "T" + n, url: "https://github.com/o/r/pull/" + n, author: "ann", bot: false, updated: "", add: 1, del: 0, files: 1, branch: "b" + n, state, failing: state === "failing" ? ["ruff"] : [], body: "", you: true });
+await Chat.act(chat, "i0", { $: "inbox", inbox: { at: 1, login: "me", reviews: [pr(5, "ready")], mine: [pr(6, "failing")], merged: 0, today: 0, tickets: null, clean: [], notes: [], errors: [] } }, "mac");
+const unknown = await Chat.act(chat, "r0", { $: "review", prs: ["https://github.com/o/r/pull/99"], how: "review", claude: false }, "");
+const odd = await Chat.act(chat, "r1", { $: "review", prs: ["https://github.com/o/r/pull/5"], how: "merge", claude: false }, "");
+const many = await Chat.act(chat, "r2", { $: "review", prs: Array.from({ length: 11 }, () => "https://github.com/o/r/pull/5"), how: "review", claude: false }, "");
+const review = await Chat.act(chat, "r3", { $: "review", prs: ["https://github.com/o/r/pull/5"], how: "review", claude: false }, "");
+const fix = await Chat.act(chat, "r4", { $: "review", prs: ["https://github.com/o/r/pull/6"], how: "fix", claude: true }, "");
+const crew = Chat.state(chat).crew.map((c) => ({ tier: c.tier, parent: c.parent, title: c.title, repos: c.repos }));
+console.log(JSON.stringify({ unknown: "error" in unknown, odd: "error" in odd, many: "error" in many, review, fix, crew, asked }));
+process.exit(0);
+`;
+
+test("inbox PRs reviewed or fixed: a native worker each (a manager with a Claude Code worker if asked); only the inbox's", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/review.ts", REVIEW);
+  const proc = Bun.spawn([process.execPath, dir + "/review.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out).toMatchObject({ unknown: true, odd: true, many: true, review: {}, fix: {} });
+  expect(out.crew).toEqual([
+    { tier: "worker", parent: "main", title: "review o/r#5", repos: ["r"] },
+    { tier: "manager", parent: "main", title: "fix o/r#6", repos: ["r"] },
+  ]);
+  expect(out.asked.length).toBe(2);
+  expect(out.asked[0]).toContain("Review o/r#5 \"T5\" (https://github.com/o/r/pull/5)");
+  expect(out.asked[0]).toContain("Post nothing to GitHub");
+  expect(out.asked[1]).toContain("failing checks: ruff");
+  expect(out.asked[1]).toContain("spawn as: \"claude\"");
+  expect(out.asked[1]).toContain("Don't push");
+  expect(out.asked.every((t: string) => t.endsWith(" | user: true"))).toBe(true); // the user's: its report takes no turn
+});
+
 // A call waiting for the user (auto's reviewer couldn't check it): in the
 // state; the user's yes or no answers it; an unknown one is refused
 const CONSENT = `
