@@ -187,6 +187,16 @@ body.crewmode #tabs { display: none; }
 #crew .x { padding: 0 6px; border-radius: 6px; color: var(--soft); }
 #crew .x:hover { color: var(--ink); background: var(--hover); }
 #crew .x.yes:hover { color: var(--add); }
+/* the focus's lane (Html.lane_html): a mark per event at its time */
+#crew .lane { position: relative; height: 18px; margin: -4px 0 12px; border-radius: 9px; background: var(--block); }
+#crew .mk { position: absolute; top: 3px; width: 6px; height: 12px; margin-left: -3px; padding: 0; border-radius: 3px; background: var(--mid); }
+#crew .mk.told { background: var(--accent); }
+#crew .mk.tool { background: var(--ink); }
+#crew .mk.words { background: var(--add); }
+#crew .mk.spawn { width: 2px; margin-left: -1px; top: 1px; height: 16px; background: var(--accent); }
+#crew .mk.stall { height: 4px; top: 7px; width: 14px; margin-left: -7px; background: var(--del); opacity: .6; }
+#crew button.mk:hover { transform: scaleY(1.3); }
+#log .flash { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 /* the Crew grid: tiles, each with a dot per agent under it; the footer
    keeps only its toasts (a tile's box tells its agent) */
 body.gridmode #log { display: none; }

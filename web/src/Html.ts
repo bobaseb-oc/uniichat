@@ -184,6 +184,22 @@ export function grid_html(v: View.View, now: number): string[] {
   });
 }
 
+// the lane of the agent in focus (View.view_lane): a mark per event at
+// its time, a message's a button that jumps to it (data-seek: its row in
+// the log); none in focus or no marks: nothing
+export function lane_html(v: View.View, now: number): string {
+  const marks = View.view_lane(v, now);
+  if (marks.length === 0) {
+    return "";
+  }
+  const pct = (at: number) => Math.round(at * 1000) / 10 + "%";
+  const mk = marks.map((m) => {
+    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
+    return m.k === null ? `<span ${attrs}></span>` : `<button ${attrs} data-seek="${m.k}"></button>`;
+  });
+  return `<div class="lane">${mk.join("")}</div>`;
+}
+
 // what needs the person (View.view_needs), each with what it waits on
 // and its buttons
 export function needs_html(v: View.View): string[] {

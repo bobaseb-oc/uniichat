@@ -651,8 +651,8 @@ export namespace Chat {
   export function push(chat: Chat, agent: Agent | null, kind: Kind, text: string, images: string[] = [], more = false, act?: string): Msg {
     if (agent !== null) {
       const roots = Memory.agent_push(chat.mem, agent.name, kind, text);
-      for (const { i, kind, text } of roots) {
-        Chat.to(chat, agent.name, { $: "entry", agent: agent.name, id: i, kind, text });
+      for (const { i, kind, text, date } of roots) {
+        Chat.to(chat, agent.name, { $: "entry", agent: agent.name, id: i, kind, text, date });
       }
       Chat.pulse(chat, agent);
       return { id: roots[0].i, end: roots[roots.length - 1].i + 1 };

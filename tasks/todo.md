@@ -199,6 +199,12 @@ no cost display; desktop only.
         /api/web-link with a Bearer (a cookie-only mint: 401), headless Chrome over CDP on /?demo=1#crew:
         9 tiles, pill "18 working, 7 need you", g m → #chat, g c → #crew grid, the tree's caret opens a
         manager; no page errors.
+      - [x] Timeline lane: View.view_lane (messages with a date by kind, thoughts left out; a spawn per
+        agent it started; a stall per gap past 2 min, and a quiet end while at work), Html.lane_html under
+        the focus card; a message's mark jumps to its row (one row per message: page_rows). The server's
+        agent entries now carry their date. Proof: lane tests (View, Html); mutants (no stalls, always to
+        now, no spawns, thoughts marked, no jump, label raw) each kill one; suite 190 pass, 3 baseline
+        fails; tsc on changed files 62 → 62 (the earlier "0 → 0"s were void: see lessons.md, zsh).
 - [ ] D. Headless device mode (user's question: the web can't run shell commands without a TUI open):
       a background process that connects as a device and runs jobs (Machine.run), with no screen.
       It gets the same approvals as the terminal.

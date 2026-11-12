@@ -260,6 +260,7 @@ function chat(): void {
   document.onclick = click;
   onhashchange = crew_route;
   $("#grid").onsubmit = tell;
+  $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
   crew_route();
   // a phone's keyboard up or down: the bottom stays in sight, if at it
@@ -1000,7 +1001,7 @@ function crew_bars(): void {
     return;
   }
   markup($("#crew .needs"), Html.needs_html(v));
-  markup($("#crew .card"), [Html.focus_html(v)]);
+  markup($("#crew .card"), [Html.focus_html(v), Html.lane_html(v, Date.now())].filter((h) => h !== ""));
   markup($("#crew .tree"), Html.tree_html(v, Date.now()));
   const grid = v.page === null;
   document.body.classList.toggle("gridmode", grid);
@@ -1032,6 +1033,16 @@ function watch(): void {
 function seen(el: HTMLElement): boolean {
   const box = el.getBoundingClientRect();
   return box.bottom > 0 && box.top < innerHeight;
+}
+
+// a lane mark clicked: its message in sight (an agent's page draws its
+// caption, then one row per message: View.page_rows)
+function seek(ev: MouseEvent): void {
+  const k = (ev.target as HTMLElement).closest<HTMLElement>("[data-seek]")?.dataset.seek;
+  const row = k === undefined ? undefined : $("#log .rows").children[Number(k) + 1];
+  row?.scrollIntoView({ block: "center" });
+  row?.classList.add("flash");
+  setTimeout(() => row?.classList.remove("flash"), 1200);
 }
 
 // a tile's box sent: its words to its agent

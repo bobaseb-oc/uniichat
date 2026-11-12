@@ -164,3 +164,21 @@ test("a tile's name is escaped in its tell box", () => {
   expect(tile).not.toContain('"><b');
   expect(tile).toContain('data-tell="a&quot;&gt;&lt;b"');
 });
+
+// the lane's marks: placed by time, a message's a button that jumps to
+// it, a label escaped as its tooltip
+test("the lane: marks placed and titled, messages jump to their row", () => {
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Mgr", "main", "done")] });
+  View.view_act(v, { $: "Goto", name: "Mgr" });
+  View.view_hear(v, { $: "agent", name: "Mgr", found: true });
+  View.view_hear(v, { $: "entry", agent: "Mgr", kind: "user", text: "<task>", date: new Date(1e12).toISOString() });
+  View.view_hear(v, { $: "entry", agent: "Mgr", kind: "tool", text: "shell: ls", date: new Date(1e12 + 1000).toISOString() });
+  const lane = Html.lane_html(v, 1e12 + 2000);
+  expect(lane).toContain('class="mk told" style="left:0%"');
+  expect(lane).toContain('data-seek="1"');
+  expect(lane).toContain("&lt;task&gt;");
+  expect(lane).not.toContain("<task>");
+  View.view_act(v, { $: "Goto", name: null });
+  expect(Html.lane_html(v, 0)).toBe("");
+});

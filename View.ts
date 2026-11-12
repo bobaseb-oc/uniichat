@@ -718,6 +718,43 @@ function rollup(crew: Crew[]): string {
     .filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
 }
 
+// a mark on the timeline lane: the message it is (k, in its page's log;
+// null: none), where (0: the first, 1: the last or now), what, its
+// label, its time (ms since 1970)
+export type Mark = { k: number | null; at: number; kind: "told" | "tool" | "words" | "note" | "spawn" | "stall"; label: string; t: number };
+
+// a gap past STALL ms with nothing in it is a stall
+const STALL = 120000;
+const LANE: Partial<Record<Kind, Mark["kind"]>> = { user: "told", tool: "tool", unii: "words", work: "words", note: "note", echo: "note" };
+
+// the lane of the agent in focus: its messages with a date (thoughts
+// left out), the agents it started, a stall per quiet gap; one at work
+// runs to now, a quiet end a stall too
+export function view_lane(v: View, now: number): Mark[] {
+  const page = v.page;
+  if (page === null) {
+    return [];
+  }
+  const line = (text: string) => text.split("\n").map((l) => l.trim()).filter((l) => l !== "").at(-1)?.slice(0, 120) ?? "";
+  const said = (page.log ?? []).flatMap((e, k): Mark[] => {
+    const t = Date.parse(e.date ?? "");
+    const kind = LANE[e.kind];
+    return kind === undefined || Number.isNaN(t) ? [] : [{ k, at: 0, kind, label: line(e.text), t }];
+  });
+  const kids = v.crew.filter((c) => c.parent === page.name).map((c): Mark => ({ k: null, at: 0, kind: "spawn", label: "started " + c.name, t: c.since }));
+  const marks = [...said, ...kids].sort((a, b) => a.t - b.t);
+  if (marks.length === 0) {
+    return [];
+  }
+  const busy = v.crew.some((c) => c.name === page.name && (c.status === "working" || c.status === "waiting"));
+  const end = busy ? Math.max(now, marks[marks.length - 1].t) : marks[marks.length - 1].t;
+  const quiet = (a: number, b: number): Mark[] => b - a > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(b - a), t: (a + b) / 2 }] : [];
+  const all = marks.flatMap((m, i) => (i === 0 ? [m] : [...quiet(marks[i - 1].t, m.t), m]));
+  const tail = busy && end - marks[marks.length - 1].t > STALL ? [{ k: null, at: 0, kind: "stall" as const, label: "quiet " + ago(end - marks[marks.length - 1].t), t: end }] : [];
+  const t0 = marks[0].t;
+  return [...all, ...tail].map((m) => ({ ...m, at: end === t0 ? 0 : (m.t - t0) / (end - t0) }));
+}
+
 // the agents the view has in sight, whose deltas it hears (the server
 // tells their pulses to all): its focus, then the tiles shown; at most
 // WATCH, as the server keeps

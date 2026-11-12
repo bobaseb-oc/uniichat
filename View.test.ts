@@ -242,3 +242,34 @@ test("Tell tells the agent named; empty, nothing", () => {
   expect(View.view_act(v, { $: "Tell", name: "Mgr1", text: " go on " })).toEqual([{ $: "tell", name: "Mgr1", text: "go on" }]);
   expect(View.view_act(v, { $: "Tell", name: "Mgr1", text: "  " })).toEqual([]);
 });
+
+// The timeline lane (the agent in focus): a mark per message by its
+// time (tool calls, words, what it was told, notes), one per agent it
+// started, and a stall for each quiet gap past STALL; the last mark at
+// the right but for one at work, whose lane runs to now
+test("the lane: marks by time, spawns, stalls", () => {
+  const v = View.view_new();
+  const t = (s: number) => new Date(1e12 + s * 1000).toISOString();
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Mgr", "main", "manager", "done"), crew("Kid", "Mgr", "worker", "done", 1e12 + 50000)] });
+  View.view_act(v, { $: "Goto", name: "Mgr" });
+  View.view_hear(v, { $: "agent", name: "Mgr", found: true });
+  for (const [kind, text, s] of [["user", "the task", 0], ["tool", "shell: ls", 10], ["mind", "hmm", 20], ["unii", "Done.\nAll good", 400]] as const) {
+    View.view_hear(v, { $: "entry", agent: "Mgr", kind, text, date: t(s) });
+  }
+  View.view_hear(v, { $: "entry", agent: "Mgr", kind: "note", text: "no date" });
+  const lane = View.view_lane(v, 1e12 + 999e3);
+  expect(lane.map((m) => m.kind)).toEqual(["told", "tool", "spawn", "stall", "words"]);
+  expect(lane[0].at).toBe(0);
+  expect(lane.at(-1)!.at).toBe(1);
+  expect(lane[1].k).toBe(1);
+  expect(lane[4].k).toBe(3);
+  expect(lane[2]).toMatchObject({ k: null, label: "started Kid" });
+  expect(lane[3].label).toBe("quiet 5m");
+  expect(lane[4].label).toBe("All good");
+  // at work: the lane runs to now, a quiet end a stall too
+  View.view_hear(v, { $: "state", ...v, crew: [crew("Mgr", "main", "manager", "working")] });
+  const live = View.view_lane(v, 1e12 + 1000e3);
+  expect(live.at(-1)).toMatchObject({ kind: "stall", at: 1 });
+  expect(live.find((m) => m.kind === "words")!.at).toBeCloseTo(0.4, 2);
+});
+

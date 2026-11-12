@@ -1266,6 +1266,33 @@ var ROLLUP = ["working", "waiting", "asking", "failed", "stopped", "done"];
 function rollup(crew) {
   return ROLLUP.map((s) => [s, crew.filter((c) => c.status === s).length]).filter(([, n]) => n > 0).map(([s, n]) => n + " " + s).join(", ");
 }
+var STALL = 120000;
+var LANE = { user: "told", tool: "tool", unii: "words", work: "words", note: "note", echo: "note" };
+function view_lane(v, now) {
+  const page = v.page;
+  if (page === null) {
+    return [];
+  }
+  const line = (text) => text.split(`
+`).map((l) => l.trim()).filter((l) => l !== "").at(-1)?.slice(0, 120) ?? "";
+  const said = (page.log ?? []).flatMap((e, k) => {
+    const t = Date.parse(e.date ?? "");
+    const kind = LANE[e.kind];
+    return kind === undefined || Number.isNaN(t) ? [] : [{ k, at: 0, kind, label: line(e.text), t }];
+  });
+  const kids = v.crew.filter((c) => c.parent === page.name).map((c) => ({ k: null, at: 0, kind: "spawn", label: "started " + c.name, t: c.since }));
+  const marks = [...said, ...kids].sort((a, b) => a.t - b.t);
+  if (marks.length === 0) {
+    return [];
+  }
+  const busy = v.crew.some((c) => c.name === page.name && (c.status === "working" || c.status === "waiting"));
+  const end = busy ? Math.max(now, marks[marks.length - 1].t) : marks[marks.length - 1].t;
+  const quiet = (a, b) => b - a > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(b - a), t: (a + b) / 2 }] : [];
+  const all = marks.flatMap((m, i) => i === 0 ? [m] : [...quiet(marks[i - 1].t, m.t), m]);
+  const tail = busy && end - marks[marks.length - 1].t > STALL ? [{ k: null, at: 0, kind: "stall", label: "quiet " + ago(end - marks[marks.length - 1].t), t: end }] : [];
+  const t0 = marks[0].t;
+  return [...all, ...tail].map((m) => ({ ...m, at: end === t0 ? 0 : (m.t - t0) / (end - t0) }));
+}
 var WATCH = 16;
 function view_watch(v, tiles = []) {
   return [...new Set([...v.page === null ? [] : [v.page.name], ...tiles])].slice(0, WATCH);
@@ -1665,6 +1692,18 @@ function grid_html(v, now) {
     return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
   });
 }
+function lane_html(v, now) {
+  const marks = view_lane(v, now);
+  if (marks.length === 0) {
+    return "";
+  }
+  const pct = (at) => Math.round(at * 1000) / 10 + "%";
+  const mk = marks.map((m) => {
+    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
+    return m.k === null ? `<span ${attrs}></span>` : `<button ${attrs} data-seek="${m.k}"></button>`;
+  });
+  return `<div class="lane">${mk.join("")}</div>`;
+}
 function needs_html(v) {
   return view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
@@ -1975,6 +2014,7 @@ function chat() {
   document.onclick = click;
   onhashchange = crew_route;
   $("#grid").onsubmit = tell;
+  $("#crew").addEventListener("click", seek);
   document.addEventListener("keydown", crew_keys);
   crew_route();
   visualViewport.onresize = () => draw(true);
@@ -2569,7 +2609,7 @@ function crew_bars() {
     return;
   }
   markup($("#crew .needs"), needs_html(v));
-  markup($("#crew .card"), [focus_html(v)]);
+  markup($("#crew .card"), [focus_html(v), lane_html(v, Date.now())].filter((h) => h !== ""));
   markup($("#crew .tree"), tree_html(v, Date.now()));
   const grid = v.page === null;
   document.body.classList.toggle("gridmode", grid);
@@ -2597,6 +2637,13 @@ function watch() {
 function seen(el) {
   const box = el.getBoundingClientRect();
   return box.bottom > 0 && box.top < innerHeight;
+}
+function seek(ev) {
+  const k = ev.target.closest("[data-seek]")?.dataset.seek;
+  const row = k === undefined ? undefined : $("#log .rows").children[Number(k) + 1];
+  row?.scrollIntoView({ block: "center" });
+  row?.classList.add("flash");
+  setTimeout(() => row?.classList.remove("flash"), 1200);
 }
 function tell(ev) {
   const form = ev.target.closest("form.tell");
