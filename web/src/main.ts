@@ -1393,7 +1393,7 @@ function routine_add(ev: SubmitEvent): void {
   ev.preventDefault();
   const f = new FormData(form);
   const kind = String(f.get("kind"));
-  const when = kind === "daily" ? { $: "daily" as const, at: String(f.get("at")) } : kind === "every" ? { $: "every" as const, hours: Number(f.get("hours")) } : { $: "review" as const };
+  const when = kind === "daily" ? { $: "daily" as const, at: String(f.get("at")) } : kind === "weekly" ? { $: "weekly" as const, day: Number(f.get("day")), at: String(f.get("at")) } : kind === "every" ? { $: "every" as const, hours: Number(f.get("hours")) } : { $: "review" as const };
   const tier = f.get("tier") === "manager" ? "manager" : "worker";
   act({ $: "Routine", op: "add", routine: { name: String(f.get("name")), task: String(f.get("task")), when, tier } });
   form.reset();
