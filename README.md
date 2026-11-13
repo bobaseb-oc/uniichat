@@ -119,8 +119,9 @@ also be set as `UNII_<KEY>`. The ones that matter here:
   $OKF_CHECKOUT); it rebuilds the internal dataset when the checkout moves.
   Claude Code can use the same one (`claude mcp add okf -s user --
   <uniichat>/local/okf-mcp.sh`); a name Claude Code has, Legion takes from
-  it. Both servers' lookups are on Modes.MCP_READS, so auto mode does not
-  review them and plan mode runs them; record_gap is reviewed.
+  it. To trust their lookups (agents cannot: config.json is refused to
+  their write and edit), list them in `mcp_reads`, and auto mode skips
+  their review and plan mode runs them; record_gap stays reviewed.
 - `searches`: 0 turns off the vendor's web search (Bedrock behind
   LiteLLM rejects it); `searxng_url` is the local search instead.
 - `after`: a shell command run after each turn.

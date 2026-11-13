@@ -79,10 +79,12 @@ test("record_gap appends one redacted line, owner-only, to the gap file", () => 
   expect(() => Wiki.gap(file, { topic: "", wanted: "w" })).toThrow();
 });
 
-test("auto mode lets both lookups by unreviewed, and reviews record_gap", () => {
-  expect(Modes.reviews("auto", "mcp__okf-wiki__search_wiki")).toBe(false);
-  expect(Modes.reviews("auto", "mcp__okf-wiki__get_wiki_page")).toBe(false);
-  expect(Modes.reviews("auto", "mcp__okf-wiki__record_gap")).toBe(true);
+test("the lookups pass auto mode once the user lists them in mcp_reads; record_gap never", () => {
+  const reads = ["mcp__okf-wiki__search_wiki", "mcp__okf-wiki__get_wiki_page"];
+  expect(Modes.reviews("auto", "mcp__okf-wiki__search_wiki", {}, reads)).toBe(false);
+  expect(Modes.reviews("auto", "mcp__okf-wiki__get_wiki_page", {}, reads)).toBe(false);
+  expect(Modes.reviews("auto", "mcp__okf-wiki__search_wiki", {})).toBe(true);
+  expect(Modes.reviews("auto", "mcp__okf-wiki__record_gap", {}, reads)).toBe(true);
 });
 
 test("as an MCP server over stdio: lists its tools and answers a search", async () => {
