@@ -703,3 +703,32 @@ browser_console_messages takes a filename and writes it: an agent could have wri
 the README says when to Allow a Keychain prompt. Suite 395 pass, the same 3 fails; mutants 2/2 (a
 SECRETS entry for security/launchctl survived: both are already reviewed as not read-only, so it was
 dropped).
+## K: OKF knowledge for local agents (feat/okf-knowledge, from feat/security-review 3b77f8c)
+
+Intent: Legion's agents look up company knowledge first, from the OKF MCP server
+(oncorps-knowledge-framework, branch 0.x, `src/scripts/okf_mcp_server.py`, stdio, read-only,
+one access-scoped build) and the OKF wiki (MkDocs, `search/search_index.json` at
+https://ui-prototypes.oc-dev.oncorps.io/financial-services/ontology/). When they find nothing,
+or something stale, they record a gap; gaps are batched into a DRAFT PR to OKF for a human.
+
+Constraints: reuse Mcp.ts and local/mcp.ts (no new tool plumbing in Tools.ts); tool names fit
+Modes.MCP_READS (search_/get_), so plan and auto modes allow reads unreviewed; one pinned wiki
+host, response size cap, cache with TTL; OKF's agent write path (PLP-2837/2853) holds: agent
+knowledge is Proposed, never self-approved, a human merges. RED ZONE: client segregation, a gap
+found on client work must not carry client data into the shared repo.
+
+- [ ] K1 OKF MCP registered: local/mcp.extra.json "okf" entry (uv, OKF_DATASET_MANIFEST from
+      ~/.unii/mcp.local.json, skipped with a note if the checkout or manifest is missing).
+      → verify: local/mcp.test.ts case, live list shows mcp__okf__* tools.
+- [ ] K2 wiki MCP: local/okf-wiki.ts, tools search_wiki(query, k) and get_wiki_page(location),
+      host pinned, https only, 5 MB cap, cached index, HTML to text. → verify: red-first tests
+      (wrong host refused, oversize refused, ranking, page fetch), Modes allows both read-only.
+- [ ] K3 agent brief: rules.md says look up OKF (mcp__okf__ then wiki) before guessing company
+      facts, cite page or record, and on a miss call record_gap.
+- [ ] K4 gap log: tool record_gap(topic, wanted, evidence) appends to ~/.unii/okf-gaps.jsonl,
+      redacted (local/prime/redact.ts), client names refused (RED ZONE draft). Note: name has
+      "record" → MCP_WRITES? check; it is a local write, review in auto mode is fine.
+- [ ] K5 gap loop: routine (Chat.automate) weekly, read-only agent dedupes gaps against OKF,
+      writes Proposed docs in a fork worktree, runs OKF gates, opens a DRAFT PR to OnCorps:0.x;
+      never merges. Stale side: `list_stale_records.py --as-of` drives refresh proposals.
+      RED ZONE draft, needs sign-off before it runs unattended.
