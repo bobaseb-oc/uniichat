@@ -534,11 +534,16 @@ function look_under(rules: Rules, p: string): string | { why: string } {
   return roots.some((r) => real === r || real.startsWith(r + path.sep)) ? real : { why: p + " is not under this device's work dir, home repo, spaces or their worktrees." };
 }
 
-// what a view asked to see, or why not (look_file, look_git)
-export async function device_look(rules: Rules, id: string, what: View.Look): Promise<View.Client> {
-  const kind = what?.kind === "git" ? "git" : "file";
+// what a view asked to see, or why not (look_file, look_git, look_dir,
+// look_open); launch: opens a file in the user's editor (editor_open)
+export async function device_look(rules: Rules, id: string, what: View.Look, launch: (file: string) => Promise<string> = editor_open): Promise<View.Client> {
+  const kind = View.LOOK_KINDS.find((k) => k === what?.kind) ?? "file";
   try {
-    const shown = what?.kind === "file" ? look_file(rules, what) : what?.kind === "git" ? await look_git(rules, what) : "Ask for a file or a repo's git.";
+    const shown = what?.kind === "file" ? look_file(rules, what)
+      : what?.kind === "git" ? await look_git(rules, what)
+      : what?.kind === "dir" ? look_dir(rules, String(what.path ?? ""))
+      : what?.kind === "open" ? await look_open(rules, String(what.path ?? ""), launch)
+      : "Ask for a file, a folder or a repo's git.";
     return typeof shown === "string" ? { $: "looked", id, kind, error: shown.slice(0, 300) } : { $: "looked", id, kind, ...shown };
   } catch (err: any) {
     return { $: "looked", id, kind, error: String(err?.message ?? err).slice(0, 300) };
@@ -546,6 +551,57 @@ export async function device_look(rules: Rules, id: string, what: View.Look): Pr
 }
 
 type Shown = { path: string; op?: string; text: string };
+
+// the files explorer: a folder's entries (View.Looked's "dir" lines),
+// folders first, by name, .git never, at most DIR_MOST; @roots: the roots
+export const DIR_MOST = 2000;
+function look_dir(rules: Rules, given: string): Shown | string {
+  if (given === "@roots") {
+    return { path: given, text: look_roots(rules).map((r) => "d " + r).join("\n") };
+  }
+  const real = look_under(rules, home(given));
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  if (!fs.statSync(real).isDirectory()) {
+    return given + " is not a folder.";
+  }
+  const line = (k: fs.Dirent) => {
+    const at = path.join(real, k.name);
+    const dir = k.isDirectory() || k.isSymbolicLink() && fs.statSync(at, { throwIfNoEntry: false })?.isDirectory() === true;
+    return (dir ? "d " : Machine.secret(at) ? "s " : "f ") + k.name;
+  };
+  const kids = fs.readdirSync(real, { withFileTypes: true }).filter((k) => k.name !== ".git" && !k.name.includes("\n"));
+  const lines = kids.map(line).sort((a, b) => (a[0] === "d" ? 0 : 1) - (b[0] === "d" ? 0 : 1) || (a.slice(2) < b.slice(2) ? -1 : 1));
+  return { path: given, text: lines.slice(0, DIR_MOST).join("\n") };
+}
+
+// a file under the roots opened in the user's editor, a secret's too: its
+// text never leaves this computer (the user edits what agents can't)
+async function look_open(rules: Rules, given: string, launch: (file: string) => Promise<string>): Promise<Shown | string> {
+  const real = look_under(rules, home(given));
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  if (!fs.statSync(real).isFile()) {
+    return given + " is not a file.";
+  }
+  return { path: given, text: "Opened " + path.basename(real) + " in " + await launch(real) + "." };
+}
+
+// VS Code (its `code`, else its app), else the default text editor; no
+// shell, the file one argument; what opened it
+const VSCODE_APP = "/Applications/Visual Studio Code.app";
+async function editor_open(file: string): Promise<string> {
+  const [argv, name] = Bun.which("code") !== null ? [["code", file], "VS Code"]
+    : fs.existsSync(VSCODE_APP) ? [["open", "-a", VSCODE_APP, file], "VS Code"]
+    : [["open", "-t", file], "the default editor"];
+  const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+  if (await proc.exited !== 0) {
+    throw new Error(name + " didn't open it: " + (await new Response(proc.stderr).text()).trim().slice(0, 200));
+  }
+  return name;
+}
 
 // a file's text (an agent's path from its own dir), or why not
 function look_file(rules: Rules, what: View.Look & { kind: "file" }): Shown | string {

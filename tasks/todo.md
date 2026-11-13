@@ -763,3 +763,12 @@ today feeds the same path.
 - [x] .md rendered via md_parse/block_html, "source" toggle → verify: Pages.test.ts
 - [x] .html previewed in `<iframe sandbox srcdoc>` (no scripts, opaque origin), "source" toggle → verify: Pages.test.ts (sandbox attr, srcdoc escaped)
 - Proof: Hl 2/2, Pages 15/15; mutants 4/4 killed (no sandbox, srcdoc unescaped, toggle not reset, no highlight); suite 419 pass, 3 known fails (link_ask, two log-staging).
+
+## Files explorer (2026-11-13, feat/files-explorer)
+- [x] Device: Look kind "dir" (`@roots`: the roots; a folder: its entries, dirs first, capped, .git skipped, secrets marked locked) and kind "open" (a file under a root in VS Code, else `open -t`; no shell) → verify: Device.test.ts
+- [x] Server: look/looked accept dir and open → verify: Server tests
+- [x] View: folder cache + expanded set, Tree act (asks once), dir answers never replace the shown file → verify: View/Pages tests
+- [x] Page: Explorer tree above agents' files, roots loaded on open; file → Look; Open in editor button → verify: Pages.test.ts
+- Also (user's ask): several workspaces at once, picked from the roots, kept per browser.
+- Proof: Device 17/17, Server look test, Pages 15/15; mutants 7/7 killed; suite 422 pass, 3 known fails.
+- Next, separate Red Zone PR: in-browser edit + save (user's ask).

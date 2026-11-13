@@ -166,6 +166,10 @@ export type View = State & {
   summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
   looked    : Looked | null; // what a device showed last (the files pane, K4)
   source    : boolean; // the file shown drawn as its lines, not rendered (Markdown, HTML)
+  dirs      : Map<string, Listing>; // the explorer's folders asked of a device, by path (@roots: the roots)
+  unfolded  : Set<string>; // the explorer's folders open
+  workspaces: string[]; // the explorer's workspaces open, roots each (main.ts keeps them)
+  opened    : string | null; // what a device said of the last file opened in an editor
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -203,9 +207,14 @@ export type Server =
 
 // the files pane and git tab (K4): what a view asks a device to show, and
 // what it showed (or why not)
-export type Look = { kind: "file"; path: string; agent?: string } | { kind: "git"; repo: string; op: string; rev?: string };
+export type Look = { kind: "file"; path: string; agent?: string } | { kind: "git"; repo: string; op: string; rev?: string } | { kind: "dir" | "open"; path: string };
 export type Harvested = { n: number; id?: number; error?: string };
-export type Looked = { $: "looked"; id: string; kind: "file" | "git"; path?: string; op?: string; text?: string; error?: string };
+// a "dir"'s text: a line an entry, "d name" (a folder), "f name" (a file)
+// or "s name" (a secret's: listed, never shown); "open": what opened it
+export type Looked = { $: "looked"; id: string; kind: LookKind; path?: string; op?: string; text?: string; error?: string };
+export type LookKind = "file" | "git" | "dir" | "open";
+export type Listing = { text?: string; error?: string }; // a folder's answer; neither: asked, not yet answered
+export const LOOK_KINDS: readonly LookKind[] = ["file", "git", "dir", "open"];
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -302,6 +311,9 @@ export type Act =
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
   | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
   | { $: "Source"; on: boolean }                 // the file shown drawn as its lines, or rendered
+  | { $: "List"; path: string }                  // a folder asked of a device, once (@roots: the roots)
+  | { $: "Tree"; path: string }                  // an explorer's folder unfolded (asked once) or folded
+  | { $: "Workspace"; path: string; on: boolean } // a root opened in the explorer, unfolded, or closed
   | { $: "Bang"; command: string; dir: string }  // a command run in a folder (the Files page's box)
   | { $: "Timesheet"; op: "submit" | "drop"; ns: number[] } // timesheet drafts submitted to Harvest, or dropped (K5)
 
@@ -448,6 +460,10 @@ export function view_new(): View {
     summaries : new Map(),
     looked    : null,
     source    : false,
+    dirs      : new Map(),
+    unfolded  : new Set(),
+    workspaces: [],
+    opened    : null,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -477,6 +493,14 @@ export function view_hear(v: View, msg: Server): Client[] {
       return [];
     }
     case "looked": {
+      if (msg.kind === "dir") {
+        v.dirs.set(msg.path ?? "", msg.error === undefined ? { text: msg.text ?? "" } : { error: msg.error });
+        return [];
+      }
+      if (msg.kind === "open") {
+        v.opened = msg.error ?? msg.text ?? null;
+        return [];
+      }
       v.looked = msg;
       v.source = false;
       return [];
@@ -691,6 +715,29 @@ export function view_act(v: View, act: Act): Client[] {
     case "Source": {
       v.source = act.on;
       return [];
+    }
+    case "List": {
+      if (v.dirs.has(act.path)) {
+        return [];
+      }
+      v.dirs.set(act.path, {});
+      return [{ $: "look", what: { kind: "dir", path: act.path } }];
+    }
+    case "Tree": {
+      if (v.unfolded.delete(act.path)) {
+        return [];
+      }
+      v.unfolded.add(act.path);
+      return view_act(v, { $: "List", path: act.path });
+    }
+    case "Workspace": {
+      v.workspaces = v.workspaces.filter((w) => w !== act.path);
+      if (!act.on) {
+        return [];
+      }
+      v.workspaces.push(act.path);
+      v.unfolded.delete(act.path);
+      return view_act(v, { $: "Tree", path: act.path });
     }
     case "Bang": {
       const command = act.command.trim();

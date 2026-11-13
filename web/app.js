@@ -1495,6 +1495,10 @@ function view_new() {
     summaries: new Map,
     looked: null,
     source: false,
+    dirs: new Map,
+    unfolded: new Set,
+    workspaces: [],
+    opened: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1523,6 +1527,14 @@ function view_hear(v, msg) {
       return [];
     }
     case "looked": {
+      if (msg.kind === "dir") {
+        v.dirs.set(msg.path ?? "", msg.error === undefined ? { text: msg.text ?? "" } : { error: msg.error });
+        return [];
+      }
+      if (msg.kind === "open") {
+        v.opened = msg.error ?? msg.text ?? null;
+        return [];
+      }
       v.looked = msg;
       v.source = false;
       return [];
@@ -1727,6 +1739,29 @@ function view_act(v, act) {
     case "Source": {
       v.source = act.on;
       return [];
+    }
+    case "List": {
+      if (v.dirs.has(act.path)) {
+        return [];
+      }
+      v.dirs.set(act.path, {});
+      return [{ $: "look", what: { kind: "dir", path: act.path } }];
+    }
+    case "Tree": {
+      if (v.unfolded.delete(act.path)) {
+        return [];
+      }
+      v.unfolded.add(act.path);
+      return view_act(v, { $: "List", path: act.path });
+    }
+    case "Workspace": {
+      v.workspaces = v.workspaces.filter((w) => w !== act.path);
+      if (!act.on) {
+        return [];
+      }
+      v.workspaces.push(act.path);
+      v.unfolded.delete(act.path);
+      return view_act(v, { $: "Tree", path: act.path });
     }
     case "Bang": {
       const command = act.command.trim();
@@ -3146,11 +3181,52 @@ function files_html(v) {
     return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
   }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
   const repo = looked?.path ?? "@home";
+  const editor = looked?.kind === "file" && looked.path !== undefined && looked.error === undefined ? `<button class="pbtn" title="in VS Code, else your default editor"${act_html2({ $: "Look", what: { kind: "open", path: looked.path } })}>Open in editor</button>` : "";
+  const opened = v.opened === null ? "" : `<span class="meta">${esc(v.opened)}</span>`;
   const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
-  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span>${editor}${opened}<span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
   const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+}
+function explorer_html(v) {
+  const roots = (v.dirs.get("@roots")?.text ?? "").split(`
+`).filter((l) => l.startsWith("d ")).map((l) => l.slice(2));
+  const base = (p) => p.slice(p.lastIndexOf("/") + 1) || p;
+  const pick = roots.filter((r) => !v.workspaces.includes(r)).map((r) => `<option value="${esc(r)}">${esc(base(r) + " — " + r)}</option>`).join("");
+  const picker = `<select data-ws aria-label="open a workspace"><option value="">Open a workspace…</option>${pick}</select>`;
+  const spaces = v.workspaces.map((w) => {
+    const open2 = v.unfolded.has(w);
+    const head = `<div class="fws"><button class="fx fdir" title="${esc(w)}"${act_html2({ $: "Tree", path: w })}>${open2 ? "▾" : "▸"} ${esc(base(w))}</button><button class="fclose" title="close this workspace"${act_html2({ $: "Workspace", path: w, on: false })}>×</button></div>`;
+    return head + (open2 ? folder_html(v, w, 1) : "");
+  }).join("");
+  return `<div class="fgroup fexp"><h3>Workspaces</h3>${picker}${spaces}</div>`;
+}
+function folder_html(v, dir, depth) {
+  const got = v.dirs.get(dir);
+  const note = (s) => `<p class="meta fx" style="--d:${depth}">${esc(s)}</p>`;
+  if (got?.error !== undefined) {
+    return note(got.error);
+  }
+  if (got?.text === undefined) {
+    return note("Loading…");
+  }
+  const rows = got.text.split(`
+`).filter((l) => l.length > 2).map((l) => {
+    const name = l.slice(2);
+    const at = dir.replace(/\/+$/, "") + "/" + name;
+    const pad = ` style="--d:${depth}"`;
+    if (l[0] === "d") {
+      const open2 = v.unfolded.has(at);
+      return `<button class="fx fdir"${pad}${act_html2({ $: "Tree", path: at })}>${open2 ? "▾" : "▸"} ${esc(name)}</button>${open2 ? folder_html(v, at, depth + 1) : ""}`;
+    }
+    if (l[0] === "s") {
+      return `<button class="fx fsec"${pad} title="may hold a secret: opens in your editor, never here"${act_html2({ $: "Look", what: { kind: "open", path: at } })}>\uD83D\uDD12 ${esc(name)}</button>`;
+    }
+    const here = v.looked?.kind === "file" && v.looked.path === at ? " here" : "";
+    return `<button class="fx${here}"${pad}${act_html2({ $: "Look", what: { kind: "file", path: at } })}>${esc(name)}</button>`;
+  });
+  return rows.join("") || note("(empty)");
 }
 function file_html2(path, text, source) {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
@@ -3259,6 +3335,8 @@ var P = {
   qhide: false
 };
 var C = {
+  rooted: 0,
+  restored: false,
   shut: new Set,
   cursor: null,
   picks: new Set,
@@ -4187,6 +4265,7 @@ function page_bars(mode) {
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), timesheet_html(v));
   } else if (mode === "files") {
+    files_open();
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), files_html(v));
@@ -4387,7 +4466,24 @@ function page_change(ev) {
   if (el.dataset.claude !== undefined) {
     C.claude = el.checked;
   }
+  if (el.dataset.ws !== undefined && el.value !== "") {
+    act({ $: "Workspace", path: el.value, on: true });
+    return;
+  }
   draw(true);
+}
+function files_open() {
+  if (v.dirs.get("@roots")?.text === undefined && Date.now() - C.rooted > 1e4) {
+    C.rooted = Date.now();
+    v.dirs.delete("@roots");
+    act({ $: "List", path: "@roots" });
+  }
+  if (!C.restored) {
+    C.restored = true;
+    const was = JSON.parse(localStorage.getItem(kept("workspaces")) ?? "[]");
+    (Array.isArray(was) ? was : []).filter((w) => typeof w === "string").forEach((w) => act({ $: "Workspace", path: w, on: true }));
+  }
+  localStorage.setItem(kept("workspaces"), JSON.stringify(v.workspaces));
 }
 function page_keys(ev) {
   const over = document.querySelector(":popover-open, dialog[open]") !== null;

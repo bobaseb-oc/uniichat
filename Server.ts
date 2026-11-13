@@ -50,7 +50,7 @@ import * as Inbox from "./Inbox.ts";
 import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Look, type Looked, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, LOOK_KINDS, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Look, type Looked, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -1587,19 +1587,29 @@ export namespace Chat {
     const what: Look | null =
       raw?.kind === "file" && str(raw.path) && (raw.agent === undefined || str(raw.agent)) ? { kind: "file", path: raw.path, ...(raw.agent === undefined ? {} : { agent: raw.agent }) }
       : raw?.kind === "git" && str(raw.repo) && str(raw.op) && (raw.rev === undefined || str(raw.rev)) ? { kind: "git", repo: raw.repo, op: raw.op, ...(raw.rev === undefined ? {} : { rev: raw.rev }) }
+      : (raw?.kind === "dir" || raw?.kind === "open") && str(raw.path) ? { kind: raw.kind, path: raw.path }
       : null;
     if (what === null) {
-      return { error: "Ask to see a file (path) or a repo's git (repo, op)." };
+      return { error: "Ask to see a file or a folder (path), open a file (path), or a repo's git (repo, op)." };
     }
     if (Tools.opened(chat.tools).length === 0) {
       return { error: "No device is up to show it: open a terminal (legion), or run legion device." };
+    }
+    // a file opened in an editor: by one device (each would open a window)
+    const link = what.kind === "open" ? Tools.opened(chat.tools).flatMap(([, d]) => [...d.terms.values()]).find((l) => l.live?.() !== false) : null;
+    if (link === undefined) {
+      return { error: "No device is up to open it: open a terminal (legion), or run legion device." };
     }
     const looks = (chat.looks ??= new Set());
     if (looks.size >= LOOKS) {
       looks.delete(looks.values().next().value!);
     }
     looks.add(id);
-    Chat.all(chat, { $: "look", id, what });
+    if (link === null) {
+      Chat.all(chat, { $: "look", id, what });
+    } else {
+      link.send({ $: "look", id, what });
+    }
     return {};
   }
 
@@ -1672,7 +1682,7 @@ export namespace Chat {
       return { error: "No look " + id.slice(0, 40) + " waits for a device's answer." };
     }
     const s = (x: unknown, most: number) => (typeof x === "string" ? x.slice(0, most) : undefined);
-    const out: Looked = { $: "looked", id, kind: msg.kind === "git" ? "git" : "file" };
+    const out: Looked = { $: "looked", id, kind: LOOK_KINDS.find((k) => k === msg.kind) ?? "file" };
     for (const [k, most] of [["path", LOOK_TEXT], ["op", 20], ["text", LOOK_SHOWN], ["error", 300]] as const) {
       const v = s(msg[k], most);
       if (v !== undefined) {
