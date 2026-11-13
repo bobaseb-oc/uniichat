@@ -1,0 +1,27 @@
+local/mcp.ts
+  s_c8e515843bc46c::t_2161ce19fa3f8e 75-78
+local/mcp.test.ts
+  s_c8e515843bc46c::t_2161ce19fa3f8e 124-136
+local/mcp.extra.json
+  s_c8e515843bc46c::t_2161ce19fa3f8e 18-20
+local/okf-mcp.sh
+  s_c8e515843bc46c::t_8672644a24f348 1-31
+README.md
+  s_c8e515843bc46c::t_bb3399d98a056e 103-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30b1e3025f57419e5b1041b03ae461c0b580540c",
+  "prompts": {},
+  "sessions": {
+    "s_c8e515843bc46c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b08513c-712f-494b-be80-85986676b60d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
