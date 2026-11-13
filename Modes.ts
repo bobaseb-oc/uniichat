@@ -78,6 +78,10 @@ const GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
 // with them), the flags they may take (none opens a browser or waits),
 // and gh api's: a GET of a path on GitHub, no field (that makes it a POST)
 const GH: Record<string, string[]> = { pr: ["view", "diff", "checks", "list"], issue: ["view", "list"], repo: ["view"] };
+// a search over the whole home or disk, which holds the logins (a grep -r ~)
+const HOME_WIDE = /^(~\/?|\$HOME\/?|\$\{HOME\}\/?|\/|\/Users(\/[^\/]+)?\/?)$/;
+// gh -R: OWNER/REPO on GitHub, never HOST/OWNER/REPO
+const GH_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 const GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m"]);
 const GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
 
@@ -129,11 +133,12 @@ export namespace Modes {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    if (command === null || SECRETS.test(command) || Modes.readonly(command) !== null) {
+    // not plain ASCII: the Mac folds lookalikes (a long s is s), so a name may hide
+    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || Modes.readonly(command) !== null) {
       return true;
     }
     const lexed = lex(command);
-    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w));
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w) || HOME_WIDE.test(w));
   }
 
   // why a shell command is not plainly read-only; null: it is
@@ -277,7 +282,17 @@ export namespace Modes {
       return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
     }
     const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]!));
-    return bad === undefined ? null : "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    if (bad !== undefined) {
+      return "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    }
+    for (let k = 0; k < rest.length; k++) {
+      const a = rest[k]!;
+      const repo = a === "-R" || a === "--repo" ? rest[++k] ?? "" : /^(?:-R|--repo)=(.*)$/.exec(a)?.[1];
+      if (repo !== undefined && !GH_REPO.test(repo)) {
+        return "gh -R takes OWNER/REPO on GitHub, not " + repo;
+      }
+    }
+    return null;
   }
 
   // why one command is not read-only; null: it is

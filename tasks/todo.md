@@ -672,3 +672,10 @@ empty-user and @-in-password URLs, and no pattern is quadratic (14 crafted 1 MB 
 the old Harvest token moves to the guarded store once; X-Forwarded-For only with UNII_PROXY=1; old
 sessions keep 90 days once. Suite 379 pass, the same 3 fails; mutants 35/35 killed. Left for a
 follow-up PR: devices reach the server over a 0700 unix socket, so the proof can't be relayed.
+
+Final check (2026-11-13): the Mac folds Unicode lookalikes as well as case (ſettings.local.json is
+settings.local.json), so the settings guard and read's secret check now compare NFKC-folded paths;
+a shell command that isn't plain ASCII, or greps the whole home or disk, goes to the reviewer; gh -R
+takes only OWNER/REPO, never another host. Suite 382 pass, the same 3 fails; 5/5 mutants killed.
+Still open, by design: MCP review by name is a deny-list (an allowlist of read-only servers is the
+sound version); a *_KEY value with no digit isn't redacted.

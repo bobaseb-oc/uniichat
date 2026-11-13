@@ -274,3 +274,19 @@ test("MCP: a name with replace, reset, run, exec or query in its words is review
     expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, false]);
   }
 });
+
+// round-2 check: a secret path spelled with lookalikes, a grep over the
+// whole home, and gh -R naming another host are all reviewed or refused
+test("lookalike secret paths and home-wide greps are reviewed; gh -R takes OWNER/REPO only", () => {
+  for (const command of ["cat ~/.pgpaſſ", "cat ~/.ſsh/github_ed25519", "grep -r PRIVATE ~", "rg PRIVATE ~/", "grep -rn key $HOME", "rg -l BEGIN /"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
+  }
+  for (const command of ["grep -rn TODO src", "rg foo .", "cat README.md"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, false]);
+  }
+  expect(Modes.readonly("gh pr view 1 -R o/r")).toBeNull();
+  expect(Modes.readonly("gh pr view 1 --repo=o/r.js")).toBeNull();
+  for (const command of ["gh pr view 1 -R evil.example/o/r", "gh pr view 1 --repo=evil.example/o/r", "gh pr view 1 --repo https://evil.example/o/r"]) {
+    expect([command, Modes.readonly(command)]).toEqual([command, expect.stringContaining("OWNER/REPO")]);
+  }
+});

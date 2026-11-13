@@ -220,15 +220,16 @@ export namespace Machine {
   // its real one
   export function secret(p: string): boolean {
     const at = path.resolve(p);
-    return [at, Machine.real(at)].some((q) => SECRET.test(path.basename(q)) || SECRET_AT.test(q));
+    return [at, Machine.real(at)].map((q) => q.normalize("NFKC")).some((q) => SECRET.test(path.basename(q)) || SECRET_AT.test(q));
   }
 
   // whether a file gates the hooks (GATING, ~/.claude, $CLAUDE_CONFIG_DIR:
   // Hooks.home), by its path or its real one, in any case
   export function gating(p: string): boolean {
     const at = path.resolve(p);
-    const homes = [os.homedir() + "/.claude", Hooks.home()].flatMap((h) => [h, Machine.real(h)]).map((h) => h.toLowerCase());
-    return [at, Machine.real(at)].map((q) => q.toLowerCase()).some((q) => GATING.test(q) || homes.some((h) => q === h || q.startsWith(h + "/")));
+    const fold = (q: string) => q.normalize("NFKC").toLowerCase(); // the disk folds case and lookalikes
+    const homes = [os.homedir() + "/.claude", Hooks.home()].flatMap((h) => [h, Machine.real(h)]).map(fold);
+    return [at, Machine.real(at)].map(fold).some((q) => GATING.test(q) || homes.some((h) => q === h || q.startsWith(h + "/")));
   }
 
   // this unii's environment for a job (ENV; also: a worker's more), marked

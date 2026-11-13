@@ -314,3 +314,22 @@ test("a job's environment keeps proxies, CA bundles and CLAUDE_CONFIG_DIR", () =
     expect([k, ENV.test(k)]).toEqual([k, false]);
   }
 });
+
+// the Mac's disk folds Unicode lookalikes too (ſ is s, K is K): a
+// settings file spelled with them is still refused (round-2 check)
+test("write refuses a settings file spelled with Unicode lookalikes", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-fold-"));
+  fs.mkdirSync(root + "/Ann/.claude", { recursive: true });
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [".claude/ſettings.local.json", ".claude/ＳＥＴＴＩＮＧＳ.json", ".claude/settings.local.json".normalize("NFD")]) {
+    expect([p, (await run("write", { path: p, content: "{}" })).fail]).toEqual([p, true]);
+  }
+  expect(fs.readdirSync(root + "/Ann/.claude")).toEqual([]);
+});
+
+test("read refuses a secret path spelled with Unicode lookalikes", () => {
+  for (const p of [os.homedir() + "/.ſsh/github_ed25519", os.homedir() + "/.pgpaſſ", os.homedir() + "/.ＡＷＳ/credentials"]) {
+    expect([p, Machine.secret(p)]).toEqual([p, true]);
+  }
+});
