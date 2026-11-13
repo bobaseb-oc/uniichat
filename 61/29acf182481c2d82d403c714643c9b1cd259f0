@@ -1,0 +1,49 @@
+local/rules.md
+  s_61d91f7f28e453::t_9e1a7339fb4dbe 23
+Modes.test.ts
+  s_61d91f7f28e453::t_2bb6ff14fbaf1a 122
+  s_61d91f7f28e453::t_e7bf5edc25e7a7 73-79,81-97
+  s_ddde39de4cecac::t_01438ff7e5f65d 80
+tasks/todo.md
+  s_0a2ebc44ae045f::t_fcb1888e8abfb7 634-661
+  s_61d91f7f28e453::t_040d6218db8288 579-585
+Modes.ts
+  s_61d91f7f28e453::t_10933c8db88497 41
+  s_0a2ebc44ae045f::t_84e60f9e547675 54-67,101-102,108,224-270,295-297,307-309
+Tools.test.ts
+  s_61d91f7f28e453::t_2334692f82b46e 377,382-383,401-405
+Tools.ts
+  s_61d91f7f28e453::t_b48b68b77b975a 393-396,399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6129acf182481c2d82d403c714643c9b1cd259f0",
+  "prompts": {},
+  "sessions": {
+    "s_0a2ebc44ae045f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b1419cf-cca1-47f7-99ff-12a223ec12ff",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_61d91f7f28e453": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "034518c4-1f65-45d2-899f-743d1ff2919a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_ddde39de4cecac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "db982ca4-4260-4bbf-90b5-ca3fa7a0bd21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
