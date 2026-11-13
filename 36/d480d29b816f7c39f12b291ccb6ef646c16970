@@ -1,0 +1,30 @@
+local/memory.dist/MEMORY.md
+  s_61d91f7f28e453::t_ffee5141045b72 1-4
+local/memory.dist/tests-need-local-binding.md
+  s_61d91f7f28e453::t_ce7f875ba398c5 1-15
+local/memory.dist/prs-go-to-your-fork.md
+  s_61d91f7f28e453::t_0f3787abd232e4 1-10
+local/memory.dist/check-a-change.md
+  s_61d91f7f28e453::t_f71f34f8e7e44e 1-17
+README.md
+  s_61d91f7f28e453::t_18e73e331cca2b 113-114
+  s_61d91f7f28e453::t_3c3063425ff3e0 108-112,115-118
+local/memory.dist/native-subagents-first.md
+  s_61d91f7f28e453::t_b39b7bc20676de 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36d480d29b816f7c39f12b291ccb6ef646c16970",
+  "prompts": {},
+  "sessions": {
+    "s_61d91f7f28e453": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "034518c4-1f65-45d2-899f-743d1ff2919a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
