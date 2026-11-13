@@ -98,6 +98,9 @@ test("what each mode allows: plan only reading; auto and full every tool (auto r
     expect(Modes.reviews("auto", "shell", { command })).toBe(true);
   }
   expect(Modes.reviews("auto", "shell", {})).toBe(true);
+  // the google tool only reads: allowed in plan mode, never reviewed
+  expect(Modes.allows("plan", "google", { action: "mail_search" })).toBeNull();
+  expect(Modes.reviews("auto", "google", { action: "mail_search" })).toBe(false);
   expect(Modes.reviews("auto", "edit", { command: "ls" })).toBe(true);
   expect(Modes.next("plan")).toBe("auto");
   expect(Modes.next("auto")).toBe("full");

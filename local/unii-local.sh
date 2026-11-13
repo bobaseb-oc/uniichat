@@ -21,7 +21,7 @@
 #                     the grant goes to the Keychain only
 #   legion mcp-logout S delete that grant
 #   legion google-login [client.json]  sign in to Google for the cockpit's
-#                     calendar and transcripts (read-only; Keychain only)
+#                     calendar, transcripts, Gmail, Chat (read-only; Keychain only)
 #   legion google-logout  revoke that grant at Google and delete it
 #   legion <args>       anything else goes to Term.ts (e.g. login, version)
 set -euo pipefail

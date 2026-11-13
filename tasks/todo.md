@@ -559,23 +559,26 @@ Intent: four separate, reviewable changes, in this order (one commit set each):
   - The terminal `legion` reads the inbox too (it is a device already: same Device.device_inbox, same 5 min timer).
   - Optional: `legion device --install` writes a launchd agent so reads keep going with no window open (decision D2).
   - verify: Server test (Fetch with no device returns the note), e2e (button shows reading..., then updated time).
-- [x] K2 Auto mode more lenient (RED ZONE: permission engine; DRAFT committed, awaiting the user's sign-off). Proof: Modes/Tools tests 20/20, 6/6 mutants killed (work-tasks/mut-k2.sh). Secret-reading commands (env, .env, .ssh, token...) are still reviewed even when read-only.
+- [x] K2 Auto mode more lenient (RED ZONE: permission engine; signed off by the user 2026-11-13, 26bc591). Proof: Modes/Tools tests 20/20, 6/6 mutants killed (work-tasks/mut-k2.sh). Secret-reading commands (env, .env, .ssh, token...) are still reviewed even when read-only.
   - Read-only shell (Modes.readonly says null) skips the reviewer, as Claude Code does.
   - The reviewer sees the last 3 user messages, not only the latest one (a "yes, go" carries no context).
   - The prompt changes from "refuse if any of 6 things" to "refuse only clear harm": deletes beyond the task, off-machine sends (push/deploy/publish/send), secrets/.env, system changes, piped-from-internet code. Dropped: "goes beyond what the user asked", "outside the repo". Installing from a lockfile is allowed.
   - Invariant: still fails closed (no answer from the reviewer: ask the user), and plan mode's rules are unchanged.
   - verify: Tools/Modes tests: `git status` never reaches the reviewer; `rm -rf ~` still goes to the reviewer; a reviewer timeout still asks the user. Negative tests kill mutants.
-- [ ] K3 Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
+- [x] K3a Gmail and Google Chat reads and the agents' `google` tool (RED ZONE DRAFT, awaiting review). One tool, 7 read-only actions, output fenced <untrusted>; plan mode allows it, auto mode doesn't review it. Proof: Google.test.ts 8/8, Modes 3/3, full suite 312 pass / 2 known fails. Not built (K3b): unread mail and Chat mentions in the inbox. Not live-checked: needs the user's re-login.
+- [ ] K3 (original plan) Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
   - Scopes added: gmail.readonly, chat.spaces.readonly, chat.messages.readonly. Users re-run `legion google-login` once.
   - Device reads (the Keychain grant stays on the device): gmail search/read, chat spaces/messages; inbox gains unread threads that need the user and recent Chat mentions.
   - Agent tools (native, read-only, run on the device): google_mail_search, google_mail_read, google_chat_read, google_calendar, google_doc_read. Tool output is marked untrusted (an email can carry instructions); in auto mode, a tool call right after reading mail still goes to the reviewer.
   - Console setup the user does: enable the APIs (done), add scopes on the consent screen, configure the Chat app (the Chat API needs one even for user reads).
   - verify: fake-Google tests (as Google.test.ts), scope check fails closed, tool output tagged untrusted.
-- [ ] K5 Harvest timesheets (RED ZONE: billable hours written to Harvest). Token in the Keychain (legion harvest-login), read tools for agents, a routine that drafts entries from calendar, PRs, Jira and commits; submission per decision D5.
+- [ ] K5 Harvest timesheets (RED ZONE: billable hours written to Harvest). Token in the Keychain (legion harvest-login), read tools for agents, a routine that drafts entries from calendar, PRs, Jira and commits; D5 (user, 2026-11-13): drafts only; the user approves on a Timesheet page and one click submits; nothing reaches Harvest without it.
+- [ ] K6 The orchestrator decides more on its own (user's ask 2026-11-13): its prompt (Tools.MASTER) makes reversible, in-scope calls itself and reports them; it asks only for Red Zone items, outward or irreversible acts, and real forks in what the user wants.
 - [ ] K4 Files pane (Terax-style), read-only first.
   - Paths come from the agent's own tool calls (read, edit, write, grep hits), plus paths it names in its messages that exist under its work dir or a space.
   - The web view gets a Files pane: a tree of those paths for the watched agent, and a viewer (syntax-highlighted, line anchors; diff for edited files). A path in a message turns into a link that opens it.
   - Reading goes through the device (read job), limited to the agent's work dir and the spaces; no symlink escape, size cap.
+  - A Git tab beside the files (user's ask 2026-11-13, as Terax): the space's status, branches, log, and a commit's or the working tree's diff, read-only, through the device's read-only git (Modes.readonly).
   - Writes later (an edit sent as a reviewed edit call, so modes and the reviewer apply).
   - verify: Pages/View tests, path allowlist tests (../, symlink, outside the space refused), e2e.
 
