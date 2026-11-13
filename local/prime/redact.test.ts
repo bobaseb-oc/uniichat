@@ -170,3 +170,9 @@ test("env secrets: values of secret-named variables, long enough to match safely
   const env = { LITELLM_API_KEY: "x".repeat(20), GH_TOKEN: "y".repeat(20), SHORT_KEY: "abc", HOME: "/Users/z", PATH: "/bin" };
   expect(env_secrets(env).sort()).toEqual(["x".repeat(20), "y".repeat(20)]);
 });
+
+test("a *_KEY value with digits in dotted parts is a key, not a dotted name (round-4 check)", () => {
+  const out = redact("SIGNING_KEY=a1.b2c3d4e5f6g7h8\nsettings.CACHE_KEY = os.environ.get('X')\n", []).text;
+  expect(out).not.toContain("b2c3d4e5f6g7h8");
+  expect(out).toContain("os.environ");
+});

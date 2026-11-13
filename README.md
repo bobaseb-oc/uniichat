@@ -75,6 +75,17 @@ listens on 127.0.0.1:8788 (the browser and the iOS app) and on
 ~/.unii/server.sock ($UNII_DIR/server.sock: 0600, in a 0700 dir). The
 terminal and `legion device` reach it only over that socket, never over
 TCP, so a process that took the port first never gets their session.
+A server with `workers` above 0 (the hosted setup) opens no socket, so
+devices on that computer can't connect; run local devices against a lone
+server.
+
+The Google grant and the Harvest token sit behind macOS Keychain prompts
+(no app is trusted to read them). Allow the Google one when you start a
+terminal or `legion device` yourself, and the Harvest one when you press
+Submit or an agent reads your timesheet; Deny any other, and never click
+Always Allow. An agent can't read either without a prompt, but it could
+restart the device to make one appear at a time you'd expect: if a prompt
+comes and you didn't just start Legion, Deny it.
 
     bun run test              # the tests, each file on its own
     bun run web               # rebuilds web/app.js from web/src

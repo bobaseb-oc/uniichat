@@ -53,7 +53,7 @@ const SHAPES: Array<[string, RegExp]> = [
   // identifier: lowercase snake_case (primary_key = account_id) but a
   // key's own (rk_live_...), a dotted name (settings.KEY, os.environ) or
   // a $VAR; case kept, so no i
-  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}[Kk][Ee][Yy]["']?\s*[:=]\s*["']?)(?!\$|<|\{|\[REDACTED|[A-Za-z_][A-Za-z0-9_]{0,63}\.[A-Za-z_]|(?![a-z]{1,5}_(?:live|test)_)[a-z]{1,64}(?:_[a-z]{1,64}){0,16}(?![^\s"'\\,;)]))[^\s"'\\,;)]{8,}/g],
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}[Kk][Ee][Yy]["']?\s*[:=]\s*["']?)(?!\$|<|\{|\[REDACTED|[A-Za-z_]{1,64}\.[A-Za-z_]|(?![a-z]{1,5}_(?:live|test)_)[a-z]{1,64}(?:_[a-z]{1,64}){0,16}(?![^\s"'\\,;)]))[^\s"'\\,;)]{8,}/g],
 ];
 
 // name segments of a variable that holds a secret (PATH is not PAT)

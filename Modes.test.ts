@@ -299,3 +299,18 @@ test("lookalike secret paths and home-wide greps are reviewed; gh -R takes OWNER
     expect([command, Modes.readonly(command)]).toEqual([command, expect.stringContaining("OWNER/REPO")]);
   }
 });
+
+// round-4 check: an allowlisted MCP read that is given a file or path
+// argument may write it (playwright's filename, devtools' filePath), so
+// it is reviewed; reading the Keychain or restarting the device, which
+// could time a Keychain prompt, is reviewed too
+test("an allowlisted MCP read with a file argument, and security or launchctl, are reviewed", () => {
+  expect(Modes.reviews("auto", "mcp__playwright__browser_console_messages", {})).toBe(false);
+  for (const input of [{ filename: "/Users/u/.zshenv" }, { filePath: "x" }, { requestFilePath: "x" }, { responseFilePath: "x" }, { outputDir: "x" }]) {
+    expect([input, Modes.reviews("auto", "mcp__playwright__browser_console_messages", input)]).toEqual([input, true]);
+    expect([input, Modes.reviews("auto", "mcp__chrome-devtools__take_snapshot", input)]).toEqual([input, true]);
+  }
+  for (const command of ["security find-generic-password -s legion-google-guarded-grant -w", "launchctl kickstart -k gui/501/com.oncorps.legion.device", "/usr/bin/security dump-keychain"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
+  }
+});

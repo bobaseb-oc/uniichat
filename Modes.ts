@@ -115,6 +115,8 @@ export namespace Modes {
   // servers local/mcp.ts sets up: plainly reads (no fetch, navigate,
   // evaluate, execute*, nor a screenshot written to a path). Config's
   // mcp_reads adds more (Tools.ts passes them); any other is reviewed
+  // an argument naming a file or dir: an MCP read given one may write there
+  const MCP_FILE = /file|path|dir/i;
   export const MCP_READS: readonly string[] = [
     ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
     ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
@@ -130,7 +132,8 @@ export namespace Modes {
       return false;
     }
     if (tool.startsWith("mcp__")) {
-      return /_[0-9a-f]{8}$/.test(tool) || !(MCP_READS.includes(tool) || reads.includes(tool));
+      // a file or path argument: the "read" may write it (playwright filename, devtools filePath)
+      return /_[0-9a-f]{8}$/.test(tool) || Object.keys(input ?? {}).some((k) => MCP_FILE.test(k)) || !(MCP_READS.includes(tool) || reads.includes(tool));
     }
     if (!REVIEWED.includes(tool)) {
       return false;

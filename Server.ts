@@ -2967,6 +2967,7 @@ export namespace Main {
     }
     process.on("SIGHUP", () => workers.forEach((_, k) => start(k)));
     console.log("unii: " + config.SITE + ", " + config.WORKERS + " workers on 127.0.0.1:" + (port + 1) + "-" + (port + config.WORKERS) + ", routes on " + port);
+    console.log("unii: no device socket with workers: devices and terminals on this computer connect only over " + SOCK + ", which a lone server (workers 0) opens");
   }
 
   // a worker ended (`now`: worker k's, the last that started): as the

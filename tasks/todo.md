@@ -690,3 +690,9 @@ binds TCP without reusePort); the Harvest guarded token got its own item (it had
 bun-readable one, so the move never ran: found while doing U2); suite 393 pass, the same 3 fails;
 mutants U1 20/20, U2 13/13, U3 12/12. Left: launchd start order on a real login, the prompts, and
 iOS on a device are the user's checks; the K10 conflict is resolved when the second PR merges.
+Round 4 check: an allowlisted MCP "read" given a file, path or dir argument is reviewed (playwright's
+browser_console_messages takes a filename and writes it: an agent could have written ~/.zshenv); a
+*_KEY value with digits before a dot is redacted; a multi-worker server says it opens no device socket;
+the README says when to Allow a Keychain prompt. Suite 395 pass, the same 3 fails; mutants 2/2 (a
+SECRETS entry for security/launchctl survived: both are already reviewed as not read-only, so it was
+dropped).
