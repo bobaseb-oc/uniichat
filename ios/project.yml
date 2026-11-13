@@ -53,6 +53,9 @@ targets:
         aps-environment: development
         com.apple.developer.associated-domains: [applinks:uniichat.com]
         com.apple.security.application-groups: [group.com.higherorderco.uniichat]
+        # the sign-in's Keychain item, shared with the extension (Site.swift)
+        # RED ZONE (security review SE, DRAFT awaiting the user's sign-off)
+        keychain-access-groups: [$(AppIdentifierPrefix)com.higherorderco.uniichat]
   Share:
     type: app-extension
     platform: iOS
@@ -79,3 +82,6 @@ targets:
       path: Share/Share.entitlements
       properties:
         com.apple.security.application-groups: [group.com.higherorderco.uniichat]
+        # the sign-in's Keychain item, shared with the extension (Site.swift)
+        # RED ZONE (security review SE, DRAFT awaiting the user's sign-off)
+        keychain-access-groups: [$(AppIdentifierPrefix)com.higherorderco.uniichat]
