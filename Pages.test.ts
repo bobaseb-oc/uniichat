@@ -229,6 +229,13 @@ test("files: agents' files, a file's lines, git's views, diffs marked, commits o
   expect(diff).toContain('<span class="hunk">@@ -1 +1 @@</span>');
   View.view_hear(v, { $: "looked", id: "w", kind: "file", error: ".env may hold a secret: not shown." });
   expect(Pages.files_html(v).join("")).toContain(".env may hold a secret");
+  // a box to run a command in what is shown's folder (K9): a file's own
+  // folder, a repo's; none shown: the home repo (no folder)
+  View.view_hear(v, { $: "looked", id: "f", kind: "file", path: "/w/Owl/src/a.ts", text: "x" });
+  expect(Pages.files_html(v).join("")).toContain('<form class="fsh" data-dir="/w/Owl/src">');
+  View.view_hear(v, { $: "looked", id: "g", kind: "git", path: "/r/it's", op: "log", text: "" });
+  expect(Pages.files_html(v).join("")).toContain('data-dir="/r/it\'s"');
+  expect(Pages.files_html(View.view_new()).join("")).toContain('<form class="fsh" data-dir="">');
 });
 
 // the Timesheet page (K5, RED ZONE): drafts by day with each day's hours,

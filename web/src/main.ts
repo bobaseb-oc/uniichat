@@ -297,6 +297,7 @@ function chat(): void {
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
+  $("#page").addEventListener("submit", files_run);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -1362,6 +1363,25 @@ function palette_run(k: number): void {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+
+// the Files page's box sent (K9): its command run on the device in the
+// folder shown (none: the home repo), its output a note in the chat
+function files_run(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.fsh");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const box = form.querySelector("input")!;
+  const command = box.value.trim();
+  if (command === "") {
+    return;
+  }
+  const dir = form.dataset.dir ?? "";
+  act(dir === "" ? { $: "Send", text: "!" + command, images: [] } : { $: "Bang", command, dir });
+  box.value = "";
+  toast("Running " + command.slice(0, 60) + ": its output comes in the chat.");
 }
 
 // the Routines page's form sent: a routine added (the server checks it)

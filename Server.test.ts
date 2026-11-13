@@ -258,7 +258,14 @@ Tools.done(chat.tools, "pc", job.id, { text: "hi\\n(exit 0 in 0.0 s)", fail: fal
 for (let k = 0; k < 100 && !chat.mem.count; k++) await Bun.sleep(10);
 const { Memory } = await import(${JSON.stringify(import.meta.dir + "/Memory.ts")});
 const last = Memory.message(chat.mem, chat.mem.count - 1);
-console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty, ran, job: job && { name: job.job.name, input: job.job.input, cwd: job.job.cwd }, mac: jobs.mac.length, kind: last?.kind, text: last?.text, asks }));
+// K9: the web picks the device (!@name) and a folder (the Files page)
+const several = await Chat.act(chat, "b4", { $: "bang", command: "ls" }, "");
+const unknown = await Chat.act(chat, "b5", { $: "bang", command: "ls", device: "nas" }, "");
+const picked = await Chat.act(chat, "b6", { $: "bang", command: "ls", device: "mac", dir: "/r/it's here" }, "");
+const there = jobs.mac.at(-1);
+const baddir = await Chat.act(chat, "b7", { $: "bang", command: "ls", device: "mac", dir: "x".repeat(2000) }, "");
+console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty, ran, job: job && { name: job.job.name, input: job.job.input, cwd: job.job.cwd }, mac: jobs.mac.length, kind: last?.kind, text: last?.text, asks,
+  several: several.error ?? null, unknown: unknown.error ?? null, picked, there: there && there.job.input.command, baddir: "error" in baddir }));
 process.exit(0);
 `;
 
@@ -768,8 +775,10 @@ test("!command runs as a shell job on the device it came from; its output is a n
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   expect(out).toEqual({
     none: { error: "No device is open: run legion (or legion device) on one." }, two: false, empty: true, ran: {},
-    job: { name: "shell", input: { command: "echo hi" }, cwd: "main" }, mac: 1, kind: "note",
+    job: { name: "shell", input: { command: "echo hi" }, cwd: "main" }, mac: 2, kind: "note",
     text: "The user ran on pc:\n$ echo hi\nhi\n(exit 0 in 0.0 s)", asks: 0,
+    several: "Several devices are open (mac, pc): name one, as !@mac <command>, or type it in that device's terminal.",
+    unknown: "No device nas is open: mac, pc.", picked: {}, there: "cd '/r/it'\\''s here' && ls", baddir: true,
   });
 });
 

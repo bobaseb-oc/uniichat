@@ -58,6 +58,13 @@ test("!command asks to run it on a device, from the chat or an agent's page; a b
   expect(v.notes.at(-1)).toBe("! needs a command: !<command>, run with the shell on a device.");
   View.view_act(v, { $: "Goto", name: "Mgr" });
   expect(View.view_act(v, { $: "Send", text: "!ls" })).toEqual([{ $: "bang", command: "ls" }]);
+  // !@device names the device to run on (K9); a bare !@device is a note
+  expect(View.view_act(v, { $: "Send", text: "!@pc-2 git log -3" })).toEqual([{ $: "bang", command: "git log -3", device: "pc-2" }]);
+  expect(View.view_act(v, { $: "Send", text: "!@pc" })).toEqual([]);
+  expect(v.notes.at(-1)).toBe("! needs a command: !<command>, run with the shell on a device.");
+  // the Files page's box: a command in a folder (K9)
+  expect(View.view_act(v, { $: "Bang", command: " ls ", dir: "/r" })).toEqual([{ $: "bang", command: "ls", dir: "/r" }]);
+  expect(View.view_act(v, { $: "Bang", command: "  ", dir: "/r" })).toEqual([]);
 });
 
 const crew = (name: string, parent: string, tier: View.Crew["tier"], status: View.Crew["status"], since = 0): View.Crew => ({ name, parent, tier, model: tier === "manager" ? "sonnet-5.5" : "haiku-5.5", status, since });

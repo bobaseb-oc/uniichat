@@ -282,7 +282,9 @@ export function files_html(v: View.View): string[] {
   const repo = looked?.path ?? "@home";
   const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
   const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${shown_html(looked)}</div></div>`];
+  const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
+  const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
 }
 
 function shown_html(looked: View.Looked | null): string {

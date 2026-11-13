@@ -1226,7 +1226,7 @@ var RETRY = 1000;
 var TICK = "+";
 var MOVE = 4001;
 var FRAME = 2 ** 22;
-var HINT = "Message Legion";
+var HINT = "Message Legion (!command runs it on your device; !@name on that one)";
 var AI = "Unii is an AI, not a person, and can make mistakes.";
 var NOTICE = 3 * 60 * 60 * 1000;
 var WAIT = "compressing…";
@@ -1401,9 +1401,10 @@ function view_act(v, act) {
         return [];
       }
       if (text.startsWith("!")) {
-        const command = text.slice(1).trim();
+        const named = /^!@([\w.-]{1,64})(?:\s+|$)/.exec(text);
+        const command = text.slice(named === null ? 1 : named[0].length).trim();
         v.notes.push(...command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []);
-        return command === "" ? [] : [{ $: "bang", command }];
+        return command === "" ? [] : [{ $: "bang", command, ...named === null ? {} : { device: named[1] } }];
       }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
@@ -1506,6 +1507,10 @@ function view_act(v, act) {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Bang": {
+      const command = act.command.trim();
+      return command === "" ? [] : [{ $: "bang", command, dir: act.dir }];
     }
     case "Timesheet": {
       return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
@@ -2780,7 +2785,9 @@ function files_html(v) {
   const repo = looked?.path ?? "@home";
   const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
   const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${shown_html(looked)}</div></div>`];
+  const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
+  const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
 }
 function shown_html(looked) {
   if (looked === null) {
@@ -3029,6 +3036,7 @@ function chat() {
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
+  $("#page").addEventListener("submit", files_run);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -3896,6 +3904,22 @@ function palette_run(k) {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+function files_run(ev) {
+  const form = ev.target.closest("form.fsh");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const box = form.querySelector("input");
+  const command = box.value.trim();
+  if (command === "") {
+    return;
+  }
+  const dir = form.dataset.dir ?? "";
+  act(dir === "" ? { $: "Send", text: "!" + command, images: [] } : { $: "Bang", command, dir });
+  box.value = "";
+  toast("Running " + command.slice(0, 60) + ": its output comes in the chat.");
 }
 function routine_add(ev) {
   const form = ev.target.closest("form.radd");

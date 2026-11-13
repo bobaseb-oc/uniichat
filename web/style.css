@@ -712,3 +712,5 @@ pre.code .sha { font: inherit; color: var(--accent); padding: 0; text-decoration
 .trow.sent { opacity: .7; }
 .trow .tag.ok { color: #2da44e; }
 .trow .tag.bad { color: #cf222e; }
+.fsh { margin-bottom: 8px; }
+.fsh input { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hair); background: transparent; color: inherit; font: 12px ui-monospace, monospace; }

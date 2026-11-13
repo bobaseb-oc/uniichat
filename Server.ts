@@ -1418,7 +1418,7 @@ export namespace Chat {
         return Chat.reply(chat, id, Number(msg.q), msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
       }
       case "bang": {
-        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device);
+        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device, msg.device, msg.dir);
       }
       case "tell": {
         // the person's message to an agent, as Unii's tell; refused as a
@@ -1986,21 +1986,30 @@ const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
 
   // the person's !command: a shell job, as Unii's own (in the home repo,
   // gated by Claude Code's hooks there: Hooks.ts), on the device it came
-  // from, else the only one open; its command and output a note the AI
-  // reads, starting no turn. Answered at once; the note comes when it ends
-  export function bang(chat: Chat, id: string, command: string, from: string): Answer {
+  // from (or the one named: !@name), else the only one open; in a folder
+  // if given (the Files page's box: cd there first); its command and output
+  // a note the AI reads, starting no turn. Answered at once; the note comes
+  // when it ends
+  export function bang(chat: Chat, id: string, command: string, from: string, named?: unknown, dir?: unknown): Answer {
     if (command === "") {
       return { error: "No command." };
     }
+    if (dir !== undefined && (typeof dir !== "string" || dir === "" || dir.length > LOOK_TEXT)) {
+      return { error: "Not a folder to run it in." };
+    }
     const open = Tools.opened(chat.tools).map(([name]) => name);
-    const device = open.includes(from) ? from : open.length === 1 ? open[0]! : null;
+    if (named !== undefined && !open.includes(String(named))) {
+      return { error: "No device " + String(named).slice(0, 64) + " is open: " + (open.join(", ") || "none") + "." };
+    }
+    const device = named !== undefined ? String(named) : open.includes(from) ? from : open.length === 1 ? open[0]! : null;
     if (device === null) {
-      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): type the !command in the terminal of the one to run it on." };
+      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): name one, as !@" + open[0] + " <command>, or type it in that device's terminal." };
     }
     Chat.mark(chat, id, {});
-    const job = { name: "shell", input: { command }, cwd: "main" };
+    const quoted = dir === undefined ? null : "'" + dir.replace(/'/g, "'\\''") + "'";
+    const job = { name: "shell", input: { command: quoted === null ? command : "cd " + quoted + " && " + command }, cwd: "main" };
     Tools.job(chat.tools, device, job, new AbortController().signal, "bang-" + id).then((out) => {
-      Chat.note(chat, "The user ran on " + device + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
+      Chat.note(chat, "The user ran on " + device + (dir === undefined ? "" : " in " + dir) + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
     });
     return {};
   }

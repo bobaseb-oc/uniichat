@@ -235,7 +235,7 @@ export type Client =
   | { $: "dismiss"; name: string } // a done agent out of the crew
   | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
   | { $: "guess"; body: Body } // an import's cost
-  | { $: "bang"; command: string } // the person's !command, run with the shell on a device
+  | { $: "bang"; command: string; device?: string; dir?: string } // the person's !command, run with the shell on a device (!@name: that one), in a folder (the Files page's box)
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
   | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null } // a device's report
@@ -300,6 +300,7 @@ export type Act =
   | { $: "Themes" }                             // the digest summarized by theme
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
   | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
+  | { $: "Bang"; command: string; dir: string }  // a command run in a folder (the Files page's box)
   | { $: "Timesheet"; op: "submit" | "drop"; ns: number[] } // timesheet drafts submitted to Harvest, or dropped (K5)
 
 // what a page draws, top to bottom
@@ -353,7 +354,7 @@ export const MOVE  = 4001;
 // ~0.15 MB). A bigger one closes its socket (Server.ts)
 export const FRAME = 2 ** 22;
 
-export const HINT = "Message Legion";
+export const HINT = "Message Legion (!command runs it on your device; !@name on that one)";
 
 // the disclosure both views show (EU AI Act art. 50, California SB 243,
 // New York GBL art. 47, Anthropic's usage policy)
@@ -575,9 +576,10 @@ export function view_act(v: View, act: Act): Client[] {
       // !command: run with the shell on a device, its output a note the
       // AI reads (as Claude Code's), from any page
       if (text.startsWith("!")) {
-        const command = text.slice(1).trim();
+        const named = /^!@([\w.-]{1,64})(?:\s+|$)/.exec(text);
+        const command = text.slice(named === null ? 1 : named[0].length).trim();
         v.notes.push(...(command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []));
-        return command === "" ? [] : [{ $: "bang", command }];
+        return command === "" ? [] : [{ $: "bang", command, ...(named === null ? {} : { device: named[1]! }) }];
       }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
@@ -681,6 +683,10 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Bang": {
+      const command = act.command.trim();
+      return command === "" ? [] : [{ $: "bang", command, dir: act.dir }];
     }
     case "Timesheet": {
       return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
