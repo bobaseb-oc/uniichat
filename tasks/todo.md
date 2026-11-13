@@ -738,10 +738,15 @@ local/mcp.ts, proven live: 7 mcp__okf__* tools, list_cqs answered through Mcp.po
 internal build of 0.x@8904fff. K2+K4 are in local/okf-wiki.ts (one server, 3 tools; tests 9/9,
 red first; live search checked). K3 is in local/rules.md. Full suite: 376 pass, 3 fail, the known
 three (link_ask, two log-staging).
-Open: (a) OKF's run_cq and run_sparql have "run" names, so auto mode reviews them and plan mode
-refuses them, although the server is read-only. A per-server read-only trust flag would be an
-access-control change (RED ZONE), so it is left for the user. (b) K5 is not built: design below,
-RED ZONE draft for sign-off.
+K6 (RED ZONE draft): plan mode runs exactly the MCP reads that auto mode lets by unreviewed:
+Modes.MCP_READS (U3's list, unchanged) or the user's mcp_reads, with no file argument. Agents'
+write and edit now refuse ~/.unii (or $UNII_DIR) config.json, mcp.json and mcp.local.json, in any
+case. 6 of 6 mutants killed. K7: local/okf-mcp.sh starts OKF's server from ~/.unii/okf (a link)
+or $OKF_CHECKOUT, rebuilding the internal dataset when the commit moves; mcp.extra.json lists it,
+and an extra server that Claude Code already names is skipped. Proven live through Legion's own
+config: 10 tools, list_cqs and search_wiki answered. Full suite: 411 pass, 3 fail (the known 3).
+Open: a full-mode shell can still write ~/.unii/config.json, as it can write settings files. (b) K5
+is not built: design below, RED ZONE draft for sign-off.
 
 K5 design (RED ZONE draft, not implemented): `legion okf-propose`, by hand first, as a weekly
 read-only routine (Tools.start plan=true) only after sign-off. 1) It reads ~/.unii/okf-gaps.jsonl
