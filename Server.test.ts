@@ -426,7 +426,30 @@ chat.tools.devices.set("mac", { terms: new Map([["t1", { send: (m) => links.push
 await Chat.act(chat, "l9", { $: "look", what: { kind: "dir", path: "/r", x: 1 } }, "");
 await Chat.act(chat, "l10", { $: "look", what: { kind: "open", path: "/r/.env" } }, "");
 const opened = await Chat.act(chat, "l11", { $: "looked", id: "l10", kind: "open", path: "/r/.env", text: "Opened .env in VS Code." }, "mac");
-console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.slice(0, before).filter((m) => m.$ === "look" || m.$ === "looked"), later: sent.slice(before).filter((m) => m.$ === "look" || m.$ === "looked"), links, opened }));
+// two devices asked: one's refusal waits for the other's answer; both
+// refusing: the last refusal is told (user's report 2026-11-13: an old
+// terminal's refusal hid the device's file)
+const mark = sent.length;
+await Chat.act(chat, "l12", { $: "look", what: { kind: "file", path: "/r/a.ts" } }, "");
+await Chat.act(chat, "l13", { $: "looked", id: "l12", kind: "file", error: "not under" }, "mac");
+await Chat.act(chat, "l14", { $: "looked", id: "l12", kind: "file", path: "/r/a.ts", text: "a" }, "mac");
+await Chat.act(chat, "l15", { $: "look", what: { kind: "file", path: "/r/b.ts" } }, "");
+await Chat.act(chat, "l16", { $: "looked", id: "l15", kind: "file", error: "one" }, "mac");
+await Chat.act(chat, "l17", { $: "looked", id: "l15", kind: "file", error: "two" }, "mac");
+const either = sent.slice(mark).filter((m) => m.$ === "looked");
+// find and search to every device; a save (RED ZONE) to one, and only a
+// view's (a device's own ask refused), its text and base shape checked
+const opens = links.splice(0);
+const quick = sent.length;
+await Chat.act(chat, "l18", { $: "look", what: { kind: "grep", path: "/r", q: "needle", x: 1 } }, "");
+const saves = [
+  await Chat.act(chat, "l19", { $: "look", what: { kind: "save", path: "/r/a.ts", text: "x", base: "a".repeat(64) } }, "mac"),
+  await Chat.act(chat, "l20", { $: "look", what: { kind: "save", path: "/r/a.ts", text: "x", base: "short" } }, ""),
+  await Chat.act(chat, "l21", { $: "look", what: { kind: "save", path: "/r/a.ts", text: 7, base: "a".repeat(64) } }, ""),
+].map((a) => "error" in a);
+const saved = await Chat.act(chat, "l22", { $: "look", what: { kind: "save", path: "/r/a.ts", text: "two", base: "a".repeat(64) } }, "");
+const found = sent.slice(quick).filter((m) => m.$ === "look");
+console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.slice(0, before).filter((m) => m.$ === "look" || m.$ === "looked"), later: sent.slice(before, mark).filter((m) => m.$ === "look" || m.$ === "looked"), links, opens, opened, either, saves, saved, found }));
 process.exit(0);
 `;
 
@@ -441,8 +464,13 @@ test("a view's look goes to the devices; a device's answer, once, to the views",
     sent: [{ $: "look", id: "l4", what: { kind: "git", repo: "/r", op: "log" } }, { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }],
   });
   expect(out.later).toEqual([{ $: "look", id: "l9", what: { kind: "dir", path: "/r" } }, { $: "looked", id: "l10", kind: "open", path: "/r/.env", text: "Opened .env in VS Code." }]);
-  expect(out.links).toEqual([["t1", { $: "look", id: "l10", what: { kind: "open", path: "/r/.env" } }]]);
   expect(out.opened).toEqual({});
+  expect(out.opens).toEqual([["t1", { $: "look", id: "l10", what: { kind: "open", path: "/r/.env" } }]]);
+  expect(out.saves).toEqual([true, true, true]);
+  expect(out.saved).toEqual({});
+  expect(out.found).toEqual([{ $: "look", id: "l18", what: { kind: "grep", path: "/r", q: "needle" } }]);
+  expect(out.links).toEqual([["t1", { $: "look", id: "l22", what: { kind: "save", path: "/r/a.ts", text: "two", base: "a".repeat(64) } }]]);
+  expect(out.either).toEqual([{ $: "looked", id: "l12", kind: "file", path: "/r/a.ts", text: "a" }, { $: "looked", id: "l15", kind: "file", error: "two" }]);
 });
 
 // the timesheet's Submit (K5, RED ZONE): the user's act sends the drafts
@@ -935,4 +963,42 @@ test("the summaries wait reads as View's SUMMARIES", async () => {
   const src = fs.readFileSync(import.meta.dir + "/Server.ts", "utf8");
   expect(SUMMARIES).toBe("summaries");
   expect(src.match(/\bconst SUMMARIES\b/g)).toBe(null);
+});
+
+// the gateway's report (Gateway.ts) to every chat's views: its budget,
+// read at most every GATEWAY_READ, and only through a gateway; when a
+// model last answered busy
+const GATEWAY = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+const { Agent } = await import(${JSON.stringify(import.meta.dir + "/Agent.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const reads = [];
+const read = async (base, key) => (reads.push(base + " " + (key === "k-test")), { spend: 1, max: 800, reset: null });
+Agent.health.busy = 42;
+await Chat.gateway(1e9, read);
+await Chat.gateway(1e9 + 60e3, read);
+await Chat.gateway(1e9 + 11 * 60e3, read);
+console.log(JSON.stringify({ reads, sent: sent.filter((m) => m.$ === "gateway") }));
+process.exit(0);
+`;
+
+test("the gateway's budget, read every 10 minutes through the gateway, and busy go to the views", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/gw.ts", GATEWAY);
+  const run = async (env: Record<string, string>) => {
+    const proc = Bun.spawn([process.execPath, dir + "/gw.ts"], { env: { ...process.env, UNII_DIR: dir, ...env }, stdout: "pipe", stderr: "inherit" });
+    return JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  };
+  const gw = await run({ UNII_ANTHROPIC_URL: "https://gw.test", ANTHROPIC_API_KEY: "k-test" });
+  expect(gw.reads).toEqual(["https://gw.test true", "https://gw.test true"]);
+  expect(gw.sent).toHaveLength(3);
+  expect(gw.sent[0]).toEqual({ $: "gateway", budget: { spend: 1, max: 800, reset: null }, busy: 42 });
+  const own = await run({ UNII_ANTHROPIC_URL: "https://api.anthropic.com", ANTHROPIC_API_KEY: "k-test" });
+  expect(own.reads).toEqual([]);
+  expect(own.sent[0]).toEqual({ $: "gateway", budget: null, busy: 42 });
 });

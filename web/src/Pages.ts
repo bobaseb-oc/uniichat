@@ -298,16 +298,64 @@ export function files_html(v: View.View): string[] {
   const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
   const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
     const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
-    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+    // its changes: the repo of the first file it touched by its full path
+    const full = (c.files ?? []).find((f) => f.startsWith("/"));
+    const changes = full === undefined ? "" : ` <button class="pbtn" title="its branch's work since main, committed or not"${act_html({ $: "Look", what: { kind: "git", repo: full, op: "changes" } })}>changes</button>`;
+    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span>${changes}</h3>${files}</div>`;
   }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
   const repo = looked?.path ?? "@home";
   const editor = looked?.kind === "file" && looked.path !== undefined && looked.error === undefined ? `<button class="pbtn" title="in VS Code, else your default editor"${act_html({ $: "Look", what: { kind: "open", path: looked.path } })}>Open in editor</button>` : "";
-  const opened = v.opened === null ? "" : `<span class="meta">${esc(v.opened)}</span>`;
-  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
-  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span>${editor}${opened}<span class="fgit">Git: ${git}</span></div>`;
+  const told = v.told === null ? "" : `<span class="meta">${esc(v.told)}</span>`;
+  const shown = looked?.kind === "file" && looked.hash !== undefined && looked.error === undefined;
+  const edit = !shown || v.editing ? "" : `<button class="pbtn" title="edit it here; saved only if unchanged since shown"${act_html({ $: "Edit", on: true })}>Edit</button>`;
+  const git = ["status", "log", "diff", "changes", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span>${editor}${edit}${told}<span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
   const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${v.editing && shown ? edit_html(looked!.text ?? "") : shown_html(looked, v.source, v.line)}</div></div>`];
+}
+
+// the file shown in an editing box (RED ZONE): Save sends it (main.ts,
+// View's Save, with the hash it was shown with), Cancel drops the edit
+function edit_html(text: string): string {
+  return `<form class="fedit" data-edit><textarea data-keep="edit" spellcheck="false" aria-label="the file's text">${esc(text)}</textarea><div class="acts"><button type="submit" class="pbtn">Save</button><button type="button" class="pbtn"${act_html({ $: "Edit", on: false })}>Cancel</button><span class="meta">⌘S saves</span></div></form>`;
+}
+
+// the last find (⌘P) or search (⌘⇧F) across the workspaces: each one's
+// hits, a Look each (a search's at its line); none open: said
+function found_html(v: View.View): string {
+  const f = v.found;
+  const box = (kind: "find" | "grep", hint: string) => `<form class="ffind" data-find="${kind}"><input data-keep="${kind}" value="${esc(f?.kind === kind ? f.q : "")}" placeholder="${hint}" aria-label="${hint}" autocomplete="off"></form>`;
+  const boxes = box("find", "Find a file… ⌘P") + box("grep", "Search text… ⌘⇧F");
+  if (f === null) {
+    return boxes;
+  }
+  const close = `<button class="fclose" title="clear"${act_html({ $: "Find", kind: f.kind, q: "" })}>×</button>`;
+  if (f.by.size === 0) {
+    return boxes + `<p class="meta">Open a workspace to find in it.</p>`;
+  }
+  const each = [...f.by].map(([w, got]) => {
+    const head = `<p class="meta fx">${esc(w.slice(w.lastIndexOf("/") + 1) || w)}</p>`;
+    if (got.error !== undefined || got.text === undefined) {
+      return head + `<p class="meta fx" style="--d:1">${esc(got.error ?? (f.kind === "find" ? "Finding…" : "Searching…"))}</p>`;
+    }
+    const rows = got.text.split("\n").filter((l) => l !== "").map((l) => hit_html(f.kind, w, l));
+    return head + (rows.join("") || `<p class="meta fx" style="--d:1">none</p>`);
+  }).join("");
+  return boxes + `<div class="ffound"><h3>${f.kind === "find" ? "Files" : "Lines"} with “${esc(f.q)}” ${close}</h3>${each}</div>`;
+}
+
+// a hit in workspace w: a found file, or a search's file:line:text, a Look
+function hit_html(kind: "find" | "grep", w: string, l: string): string {
+  if (kind === "find") {
+    return `<button class="fx" style="--d:1"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc(l)}</button>`;
+  }
+  const m = /^(.*?):(\d+):(.*)$/.exec(l);
+  if (m === null) {
+    return "";
+  }
+  const [, file, line, text] = m as unknown as [string, string, string, string];
+  return `<button class="fx" style="--d:1" title="${esc(file + ":" + line)}"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + file, line: Number(line) } })}><b>${esc(file.slice(file.lastIndexOf("/") + 1))}:${line}</b> ${esc(text.trim())}</button>`;
 }
 
 // the explorer (Terax-like): workspaces opened from the device's roots,
@@ -323,7 +371,7 @@ function explorer_html(v: View.View): string {
     const head = `<div class="fws"><button class="fx fdir" title="${esc(w)}"${act_html({ $: "Tree", path: w })}>${open ? "▾" : "▸"} ${esc(base(w))}</button><button class="fclose" title="close this workspace"${act_html({ $: "Workspace", path: w, on: false })}>×</button></div>`;
     return head + (open ? folder_html(v, w, 1) : "");
   }).join("");
-  return `<div class="fgroup fexp"><h3>Workspaces</h3>${picker}${spaces}</div>`;
+  return `<div class="fgroup fexp">${found_html(v)}<h3>Workspaces</h3>${picker}${spaces}</div>`;
 }
 
 // a folder's entries, as its device listed them (View.Looked's "dir")
@@ -357,7 +405,10 @@ function folder_html(v: View.View, dir: string, depth: number): string {
 // escapes it), HTML in a frame sandboxed with nothing allowed (no
 // scripts, an origin of its own: it can't reach Legion's session; the
 // page's CSP still applies), code colored (Hl.ts); Source: its lines
-function file_html(path: string, text: string, source: boolean): string {
+// line: the one asked for, marked (id L<n>: main.ts scrolls to it); a
+// rendered kind is shown as its source for it
+function file_html(path: string, text: string, asked: boolean, line: number | null): string {
+  const source = asked || line !== null;
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   const kind = ["md", "markdown"].includes(ext) ? "md" : ["html", "htm"].includes(ext) ? "html" : null;
   const toggle = kind === null ? "" : `<button class="pbtn"${act_html({ $: "Source", on: !source })}>${source ? (kind === "md" ? "Rendered" : "Preview") : "Source"}</button>`;
@@ -369,10 +420,11 @@ function file_html(path: string, text: string, source: boolean): string {
   }
   const lang = hl_lang(path);
   const lines = lang === null ? text.replace(/\n$/, "").split("\n").map(esc) : hl_lines(text.replace(/\n$/, ""), lang);
-  return `${toggle}<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${l}`).join("\n")}</pre>`;
+  const row = (l: string, k: number) => k + 1 === line ? `<span class="hit" id="L${k + 1}"><span class="ln">${k + 1}</span>${l}</span>` : `<span class="ln">${k + 1}</span>${l}`;
+  return `${toggle}<pre class="code">${lines.map(row).join("\n")}</pre>`;
 }
 
-function shown_html(looked: View.Looked | null, source: boolean): string {
+function shown_html(looked: View.Looked | null, source: boolean, at: number | null): string {
   if (looked === null) {
     return `<p class="meta">Pick a file, or a git view.</p>`;
   }
@@ -380,7 +432,7 @@ function shown_html(looked: View.Looked | null, source: boolean): string {
     return `<p class="meta">${esc(looked.error)}</p>`;
   }
   if (looked.kind === "file") {
-    return file_html(looked.path ?? "", looked.text ?? "", source);
+    return file_html(looked.path ?? "", looked.text ?? "", source, at);
   }
   const lines = (looked.text ?? "").replace(/\n$/, "").split("\n");
   const repo = looked.path ?? "@home";

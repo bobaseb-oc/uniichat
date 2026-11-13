@@ -364,3 +364,83 @@ test("files explorer: workspaces from the roots, folders asked once, files opene
   View.view_act(v, { $: "Workspace", path: "/r", on: false });
   expect(v.workspaces).toEqual(["/w/Owl"]);
 });
+
+// a path's line (path:42, a search's hit): the file opened at it, the
+// line marked to scroll to; Markdown and HTML shown as source for it
+test("files: a file opened at a line, marked; rendered kinds shown as source", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(View.view_line("src/a.ts:42:7")).toBe(42);
+  expect(View.view_line("src/a.ts")).toBeNull();
+  expect(View.view_act(v, { $: "Look", what: { kind: "file", path: "/r/a.ts", line: 2 } })).toEqual([{ $: "look", what: { kind: "file", path: "/r/a.ts" } }]);
+  View.view_hear(v, { $: "looked", id: "a", kind: "file", path: "/r/a.ts", text: "x\ny\nz" });
+  const at = Pages.files_html(v).join("");
+  expect(at).toContain('<span class="hit" id="L2"><span class="ln">2</span>y</span>');
+  expect(at).not.toContain('id="L1"');
+  View.view_act(v, { $: "Look", what: { kind: "file", path: "/r/b.md", line: 1 } });
+  View.view_hear(v, { $: "looked", id: "b", kind: "file", path: "/r/b.md", text: "# hi" });
+  expect(Pages.files_html(v).join("")).toContain('<span class="hit" id="L1"><span class="ln">1</span># hi</span>');
+  View.view_act(v, { $: "Look", what: { kind: "file", path: "/r/c.ts" } });
+  View.view_hear(v, { $: "looked", id: "c", kind: "file", path: "/r/c.ts", text: "q" });
+  expect(Pages.files_html(v).join("")).not.toContain('class="hit"');
+});
+
+// an agent's changes (its branch's work since main) a click away, from
+// the repo of the first file it touched by its full path; git's bar too
+test("files: an agent's changes, from its files' repo; changes in git's bar", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ name: "Owl", parent: "main", tier: "worker", model: "m", status: "working", since: 0, files: ["notes.md", "/w/repo/src/a.ts"] }, { name: "Elk", parent: "main", tier: "worker", model: "m", status: "working", since: 0, files: ["rel.ts"] }] } as any);
+  const html = Pages.files_html(v).join("");
+  expect(html).toContain(act({ $: "Look", what: { kind: "git", repo: "/w/repo/src/a.ts", op: "changes" } }));
+  expect(html).toContain(act({ $: "Look", what: { kind: "git", repo: "@home", op: "changes" } }));
+  expect(html.split('op&quot;:&quot;changes').length - 1).toBe(2); // Elk: no full path, no button
+});
+
+// quick open and search across the open workspaces (⌘P, ⌘⇧F): a find or
+// a search asked of each; answers to an older query dropped; each hit a
+// Look (a search's at its line); cleared by an empty query
+test("files: find and search across the workspaces, hits opened, old answers dropped", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(View.view_act(v, { $: "Find", kind: "find", q: "scan" })).toEqual([]);
+  expect(Pages.files_html(v).join("")).toContain("Open a workspace to find in it.");
+  v.workspaces = ["/r", "/s"];
+  expect(View.view_act(v, { $: "Find", kind: "grep", q: " needle " })).toEqual([{ $: "look", what: { kind: "grep", path: "/r", q: "needle" } }, { $: "look", what: { kind: "grep", path: "/s", q: "needle" } }]);
+  View.view_hear(v, { $: "looked", id: "2", kind: "grep", path: "/r", q: "needle", text: "src/a.py:12:    return <needle>" });
+  View.view_hear(v, { $: "looked", id: "1", kind: "grep", path: "/r", q: "old", text: "x.ts:1:old" }); // an older query's, late
+  const html = Pages.files_html(v).join("");
+  expect(html).toContain(act({ $: "Look", what: { kind: "file", path: "/r/src/a.py", line: 12 } }));
+  expect(html).toContain("return &lt;needle&gt;");
+  expect(html).not.toContain("x.ts");
+  expect(html).toContain("Searching…");
+  expect(html).toContain('<form class="ffind" data-find="grep"><input data-keep="grep" value="needle"');
+  View.view_act(v, { $: "Find", kind: "find", q: "cfg" });
+  View.view_hear(v, { $: "looked", id: "3", kind: "find", path: "/s", q: "cfg", text: "lib/cfg.ts" });
+  expect(Pages.files_html(v).join("")).toContain(act({ $: "Look", what: { kind: "file", path: "/s/lib/cfg.ts" } }));
+  expect(View.view_act(v, { $: "Find", kind: "find", q: "" })).toEqual([]);
+  expect(v.found).toBeNull();
+});
+
+// editing a file in the browser (RED ZONE): Edit shows its text in a box
+// (escaped), Save sends it with the hash it was shown with; saved: said,
+// the box closed, the file asked again; refused: said, the box kept
+test("files: a file edited and saved as shown; a refusal keeps the edit", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  View.view_hear(v, { $: "looked", id: "f", kind: "file", path: "/r/a.ts", hash: "h1", text: "a </textarea> b" });
+  expect(Pages.files_html(v).join("")).toContain(act({ $: "Edit", on: true }));
+  View.view_act(v, { $: "Edit", on: true });
+  const box = Pages.files_html(v).join("");
+  expect(box).toContain('<textarea data-keep="edit" spellcheck="false" aria-label="the file\'s text">a &lt;/textarea&gt; b</textarea>');
+  expect(View.view_act(v, { $: "Save", text: "new" })).toEqual([{ $: "look", what: { kind: "save", path: "/r/a.ts", text: "new", base: "h1" } }]);
+  expect(View.view_hear(v, { $: "looked", id: "s", kind: "save", path: "/r/a.ts", error: "/r/a.ts changed since it was shown" })).toEqual([]);
+  expect(v.editing).toBe(true);
+  expect(Pages.files_html(v).join("")).toContain("changed since it was shown");
+  expect(View.view_hear(v, { $: "looked", id: "t", kind: "save", path: "/r/a.ts", hash: "h2", text: "Saved a.ts." })).toEqual([{ $: "look", what: { kind: "file", path: "/r/a.ts" } }]);
+  expect(v.editing).toBe(false);
+  // nothing shown, or no hash: nothing to save
+  View.view_hear(v, { $: "looked", id: "e", kind: "file", error: "no" });
+  expect(View.view_act(v, { $: "Save", text: "x" })).toEqual([]);
+  expect(Pages.files_html(v).join("")).not.toContain(act({ $: "Edit", on: true }));
+});

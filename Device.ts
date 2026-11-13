@@ -482,8 +482,21 @@ const GIT_VIEWS: Record<string, (rev: string | null) => string[]> = {
   log     : () => ["log", "--oneline", "--decorate", "--no-color", "-80"],
   diff    : () => ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD"],
   show    : (rev) => ["show", "--no-color", "--no-ext-diff", "--no-textconv", "--stat", "--patch", rev ?? "HEAD"],
+  // an agent's work: the working tree since the branch left its base (look_git finds it)
+  changes : (base) => ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--stat", "--patch", "--merge-base", base ?? "origin/HEAD"],
 };
 const REV = /^([0-9a-f]{4,40}|HEAD(~\d{1,3})?)$/;
+// the default branch a repo's changes are told against, the first found:
+// a fork's upstream first (the fork workflow), then its own
+const BASES = ["upstream/HEAD", "upstream/main", "origin/HEAD", "origin/main", "origin/master", "main", "master"];
+async function git_base(dir: string): Promise<string | null> {
+  for (const b of BASES) {
+    if ((await exec(device_git(dir, "rev-parse", "--verify", "--quiet", b + "^{commit}"))).code === 0) {
+      return b;
+    }
+  }
+  return null;
+}
 
 // a path's real path, or "" if none
 function real_or_none(p: string): string {
@@ -543,6 +556,8 @@ export async function device_look(rules: Rules, id: string, what: View.Look, lau
       : what?.kind === "git" ? await look_git(rules, what)
       : what?.kind === "dir" ? look_dir(rules, String(what.path ?? ""))
       : what?.kind === "open" ? await look_open(rules, String(what.path ?? ""), launch)
+      : what?.kind === "find" || what?.kind === "grep" ? await look_find(rules, what.kind, String(what.path ?? ""), String(what.q ?? ""))
+      : what?.kind === "save" ? look_save(rules, String(what.path ?? ""), String(what.text ?? ""), String(what.base ?? ""))
       : "Ask for a file, a folder or a repo's git.";
     return typeof shown === "string" ? { $: "looked", id, kind, error: shown.slice(0, 300) } : { $: "looked", id, kind, ...shown };
   } catch (err: any) {
@@ -550,7 +565,8 @@ export async function device_look(rules: Rules, id: string, what: View.Look, lau
   }
 }
 
-type Shown = { path: string; op?: string; text: string };
+type Shown = { path: string; op?: string; q?: string; hash?: string; text: string };
+const sha256 = (data: string | Uint8Array) => new Bun.CryptoHasher("sha256").update(data).digest("hex");
 
 // the files explorer: a folder's entries (View.Looked's "dir" lines),
 // folders first, by name, .git never, at most DIR_MOST; @roots: the roots
@@ -587,6 +603,90 @@ async function look_open(rules: Rules, given: string, launch: (file: string) => 
     return given + " is not a file.";
   }
   return { path: given, text: "Opened " + path.basename(real) + " in " + await launch(real) + "." };
+}
+
+// quick open and search in a workspace's repo (the files git knows or
+// would add): find, its files by a fuzzy name (the query's letters in
+// order), best first; grep, its lines holding a text (any case, as typed),
+// a few a file; a secret's file never told; at most FOUND each
+export const FOUND = 200;
+async function look_find(rules: Rules, kind: "find" | "grep", given: string, q: string): Promise<Shown | string> {
+  const real = look_under(rules, home(given));
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  if (q === "" || !fs.statSync(real).isDirectory()) {
+    return "Find and search take a workspace's folder and something to look for.";
+  }
+  if (!await device_trusted(real, exec)) {
+    return real + ": not searched: not this user's, or its git config names a filter or textconv driver.";
+  }
+  const told = (f: string) => !Machine.secret(path.join(real, f));
+  if (kind === "grep") {
+    const r = await exec(device_git(real, "grep", "-n", "-I", "-i", "-F", "--untracked", "--max-count=5", "--no-color", "-e", q, "--"));
+    if (r.code > 1) {
+      return "git: " + r.out.trim().slice(0, 200);
+    }
+    const lines = r.out.split("\n").filter((l) => l !== "" && told(l.slice(0, l.indexOf(":"))));
+    return { path: given, q, text: lines.slice(0, FOUND).map((l) => l.slice(0, 300)).join("\n") };
+  }
+  const r = await exec(device_git(real, "ls-files", "-co", "--exclude-standard", "-z"));
+  if (r.code !== 0) {
+    return "git: " + r.out.trim().slice(0, 200) + " (find looks in a repo's files)";
+  }
+  const want = q.toLowerCase();
+  const fuzzy = (f: string) => {
+    let at = 0;
+    for (const ch of f.toLowerCase()) {
+      at += ch === want[at] ? 1 : 0;
+    }
+    return at === want.length;
+  };
+  // best: the name holds the query, then the name has its letters in
+  // order, then the path does; shorter first
+  const base = (f: string) => f.slice(f.lastIndexOf("/") + 1);
+  const rank = (f: string) => (base(f).toLowerCase().includes(want) ? 0 : fuzzy(base(f)) ? 1e4 : 2e4) + f.length;
+  const hits = r.out.split("\0").filter((f) => f !== "" && fuzzy(f) && told(f)).sort((a, b) => rank(a) - rank(b));
+  return { path: given, q, text: hits.slice(0, FOUND).join("\n") };
+}
+
+// a file saved as the user edited it in the browser (RED ZONE): under the
+// roots, never a secret's (edited in the editor: look_open) nor Claude
+// Code's or Legion's settings (Machine.gating), by name or real path (each
+// follows symlinks), not past LOOK_BYTES, and
+// only if still as it was shown (base: that text's sha256); written
+// through a descriptor opened not following a symlink, checked again
+function look_save(rules: Rules, given: string, text: string, base: string): Shown | string {
+  const at = home(given);
+  if (Machine.secret(at)) {
+    return path.basename(at) + " may hold a secret: edit it in your editor (Open in editor).";
+  }
+  if (Machine.gating(at)) {
+    return path.basename(at) + " is Claude Code's or Legion's settings: not edited here.";
+  }
+  if (Buffer.byteLength(text) > LOOK_BYTES) {
+    return given + " would be too big to save here.";
+  }
+  const real = look_under(rules, at);
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  const fd = fs.openSync(real, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const st = fs.fstatSync(fd);
+    const again = look_under(rules, real);
+    if (!st.isFile() || typeof again !== "string" || fs.statSync(again).ino !== st.ino || fs.statSync(again).dev !== st.dev) {
+      return given + " is not the file shown: not saved.";
+    }
+    if (sha256(fs.readFileSync(fd)) !== base) {
+      return given + " changed since it was shown: open it again, then edit.";
+    }
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, text, 0);
+    return { path: given, hash: sha256(text), text: "Saved " + path.basename(real) + "." };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // VS Code (its `code`, else its app), else the default text editor; no
@@ -640,7 +740,7 @@ function look_file(rules: Rules, what: View.Look & { kind: "file" }): Shown | st
     if (data.includes(0)) {
       return given + " is a binary file.";
     }
-    return { path: at, text: data.toString("utf8") };
+    return { path: at, hash: sha256(data), text: data.toString("utf8") };
   } finally {
     fs.closeSync(fd);
   }
@@ -666,7 +766,11 @@ async function look_git(rules: Rules, what: View.Look & { kind: "git" }): Promis
   if (!await device_trusted(dir, exec)) {
     return dir + ": not run: not this user's, or its git config names a filter or textconv driver.";
   }
-  const r = await exec(device_git(dir, ...view(rev)));
+  const base = what.op === "changes" ? await git_base(dir) : rev;
+  if (base === null && what.op === "changes") {
+    return "No default branch to compare with: " + BASES.join(", ") + ".";
+  }
+  const r = await exec(device_git(dir, ...view(base)));
   if (r.code !== 0) {
     return "git: " + r.out.trim();
   }

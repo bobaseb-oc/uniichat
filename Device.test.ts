@@ -414,7 +414,7 @@ test("device_look: files and git under the device's roots only, read-only", asyn
   git("commit", "-q", "-m", "first");
   const rules = { work, computer: false, spaces: [repo] };
   const look = (what: any) => Device.device_look(rules, "r1", what) as Promise<any>;
-  expect(await look({ kind: "file", path: repo + "/a.ts" })).toEqual({ $: "looked", id: "r1", kind: "file", path: repo + "/a.ts", text: "export const a = 1;\n" });
+  expect(await look({ kind: "file", path: repo + "/a.ts" })).toEqual({ $: "looked", id: "r1", kind: "file", path: repo + "/a.ts", hash: expect.stringMatching(/^[0-9a-f]{64}$/), text: "export const a = 1;\n" });
   // an agent's relative path, from its own dir under the work dir
   expect((await look({ kind: "file", path: "notes.md", agent: "Owl" })).text).toBe("# hi");
   for (const [path, why] of [[out + "/other.txt", "not under"], [repo + "/link.txt", "not under"], [repo + "/../out/other.txt", "not under"], [repo + "/.env", "secret"], [repo + "/big.txt", "too big"], [repo + "/bin.dat", "binary"], [repo + "/none.ts", "No file"]]) {
@@ -587,4 +587,95 @@ test("device_look: folders listed and files opened in the editor, under the root
   expect((await look({ kind: "open", path: top + "/x" })).error).toContain("No file");
   expect((await look({ kind: "open", path: repo + "/src" })).error).toContain("not a file");
   expect(opened).toEqual([repo + "/.env"]);
+});
+
+// an agent's changes: its branch's work since it left the default branch
+// (origin/HEAD, else main or master), committed or not; none: said
+test("device_look: a repo's changes since its default branch, committed or not", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-chg-"));
+  const repo = top + "/repo";
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", repo]);
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+  fs.writeFileSync(repo + "/a.ts", "base\n");
+  git("add", "a.ts");
+  git("commit", "-q", "-m", "base");
+  git("switch", "-q", "-c", "feat/x");
+  fs.writeFileSync(repo + "/b.ts", "committed\n");
+  git("add", "b.ts");
+  git("commit", "-q", "-m", "feat");
+  fs.writeFileSync(repo + "/a.ts", "base\nworking\n");
+  const rules = { work: top, computer: false, spaces: [repo] };
+  const out = await Device.device_look(rules, "c", { kind: "git", repo, op: "changes" }) as any;
+  expect(out.text).toContain("+committed");
+  expect(out.text).toContain("+working");
+  expect(out.text).not.toContain("+base");
+  git("branch", "-q", "-m", "main", "trunk");
+  expect((await Device.device_look(rules, "c", { kind: "git", repo, op: "changes" }) as any).error).toContain("No default branch");
+});
+
+// quick open and search (⌘P, ⌘⇧F) in a workspace's repo: its files by
+// a fuzzy name, their lines by a text (any case); a secret's never told
+test("device_look: find a repo's files by name, search their text; secrets never", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-find-"));
+  const repo = top + "/repo";
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", repo]);
+  fs.mkdirSync(repo + "/src");
+  fs.writeFileSync(repo + "/src/config_scan.py", "def scan():\n    return 'Needle'\n");
+  fs.writeFileSync(repo + "/src/other.py", "x = 1\naxb\n");
+  fs.writeFileSync(repo + "/.env", "needle=1\n");
+  const rules = { work: top + "/w", computer: false, spaces: [repo] };
+  fs.mkdirSync(rules.work);
+  const look = (what: any) => Device.device_look(rules, "q", what) as Promise<any>;
+  expect(await look({ kind: "find", path: repo, q: "cfgscan" })).toEqual({ $: "looked", id: "q", kind: "find", path: repo, q: "cfgscan", text: "src/config_scan.py" });
+  expect((await look({ kind: "find", path: repo, q: "env" })).text).toBe("");
+  expect(await look({ kind: "grep", path: repo, q: "needle" })).toEqual({ $: "looked", id: "q", kind: "grep", path: repo, q: "needle", text: "src/config_scan.py:2:    return 'Needle'" });
+  expect((await look({ kind: "grep", path: repo, q: "-e" })).text).toBe("");
+  expect((await look({ kind: "grep", path: repo, q: "a.b" })).text).toBe(""); // as typed, not a pattern
+  expect((await look({ kind: "grep", path: top, q: "x" })).error).toContain("not under");
+  expect((await look({ kind: "find", path: top + "/../", q: "x" })).error).toContain("not under");
+});
+
+// a file saved as the user edited it in the browser (RED ZONE): only one
+// shown (its hash as shown), under the roots, not a secret's, not Claude
+// Code's or Legion's settings; changed since: refused
+test("device_look: a file saved as edited, only as it was shown, never a secret's or a setting", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-save-"));
+  const repo = top + "/repo";
+  fs.mkdirSync(repo + "/.claude", { recursive: true });
+  fs.writeFileSync(repo + "/a.ts", "one\n");
+  fs.writeFileSync(repo + "/.env", "K=v\n");
+  fs.writeFileSync(repo + "/.claude/settings.json", "{}");
+  fs.writeFileSync(top + "/out.ts", "out\n");
+  const rules = { work: top + "/w", computer: false, spaces: [repo] };
+  fs.mkdirSync(rules.work);
+  const look = (what: any) => Device.device_look(rules, "s", what) as Promise<any>;
+  const shown = await look({ kind: "file", path: repo + "/a.ts" });
+  expect(shown.hash).toMatch(/^[0-9a-f]{64}$/);
+  expect(await look({ kind: "save", path: repo + "/a.ts", text: "two\n", base: shown.hash })).toMatchObject({ kind: "save", path: repo + "/a.ts", text: "Saved a.ts." });
+  expect(fs.readFileSync(repo + "/a.ts", "utf8")).toBe("two\n");
+  expect((await look({ kind: "save", path: repo + "/a.ts", text: "three\n", base: shown.hash })).error).toContain("changed");
+  expect(fs.readFileSync(repo + "/a.ts", "utf8")).toBe("two\n");
+  const h = (s: string) => new Bun.CryptoHasher("sha256").update(s).digest("hex");
+  expect((await look({ kind: "save", path: repo + "/.env", text: "K=x\n", base: h("K=v\n") })).error).toContain("secret");
+  expect((await look({ kind: "save", path: repo + "/.claude/settings.json", text: "{\"x\":1}", base: h("{}") })).error).toContain("settings");
+  // an innocent name for a secret's file: its real path refused too
+  fs.symlinkSync(repo + "/.env", repo + "/notes.txt");
+  expect((await look({ kind: "save", path: repo + "/notes.txt", text: "K=x\n", base: h("K=v\n") })).error).toContain("secret");
+  expect((await look({ kind: "save", path: top + "/out.ts", text: "x", base: h("out\n") })).error).toContain("not under");
+  expect((await look({ kind: "save", path: repo + "/a.ts", text: "x".repeat(Device.LOOK_BYTES + 1), base: h("two\n") })).error).toContain("too big");
+  expect(fs.readFileSync(repo + "/.env", "utf8")).toBe("K=v\n");
+  expect(fs.readFileSync(top + "/out.ts", "utf8")).toBe("out\n");
+});
+
+// find ranks a name holding the query's letters before a path holding them
+test("device_look: find ranks a file's name before its path", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-rank-"));
+  const repo = top + "/repo";
+  Bun.spawnSync(["git", "init", "-q", "-b", "main", repo]);
+  fs.mkdirSync(repo + "/configs/scanners", { recursive: true });
+  fs.writeFileSync(repo + "/configs/scanners/x.py", "");
+  fs.mkdirSync(repo + "/src/deep/er", { recursive: true });
+  fs.writeFileSync(repo + "/src/deep/er/config_scan.py", "");
+  const rules = { work: top, computer: false, spaces: [repo] };
+  expect(((await Device.device_look(rules, "r", { kind: "find", path: repo, q: "cfgscan" } as any)) as any).text).toBe("src/deep/er/config_scan.py\nconfigs/scanners/x.py");
 });

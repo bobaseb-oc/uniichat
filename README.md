@@ -174,8 +174,17 @@ What is known not to work, or not checked yet:
   inbox is read by a running terminal or `legion device` (`legion device
   --install` keeps one running at login). Harvest needs `legion
   harvest-login`; agents only draft entries (the Timesheet page), and
-  only your Submit posts them. The Files page and Git tab show what is
-  under the device's work dir, home repo and spaces, read-only.
+  only your Submit posts them. The Files page shows what is under the
+  device's work dir, home repo, spaces and their worktrees
+  (`<repo>-worktrees/<slug>`): workspaces as trees, ⌘P to find a file,
+  ⌘⇧F to search text, a path's `:line` opened at it, git's views and an
+  agent's **changes** since the default branch (a fork's `upstream`
+  first). Secrets (`.env`, keys) are listed but never shown: **Open in
+  editor** opens them, and any file, in VS Code (else your default
+  editor). **Edit** saves a shown file from the browser, only if it is
+  unchanged since shown, never a secret's or Claude Code's or Legion's
+  settings. The status line shows the gateway's daily budget for your
+  key and "AI service busy" after a busy answer in the last 5 minutes.
 - **Not checked live yet:** recall over the imported history, a turn
   with the gateway down (the 60 s go-ahead and the shown reason), the
   auto-mode reviewer on the real gateway, sub-agents getting their own
