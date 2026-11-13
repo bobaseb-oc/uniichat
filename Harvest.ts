@@ -8,7 +8,7 @@
 // - Sign-in: `legion harvest-login` takes the token (Harvest → Developers
 //   → Personal access tokens) and the account id (OnCorps': ACCOUNT),
 //   checks them with Harvest (GET /users/me), then keeps them in the
-//   Keychain only (services "legion-harvest-token",
+//   Keychain only (services "legion-harvest-guarded-token", asked each read;
 //   "legion-harvest-account"): never a file, an argument, the
 //   environment, a log, an error, the server or a model. The token
 //   (RED ZONE, security review SD, DRAFT awaiting the user's sign-off)
@@ -63,7 +63,7 @@ export namespace Harvest {
   // deleted, and that is said); deleted too when one is kept, and on
   // logout.
   export function store(run: Auth.Run = Auth.security, old: Store = Auth.keychain("legion-harvest")): Store {
-    const asked = Auth.asking("legion-harvest", run);
+    const asked = Auth.asking("legion-harvest-guarded", run); // its own item: the old one (legion-harvest-token) is bun-readable
     const moved = async (): Promise<string | null> => {
       const was = await old.get("token").catch(() => null);
       if (was === null) {

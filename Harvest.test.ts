@@ -91,10 +91,10 @@ test("the token's store: no app trusted, so each read asks; never an argument; t
   old.all.set("token", "old-token-123");
   await store.set("token", "1234567.pt.synthetic-value_0");
   expect(old.all.has("token")).toBe(false);
-  expect(calls.find((c) => c.args[0] === "-i")).toEqual({ args: ["-i"], input: 'add-generic-password -s legion-harvest-token -a oauth -T "" -w 1234567.pt.synthetic-value_0\n' });
+  expect(calls.find((c) => c.args[0] === "-i")).toEqual({ args: ["-i"], input: 'add-generic-password -s legion-harvest-guarded-token -a oauth -T "" -w 1234567.pt.synthetic-value_0\n' });
   expect(calls.every((c) => !c.args.join(" ").includes("synthetic"))).toBe(true);
   expect(await store.get("token")).toBe("1234567.pt.synthetic-value_0");
-  expect(calls.at(-1)!.args).toEqual(["find-generic-password", "-s", "legion-harvest-token", "-a", "oauth", "-w"]);
+  expect(calls.at(-1)!.args).toEqual(["find-generic-password", "-s", "legion-harvest-guarded-token", "-a", "oauth", "-w"]);
   await store.set("account", "540457");
   expect(old.all.get("account")).toBe("540457");
   expect(await store.get("account")).toBe("540457");
@@ -175,4 +175,15 @@ test("the agents' harvest tool reads only: projects and entries (this week by de
   const posts = sent.filter((s) => s.method === "POST").length;
   await expect(Harvest.tool(c, { action: "post", project_id: 7 }, now, O)).rejects.toThrow("No harvest action post");
   expect(sent.filter((s) => s.method === "POST").length).toBe(posts);
+});
+
+// the guarded token is its own Keychain item: were it the old one's
+// (service legion-harvest-token, account oauth), the move never runs and
+// the old item, readable by bun with no prompt, stays (round-4 check)
+test("the guarded token never shares the old Keychain item", async () => {
+  const asked: string[][] = [];
+  const run = async (args: string[]) => { asked.push(args); return { code: 44, out: "" }; };
+  await Harvest.store(run as any, { get: async () => null, set: async () => {}, delete: async () => true }).get("token");
+  const service = asked.find((a) => a[0] === "find-generic-password")![2];
+  expect(service).not.toBe("legion-harvest-token");
 });
