@@ -1,0 +1,32 @@
+local/harvest-login.ts
+  s_61d91f7f28e453::t_050dd328486c1f 1-48
+Harvest.ts
+  s_61d91f7f28e453::t_da47ec16e7d029 1-204
+local/unii-local.sh
+  s_61d91f7f28e453::t_050dd328486c1f 26-28,224-225
+Harvest.test.ts
+  s_61d91f7f28e453::t_5d1962f4624e87 1-99
+  s_61d91f7f28e453::t_3585ae9c2e39fa 100
+Machine.ts
+  s_61d91f7f28e453::t_b874c0f7410aef 4-5,22,82,198-200
+Modes.test.ts
+  s_61d91f7f28e453::t_9e10a8e793ed4b 104
+Modes.ts
+  s_61d91f7f28e453::t_1e16312b835a1f 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b9236d6cd9344d4a554aba0377d3e2aef1ecd332",
+  "prompts": {},
+  "sessions": {
+    "s_61d91f7f28e453": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "034518c4-1f65-45d2-899f-743d1ff2919a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
