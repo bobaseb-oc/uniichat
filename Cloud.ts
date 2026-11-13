@@ -113,7 +113,9 @@ create index if not exists acts_big on acts (at) where ans <> '{}';
 
 // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
 // migration, additive: when a session was made and last used, and whether
-// a terminal's (TERM); a row from before them starts its age as it runs
+// a terminal's (TERM); a row from before them starts its age as it runs,
+// with a terminal's TERM (terminals' and launchd devices' Bearer sessions
+// can't be told from browsers', whose cookies end by their Max-Age anyway)
 const COLUMNS = ["made integer", "seen integer", "term integer not null default 0"];
 
 // Cloud
@@ -135,7 +137,7 @@ export namespace Cloud {
         }
       }
     }
-    db.query("update sessions set made = ?1, seen = ?1 where made is null").run(Date.now());
+    db.query("update sessions set made = ?1, seen = ?1, term = 1 where made is null").run(Date.now());
     const base = { db, wal: file + "-wal", change, signed, post, waits: new Map() };
     return { ...base, billing: Billing.open(base), phone: config.PHONE };
   }
@@ -179,11 +181,12 @@ export namespace Cloud {
   }
 
   // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): the
-  // client's address: the last X-Forwarded-For entry, the one the proxy in
-  // front appended (those before it the client may have written); with
-  // none (no proxy: a server on 127.0.0.1), the socket's, `addr`
-  export function ip(req: Request, addr: string | null = null): string | null {
-    return req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() || addr;
+  // client's address: behind a proxy (UNII_PROXY=1), the last
+  // X-Forwarded-For entry, the one it appended (those before it the client
+  // may have written); with none, or no proxy (the client may write the
+  // header itself: a server on 127.0.0.1), the socket's, `addr`
+  export function ip(req: Request, addr: string | null = null, proxy = config.PROXY): string | null {
+    return (proxy && req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim()) || addr;
   }
 
   // a sign-in post's body, read before anyone is signed in: at most

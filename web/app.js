@@ -521,13 +521,21 @@ var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 var READS = ["read", "glob", "grep", "google", "harvest"];
 var REVIEWED = ["shell", "write", "edit", "computer"];
-var MCP_READS = /^(get|list|search|read|find|query|lookup|describe|view|show)([_A-Z-]|$)/;
+var MCP_READS = /^(get|list|search|read|find|lookup|describe|view|show)([_A-Z-]|$)/;
 var MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
-var SECRETS = /printenv|environ|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+var MCP_WORDS = new Set(["replace", "reset", "run", "exec", "execute", "query"]);
+var DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json|server-key`;
+var DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
+var SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
+var SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
+var SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\bset\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
 var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 var GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
 var GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
+var GH = { pr: ["view", "diff", "checks", "list"], issue: ["view", "list"], repo: ["view"] };
+var GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m"]);
+var GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
 var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 var Modes;
 ((Modes2) => {
@@ -557,7 +565,8 @@ var Modes;
     }
     if (tool.startsWith("mcp__")) {
       const own = tool.split("__").slice(2).join("__");
-      return !MCP_READS.test(own) || MCP_WRITES.test(own);
+      const words = own.split(/[_-]|(?<=[a-z0-9])(?=[A-Z])/).map((w) => w.toLowerCase());
+      return !MCP_READS.test(own) || MCP_WRITES.test(own) || words.some((w) => MCP_WORDS.has(w));
     }
     if (!REVIEWED.includes(tool)) {
       return false;
@@ -682,6 +691,24 @@ var Modes;
     const name = a.split("=")[0];
     return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
   }
+  function gh(args) {
+    const [group = "", sub = "", ...rest] = args;
+    if (group === "api") {
+      for (let k = 1;k < args.length; k++) {
+        const a = args[k];
+        const method = a === "-X" || a === "--method" ? args[++k] : /^(-X|--method=)(.*)$/.exec(a)?.[2];
+        if (method !== undefined ? method.toUpperCase() !== "GET" : a.startsWith("-") ? !GH_API.has(a.split("=")[0]) : a.includes("://")) {
+          return "gh api other than a GET of a path on GitHub (" + a + ")";
+        }
+      }
+      return null;
+    }
+    if (!GH[group]?.includes(sub)) {
+      return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
+    }
+    const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]));
+    return bad === undefined ? null : "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+  }
   function check(words) {
     const [cmd, ...args] = words;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
@@ -732,6 +759,9 @@ var Modes;
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
+      }
+      case "gh": {
+        return gh(args);
       }
       default: {
         return cmd + " is not on plan mode's read-only list";

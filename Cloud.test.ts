@@ -110,8 +110,9 @@ test("an emailed link survives its preview; its POST signs in once", async () =>
 
 // RED ZONE (security review SC, DRAFT awaiting the user's sign-off):
 // a session ends AGE after it was made (a terminal's, TERM), or IDLE
-// unused; rows made before the columns were start their age at the
-// migration; /api/logout-all (a POST) ends every session of the user
+// unused; rows made before the columns were (terminals' and launchd
+// devices' Bearer ones among them, not told apart) start their age at the
+// migration, a terminal's (TERM), IDLE as any; /api/logout-all (a POST) ends every session of the user
 test("sessions expire by age and idleness; old rows migrate; logout-all ends them all", async () => {
   // the dir Config read (the first test file's, in one process)
   for (const end of ["", "-wal", "-shm"]) {
@@ -122,6 +123,8 @@ test("sessions expire by age and idleness; old rows migrate; logout-all ends the
   const old = new Database(config.DIR + "/cloud.db", { create: true });
   old.exec("create table sessions (hash text primary key, id text not null, name text not null)");
   old.query("insert into sessions values (?, ?, ?)").run(Cloud.hash("oldtoken"), "u0", "old@x.com");
+  old.query("insert into sessions values (?, ?, ?)").run(Cloud.hash("olddevice"), "u0", "old@x.com");
+  old.query("insert into sessions values (?, ?, ?)").run(Cloud.hash("oldidle"), "u0", "old@x.com");
   old.close();
   const cloud = Cloud.open(() => {}, () => {}, async () => null);
   const as = (token: string) => Cloud.who(cloud, new Request("http://127.0.0.1/", { headers: { cookie: "unii=" + token } }));
@@ -130,6 +133,12 @@ test("sessions expire by age and idleness; old rows migrate; logout-all ends the
   const day = 864e5;
   const age = (token: string, days: number) => cloud.db.query("update sessions set made = made - ?, seen = ? where hash = ?").run(days * day, Date.now(), Cloud.hash(token));
   const idle = (token: string, days: number) => cloud.db.query("update sessions set seen = seen - ? where hash = ?").run(days * day, Cloud.hash(token));
+  age("olddevice", 60);
+  expect(bearer("olddevice")).toEqual({ id: "u0", name: "old@x.com" });
+  age("olddevice", 31);
+  expect(bearer("olddevice")).toBeNull();
+  idle("oldidle", 15);
+  expect(bearer("oldidle")).toBeNull();
   const cookie = Cloud.session(cloud, { id: "u1", name: "me@x.com" });
   const term = Cloud.random();
   Cloud.login(cloud, { id: "u1", name: "me@x.com" }, Cloud.hash(term), true);
@@ -190,15 +199,20 @@ test("sign-in posts over SMALL bytes are refused unread", async () => {
 });
 
 // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): the
-// client's address is the X-Forwarded-For entry the proxy in front
-// appended (the last), never one the client wrote; none: the socket's
-test("Cloud.ip: the proxy's entry, else the socket's address", () => {
+// client's address behind a proxy (UNII_PROXY=1) is the X-Forwarded-For
+// entry it appended (the last), never one the client wrote; none, or no
+// proxy (off, the default: the client may write the header), the socket's
+test("Cloud.ip: behind a proxy its entry, else the socket's address", () => {
   const req = (xff: string | null) => new Request("http://127.0.0.1/", { headers: xff === null ? {} : { "x-forwarded-for": xff } });
-  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"))).toBe("1.2.3.4");
-  expect(Cloud.ip(req(" 1.2.3.4 "))).toBe("1.2.3.4");
-  expect(Cloud.ip(req(null), "127.0.0.1")).toBe("127.0.0.1");
-  expect(Cloud.ip(req(null))).toBeNull();
-  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"), "127.0.0.1")).toBe("1.2.3.4");
+  expect(config.PROXY).toBe(false);
+  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"), "127.0.0.1")).toBe("127.0.0.1");
+  expect(Cloud.ip(req("1.2.3.4"))).toBeNull();
+  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"), null, true)).toBe("1.2.3.4");
+  expect(Cloud.ip(req(" 1.2.3.4 "), null, true)).toBe("1.2.3.4");
+  expect(Cloud.ip(req(null), "127.0.0.1", true)).toBe("127.0.0.1");
+  expect(Cloud.ip(req(" "), "127.0.0.1", true)).toBe("127.0.0.1");
+  expect(Cloud.ip(req(null), null, true)).toBeNull();
+  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"), "127.0.0.1", true)).toBe("1.2.3.4");
 });
 
 // `legion web`: a terminal's Bearer session mints a ticket for its own

@@ -101,6 +101,11 @@ also be set as `UNII_<KEY>`. The ones that matter here:
 - `searches`: 0 turns off the vendor's web search (Bedrock behind
   LiteLLM rejects it); `searxng_url` is the local search instead.
 - `after`: a shell command run after each turn.
+- `UNII_PROXY=1`: the server sits behind a reverse proxy, so the client's
+  address is the last `X-Forwarded-For` entry. Off (the default), the
+  header is ignored, since a client reaching the server directly could
+  write it. A hosted deploy behind a proxy needs it, or sign-in rate
+  limits treat every user as the proxy.
 
 Today's LiteLLM spend shows in the status line when a cost cache is
 kept (Cost.ts reads it; it never calls the gateway itself).

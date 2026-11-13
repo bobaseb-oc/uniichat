@@ -4,7 +4,8 @@
 // config.json, the lock and users/<id>. Each key of config.json (README)
 // may be set as UNII_<KEY> instead; a path may start with "~/". The keys
 // are read from the environment and removed from it, so no program an
-// agent runs inherits them, and put back for the workers.
+// agent runs inherits them, and put back for the workers. Behind a reverse
+// proxy set UNII_PROXY=1 (PROXY), else X-Forwarded-For is ignored.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -20,6 +21,13 @@ const PATH = DIR + "/config.json";
 const FILE: Record<string, string> = fs.existsSync(PATH) ? JSON.parse(fs.readFileSync(PATH, "utf8")) : {};
 
 export const SITE    = config_get("site", "http://127.0.0.1:8788").replace(/\/$/, "");
+
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
+// reverse proxy in front (UNII_PROXY=1), whose X-Forwarded-For entry is
+// the client's address the sign-in limits count (Cloud.ip); off, the
+// default, the socket's, as a client reaching the server itself may
+// write the header
+export const PROXY   = config_get("proxy", "") === "1";
 
 // the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM);
 // https, or http on this computer only (the key goes to it)

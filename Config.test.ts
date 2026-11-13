@@ -31,3 +31,17 @@ test("anthropic_url: plain http elsewhere, or no URL, refuses to start", () => {
     expect(out.text).toContain("config: anthropic_url");
   }
 });
+
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off):
+// X-Forwarded-For is trusted (Cloud.ip) only with UNII_PROXY=1; off by default
+test("proxy: on only with UNII_PROXY=1", () => {
+  const proxy = (value: string | null) => {
+    const env: Record<string, string | undefined> = { ...process.env, UNII_DIR: DIR, UNII_PROXY: value ?? undefined };
+    const out = Bun.spawnSync([process.execPath, "-e", 'import { PROXY } from "./Config.ts"; console.log(PROXY)'], { cwd: import.meta.dir, env });
+    return out.stdout.toString().trim();
+  };
+  expect(proxy(null)).toBe("false");
+  expect(proxy("0")).toBe("false");
+  expect(proxy("true")).toBe("false");
+  expect(proxy("1")).toBe("true");
+});
