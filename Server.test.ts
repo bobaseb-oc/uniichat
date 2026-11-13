@@ -418,7 +418,15 @@ const forged = await Chat.act(chat, "l5", { $: "looked", id: "l4", kind: "git", 
 const shown = await Chat.act(chat, "l6", { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }, "mac");
 const twice = await Chat.act(chat, "l7", { $: "looked", id: "l4", kind: "git", text: "again" }, "mac");
 const unasked = await Chat.act(chat, "l8", { $: "looked", id: "zz", kind: "file", text: "x" }, "mac");
-console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.filter((m) => m.$ === "look" || m.$ === "looked") }));
+const before = sent.length;
+// the explorer: a folder to every device as a look; a file opened in an
+// editor by ONE device only (each would open a window); answers as looks'
+const links = [];
+chat.tools.devices.set("mac", { terms: new Map([["t1", { send: (m) => links.push(["t1", m]) }], ["t2", { send: (m) => links.push(["t2", m]) }]]) });
+await Chat.act(chat, "l9", { $: "look", what: { kind: "dir", path: "/r", x: 1 } }, "");
+await Chat.act(chat, "l10", { $: "look", what: { kind: "open", path: "/r/.env" } }, "");
+const opened = await Chat.act(chat, "l11", { $: "looked", id: "l10", kind: "open", path: "/r/.env", text: "Opened .env in VS Code." }, "mac");
+console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.slice(0, before).filter((m) => m.$ === "look" || m.$ === "looked"), later: sent.slice(before).filter((m) => m.$ === "look" || m.$ === "looked"), links, opened }));
 process.exit(0);
 `;
 
@@ -432,6 +440,9 @@ test("a view's look goes to the devices; a device's answer, once, to the views",
     bad: [true, true, true], ok: {}, forged: true, shown: {}, twice: true, unasked: true,
     sent: [{ $: "look", id: "l4", what: { kind: "git", repo: "/r", op: "log" } }, { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }],
   });
+  expect(out.later).toEqual([{ $: "look", id: "l9", what: { kind: "dir", path: "/r" } }, { $: "looked", id: "l10", kind: "open", path: "/r/.env", text: "Opened .env in VS Code." }]);
+  expect(out.links).toEqual([["t1", { $: "look", id: "l10", what: { kind: "open", path: "/r/.env" } }]]);
+  expect(out.opened).toEqual({});
 });
 
 // the timesheet's Submit (K5, RED ZONE): the user's act sends the drafts

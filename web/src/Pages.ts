@@ -301,11 +301,56 @@ export function files_html(v: View.View): string[] {
     return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
   }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
   const repo = looked?.path ?? "@home";
+  const editor = looked?.kind === "file" && looked.path !== undefined && looked.error === undefined ? `<button class="pbtn" title="in VS Code, else your default editor"${act_html({ $: "Look", what: { kind: "open", path: looked.path } })}>Open in editor</button>` : "";
+  const opened = v.opened === null ? "" : `<span class="meta">${esc(v.opened)}</span>`;
   const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
-  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span>${editor}${opened}<span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
   const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+}
+
+// the explorer (Terax-like): workspaces opened from the device's roots,
+// several at once, each a tree of the folders unfolded (View's Tree);
+// a file a Look, a secret's opened in the editor only (never shown here)
+function explorer_html(v: View.View): string {
+  const roots = (v.dirs.get("@roots")?.text ?? "").split("\n").filter((l) => l.startsWith("d ")).map((l) => l.slice(2));
+  const base = (p: string) => p.slice(p.lastIndexOf("/") + 1) || p;
+  const pick = roots.filter((r) => !v.workspaces.includes(r)).map((r) => `<option value="${esc(r)}">${esc(base(r) + " — " + r)}</option>`).join("");
+  const picker = `<select data-ws aria-label="open a workspace"><option value="">Open a workspace…</option>${pick}</select>`;
+  const spaces = v.workspaces.map((w) => {
+    const open = v.unfolded.has(w);
+    const head = `<div class="fws"><button class="fx fdir" title="${esc(w)}"${act_html({ $: "Tree", path: w })}>${open ? "▾" : "▸"} ${esc(base(w))}</button><button class="fclose" title="close this workspace"${act_html({ $: "Workspace", path: w, on: false })}>×</button></div>`;
+    return head + (open ? folder_html(v, w, 1) : "");
+  }).join("");
+  return `<div class="fgroup fexp"><h3>Workspaces</h3>${picker}${spaces}</div>`;
+}
+
+// a folder's entries, as its device listed them (View.Looked's "dir")
+function folder_html(v: View.View, dir: string, depth: number): string {
+  const got = v.dirs.get(dir);
+  const note = (s: string) => `<p class="meta fx" style="--d:${depth}">${esc(s)}</p>`;
+  if (got?.error !== undefined) {
+    return note(got.error);
+  }
+  if (got?.text === undefined) {
+    return note("Loading…");
+  }
+  const rows = got.text.split("\n").filter((l) => l.length > 2).map((l) => {
+    const name = l.slice(2);
+    const at = dir.replace(/\/+$/, "") + "/" + name;
+    const pad = ` style="--d:${depth}"`;
+    if (l[0] === "d") {
+      const open = v.unfolded.has(at);
+      return `<button class="fx fdir"${pad}${act_html({ $: "Tree", path: at })}>${open ? "▾" : "▸"} ${esc(name)}</button>${open ? folder_html(v, at, depth + 1) : ""}`;
+    }
+    if (l[0] === "s") {
+      return `<button class="fx fsec"${pad} title="may hold a secret: opens in your editor, never here"${act_html({ $: "Look", what: { kind: "open", path: at } })}>🔒 ${esc(name)}</button>`;
+    }
+    const here = v.looked?.kind === "file" && v.looked.path === at ? " here" : "";
+    return `<button class="fx${here}"${pad}${act_html({ $: "Look", what: { kind: "file", path: at } })}>${esc(name)}</button>`;
+  });
+  return rows.join("") || note("(empty)");
 }
 
 // a file drawn as its kind asks: Markdown rendered (Html.block_html

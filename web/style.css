@@ -724,3 +724,15 @@ pre.code .sha { font: inherit; color: var(--accent); padding: 0; text-decoration
 .trow .tag.bad { color: #cf222e; }
 .fsh { margin-bottom: 8px; }
 .fsh input { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--hair); background: transparent; color: inherit; font: 12px ui-monospace, monospace; }
+
+/* the files explorer: workspaces, each a tree (Pages.explorer_html) */
+.fexp select { width: 100%; margin: 4px 0 6px; }
+.fws { display: flex; align-items: center; }
+.fws .fx { flex: 1; font-weight: 600; }
+.fclose { border: 0; background: none; color: var(--soft); cursor: pointer; padding: 0 6px; }
+.fclose:hover { color: var(--ink); }
+.fx { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: 12px/1.6 ui-monospace, monospace; padding: 0 4px 0 calc(var(--d, 0) * 14px + 4px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; border-radius: 4px; }
+.fx:hover { background: var(--hover); }
+.fx.here { background: var(--block); }
+p.fx { cursor: default; }
+.fsec { color: var(--soft); }

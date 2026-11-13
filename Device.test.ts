@@ -559,3 +559,32 @@ test("device_look: a space's worktrees at <repo>-worktrees/<slug> only", async (
   fs.writeFileSync(top + "/pay-worktrees/p/c.ts", "3\n");
   expect((await Device.device_look({ ...rules, spaces: [bare] }, "w", { kind: "file", path: top + "/pay-worktrees/p/c.ts" }) as any).text).toBe("3\n");
 });
+
+// the files explorer: a folder's entries under the roots (folders first,
+// .git never, a secret's marked "s": listed, never shown); @roots: the
+// roots themselves; a file opened in the user's editor, a secret's too
+// (its text never leaves the computer), only under the roots, only a file
+test("device_look: folders listed and files opened in the editor, under the roots only", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-dir-"));
+  const repo = top + "/repo", work = top + "/work";
+  fs.mkdirSync(work);
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", repo]);
+  fs.mkdirSync(repo + "/src");
+  fs.writeFileSync(repo + "/b.ts", "b");
+  fs.writeFileSync(repo + "/.env", "K=v");
+  fs.writeFileSync(repo + "/.gitignore", "x");
+  const opened: string[] = [];
+  const rules = { work, computer: false, spaces: [repo] };
+  const look = (what: any) => Device.device_look(rules, "d", what, async (f) => (opened.push(f), "VS Code")) as Promise<any>;
+  expect((await look({ kind: "dir", path: repo })).text).toBe("d src\ns .env\nf .gitignore\nf b.ts");
+  expect((await look({ kind: "dir", path: repo })).path).toBe(repo);
+  const roots = (await look({ kind: "dir", path: "@roots" })).text.split("\n");
+  expect(roots).toContain("d " + repo);
+  expect(roots).toContain("d " + work);
+  expect((await look({ kind: "dir", path: top })).error).toContain("not under");
+  expect((await look({ kind: "dir", path: repo + "/b.ts" })).error).toContain("not a folder");
+  expect(await look({ kind: "open", path: repo + "/.env" })).toEqual({ $: "looked", id: "d", kind: "open", path: repo + "/.env", text: "Opened .env in VS Code." });
+  expect((await look({ kind: "open", path: top + "/x" })).error).toContain("No file");
+  expect((await look({ kind: "open", path: repo + "/src" })).error).toContain("not a file");
+  expect(opened).toEqual([repo + "/.env"]);
+});

@@ -323,3 +323,44 @@ test("files: code colored, Markdown rendered, HTML in a sandboxed frame, Source 
   expect(txt).toContain('<span class="ln">1</span>if x');
   expect(txt).not.toContain('"Source"');
 });
+
+// the files explorer (user's ask 2026-11-13, Terax-like): workspaces
+// opened from the device's roots, several at once, each a tree; a folder
+// unfolded is asked of the device once; a file is a Look, a secret's opens
+// in the editor; a folder's answer never replaces the file shown; the file
+// shown opens in the editor too
+test("files explorer: workspaces from the roots, folders asked once, files opened", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(View.view_act(v, { $: "List", path: "@roots" })).toEqual([{ $: "look", what: { kind: "dir", path: "@roots" } }]);
+  expect(View.view_act(v, { $: "List", path: "@roots" })).toEqual([]); // asked, not yet answered: not again
+  View.view_hear(v, { $: "looked", id: "f", kind: "file", path: "/r/a.ts", text: "x" });
+  View.view_hear(v, { $: "looked", id: "r", kind: "dir", path: "@roots", text: "d /r\nd /w/Owl" });
+  expect(v.looked?.path).toBe("/r/a.ts");
+  const picker = Pages.files_html(v).join("");
+  expect(picker).toContain('<select data-ws aria-label="open a workspace"><option value="">Open a workspace…</option><option value="/r">r — /r</option><option value="/w/Owl">Owl — /w/Owl</option></select>');
+  expect(View.view_act(v, { $: "Workspace", path: "/r", on: true })).toEqual([{ $: "look", what: { kind: "dir", path: "/r" } }]);
+  expect(v.workspaces).toEqual(["/r"]);
+  View.view_act(v, { $: "Workspace", path: "/w/Owl", on: true });
+  View.view_hear(v, { $: "looked", id: "d", kind: "dir", path: "/r", text: "d src\ns .env\nf a.ts" });
+  const tree = Pages.files_html(v).join("");
+  expect(tree).toContain(act({ $: "Tree", path: "/r/src" }));
+  expect(tree).toContain(act({ $: "Look", what: { kind: "file", path: "/r/a.ts" } }));
+  expect(tree).toContain(act({ $: "Look", what: { kind: "open", path: "/r/.env" } }));
+  expect(tree).toContain(act({ $: "Workspace", path: "/w/Owl", on: false }));
+  expect(tree).toContain('<option value="">Open a workspace…</option></select>'); // both open: none left to pick
+  // the file shown: Open in editor
+  expect(tree).toContain(act({ $: "Look", what: { kind: "open", path: "/r/a.ts" } }));
+  // a folder unfolded: asked once; folded again: no ask
+  expect(View.view_act(v, { $: "Tree", path: "/r/src" })).toEqual([{ $: "look", what: { kind: "dir", path: "/r/src" } }]);
+  View.view_hear(v, { $: "looked", id: "s", kind: "dir", path: "/r/src", error: "/r/src is not under this device's roots." });
+  expect(Pages.files_html(v).join("")).toContain("is not under this device");
+  expect(View.view_act(v, { $: "Tree", path: "/r/src" })).toEqual([]);
+  expect(View.view_act(v, { $: "Tree", path: "/r/src" })).toEqual([]);
+  // an editor's answer: said, the file shown kept
+  View.view_hear(v, { $: "looked", id: "o", kind: "open", path: "/r/.env", text: "Opened .env in VS Code." });
+  expect(v.looked?.path).toBe("/r/a.ts");
+  expect(Pages.files_html(v).join("")).toContain("Opened .env in VS Code.");
+  View.view_act(v, { $: "Workspace", path: "/r", on: false });
+  expect(v.workspaces).toEqual(["/w/Owl"]);
+});

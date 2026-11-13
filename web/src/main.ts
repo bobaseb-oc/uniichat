@@ -109,6 +109,8 @@ const P = {
 // filter; the page shown last, the inbox's stamps when it was entered
 // (what changed since the user looked), the inbox last stamped
 const C = {
+  rooted  : 0, // when the explorer's roots were last asked (files_open)
+  restored: false, // the explorer's kept workspaces opened again
   shut    : new Set<string>(),
   cursor  : null as string | null,
   picks   : new Set<string>(),
@@ -1256,6 +1258,7 @@ function page_bars(mode: View.Mode): boolean {
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), Pages.timesheet_html(v));
   } else if (mode === "files") {
+    files_open();
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), Pages.files_html(v));
@@ -1487,7 +1490,28 @@ function page_change(ev: Event): void {
   if (el.dataset.claude !== undefined) {
     C.claude = el.checked;
   }
+  if (el.dataset.ws !== undefined && el.value !== "") {
+    act({ $: "Workspace", path: el.value, on: true });
+    return;
+  }
   draw(true);
+}
+
+// the explorer as the Files page draws: its roots asked (again if not
+// answered in 10 s: no device up, say); the workspaces kept in this
+// browser, opened again once
+function files_open(): void {
+  if (v.dirs.get("@roots")?.text === undefined && Date.now() - C.rooted > 10e3) {
+    C.rooted = Date.now();
+    v.dirs.delete("@roots");
+    act({ $: "List", path: "@roots" });
+  }
+  if (!C.restored) {
+    C.restored = true;
+    const was: unknown = JSON.parse(localStorage.getItem(kept("workspaces")) ?? "[]");
+    (Array.isArray(was) ? was : []).filter((w): w is string => typeof w === "string").forEach((w) => act({ $: "Workspace", path: w, on: true }));
+  }
+  localStorage.setItem(kept("workspaces"), JSON.stringify(v.workspaces));
 }
 
 // the inbox's keys (not while typing, but Esc in the filter)
