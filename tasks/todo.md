@@ -550,6 +550,44 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       SUMMARIES constant shadowed View's wait (lesson recorded). Suite (bun run test, --isolate) 308
       pass, 2 known. Not run live: a real Google sign-in (needs the user's client).
 
+## Connect: Refresh, auto mode, Gmail/Chat, files pane (branch worktree-feat-connect-files; user's ask 2026-11-13) - PLAN, awaiting decisions
+
+Intent: four separate, reviewable changes, in this order (one commit set each):
+
+- [x] K1 Refresh works (bd10f8c; Server/Device tests, launchd plist checked with plutil and a stub launchctl; Term wiring has no test). Today the button only reaches a running `legion device`; the terminal `legion` never reads the inbox, and the page says nothing when no device answers.
+  - Server answers Fetch with an error note ("no device reads the inbox: run legion device") when no device socket is up; the page shows "reading..." until the inbox arrives or 60 s pass.
+  - The terminal `legion` reads the inbox too (it is a device already: same Device.device_inbox, same 5 min timer).
+  - Optional: `legion device --install` writes a launchd agent so reads keep going with no window open (decision D2).
+  - verify: Server test (Fetch with no device returns the note), e2e (button shows reading..., then updated time).
+- [x] K2 Auto mode more lenient (RED ZONE: permission engine; signed off by the user 2026-11-13, 26bc591). Proof: Modes/Tools tests 20/20, 6/6 mutants killed (work-tasks/mut-k2.sh). Secret-reading commands (env, .env, .ssh, token...) are still reviewed even when read-only.
+  - Read-only shell (Modes.readonly says null) skips the reviewer, as Claude Code does.
+  - The reviewer sees the last 3 user messages, not only the latest one (a "yes, go" carries no context).
+  - The prompt changes from "refuse if any of 6 things" to "refuse only clear harm": deletes beyond the task, off-machine sends (push/deploy/publish/send), secrets/.env, system changes, piped-from-internet code. Dropped: "goes beyond what the user asked", "outside the repo". Installing from a lockfile is allowed.
+  - Invariant: still fails closed (no answer from the reviewer: ask the user), and plan mode's rules are unchanged.
+  - verify: Tools/Modes tests: `git status` never reaches the reviewer; `rm -rf ~` still goes to the reviewer; a reviewer timeout still asks the user. Negative tests kill mutants.
+- [x] K3a Gmail and Google Chat reads and the agents' `google` tool (RED ZONE, signed off by the user 2026-11-13). One tool, 7 read-only actions, output fenced <untrusted>; plan mode allows it, auto mode doesn't review it. Proof: Google.test.ts 8/8, Modes 3/3, full suite 312 pass / 2 known fails. Not built (K3b): unread mail and Chat mentions in the inbox. Not live-checked: needs the user's re-login.
+- [ ] K3 (original plan) Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
+  - Scopes added: gmail.readonly, chat.spaces.readonly, chat.messages.readonly. Users re-run `legion google-login` once.
+  - Device reads (the Keychain grant stays on the device): gmail search/read, chat spaces/messages; inbox gains unread threads that need the user and recent Chat mentions.
+  - Agent tools (native, read-only, run on the device): google_mail_search, google_mail_read, google_chat_read, google_calendar, google_doc_read. Tool output is marked untrusted (an email can carry instructions); in auto mode, a tool call right after reading mail still goes to the reviewer.
+  - Console setup the user does: enable the APIs (done), add scopes on the consent screen, configure the Chat app (the Chat API needs one even for user reads).
+  - verify: fake-Google tests (as Google.test.ts), scope check fails closed, tool output tagged untrusted.
+- [x] K5 Harvest timesheets (RED ZONE, signed off by the user 2026-11-13: K5a b9236d6 client + read tool + login; K5b drafts, Timesheet page, Submit). Built: Harvest.ts (token checked, Keychain only; projects, entries; post checked whole), harvest tool (read-only), timesheet tool (any agent files checked drafts, kept with the chat), #timesheet page (g s; by day, totals, Drop, Submit, a 17:30 daily routine offered), Submit -> Chat.timesheet (unsent only, ONE device's terminal) -> Device.device_harvest (posts each once) -> Chat.harvested (only a device's, once; sent/failed, a chat note). Proof: Harvest 4, agents timesheet, Server timesheet, Device harvest, Pages timesheet; 12/12 mutants killed (work-tasks/mut-k5.sh); suite 328 pass / 2 known; no new tsc errors beyond env noise. Not live-checked: needs the user's Harvest token. Not built: weekly routine (routines are daily / every N h / on review), update or delete of entries.
+- [ ] K5 (original plan) Harvest timesheets (RED ZONE: billable hours written to Harvest). Token in the Keychain (legion harvest-login), read tools for agents, a routine that drafts entries from calendar, PRs, Jira and commits; D5 (user, 2026-11-13): drafts only; the user approves on a Timesheet page and one click submits; nothing reaches Harvest without it.
+- [x] K6 (prompt.txt + the ask tool's text; a guard test in Tools.test.ts; behavior not live-checked) The orchestrator decides more on its own (user's ask 2026-11-13): its prompt (Tools.MASTER) makes reversible, in-scope calls itself and reports them; it asks only for Red Zone items, outward or irreversible acts, and real forks in what the user wants.
+- [x] K7 Notes beside questions (user's ask 2026-11-13): notify tool for the orchestrator; notes in the questions pane (after questions, dismissable, not needing you, counted apart in the header), in /questions, /drop; dismissing one is silent, a reply quotes it; NOTES=30 oldest dropped. Proof: agents/Html/View/Server tests, suite 315 pass / 2 known.
+- [x] K9 Shell commands from the web (user's ask 2026-11-13, option 2): !command already ran from the web box; now !@name picks the device (several open: the error says how), the Files page has a box that runs a command in the shown file's folder or repo (cd quoted first), and the chat box's hint says so. Proof: View/Server/Pages tests, 5/5 mutants killed (work-tasks/mut-k9.sh), suite 328 pass / 2 known. Not built: a live interactive terminal (option 3).
+- [x] K8 (Tools.titled/titling, spawn's titles described as always, prompt; agents.test spawn labels) Every manager gets a label (user's ask 2026-11-13): spawn's managers always titled; one not given gets a title from its task.
+- [x] K4 Files pane + Git tab (Terax-style), read-only. Built: #files page (g f, palette): each agent's touched files (Tools.touched, crew.files), a file's lines numbered, git status/log/diff/branches of the shown file's repo (else the home repo), a log's commits open as `git show`; inline-code paths in the chat open there (View.view_path). Path: view -> server (Chat.look: shape, a device up, pending ids) -> device (Device.device_look: roots = work dir, home repo, spaces; realpath; secret names refused before and after links; 512 KB; no binaries; fixed git argv, rev checked) -> server (Chat.looked: only a device's, once per id) -> views. Agents can't reach it (not a tool). Proof: Device 11, Server look test, Tools touched, Pages files, View view_path; 11/11 mutants killed (work-tasks/mut-k4.sh); suite 320 pass / 2 known; no new tsc errors on added lines. Not done: an e2e in a browser against a live device; a 'mentioned' list (paths named in messages open on click, but aren't listed).
+  - Paths come from the agent's own tool calls (read, edit, write, grep hits), plus paths it names in its messages that exist under its work dir or a space.
+  - The web view gets a Files pane: a tree of those paths for the watched agent, and a viewer (syntax-highlighted, line anchors; diff for edited files). A path in a message turns into a link that opens it.
+  - Reading goes through the device (read job), limited to the agent's work dir and the spaces; no symlink escape, size cap.
+  - A Git tab beside the files (user's ask 2026-11-13, as Terax): the space's status, branches, log, and a commit's or the working tree's diff, read-only, through the device's read-only git (Modes.readonly).
+  - Writes later (an edit sent as a reviewed edit call, so modes and the reviewer apply).
+  - verify: Pages/View tests, path allowlist tests (../, symlink, outside the space refused), e2e.
+
+Decisions (user, 2026-11-13): D1 Claude Code-like reviewer; D2 terminal reads + `legion device --install` launchd; D3 gmail.readonly; D4 tool calls + mentions.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

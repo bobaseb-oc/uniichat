@@ -5,6 +5,18 @@
 import { expect, test } from "bun:test";
 import * as View from "./View.ts";
 
+// a path an agent names in the chat (inline code) opens in the files pane
+// (K4): a relative or absolute path, or a file with a known extension, a
+// :line dropped; prose, URLs, commands and flags are not paths
+test("view_path: paths named in the chat, not prose, URLs or commands", () => {
+  for (const [text, path] of [["src/a.ts", "src/a.ts"], ["./Tools.ts:120", "./Tools.ts"], ["/Volumes/dev/x/README.md", "/Volumes/dev/x/README.md"], ["Server.ts", "Server.ts"], ["~/.unii/config.json", "~/.unii/config.json"], ["web/src/main.ts:12:3", "web/src/main.ts"]]) {
+    expect([text, View.view_path(text)]).toEqual([text, path]);
+  }
+  for (const text of ["hello world", "https://x.com/a/b", "git status", "--force", "a/b c/d", "v1.2", "x".repeat(600) + ".ts", "../../etc/passwd zz"]) {
+    expect([text, View.view_path(text)]).toEqual([text, null]);
+  }
+});
+
 const tail = (v: View.View) => View.view_tail(v).map((row) => (row.$ === "Cap" ? row.text : row.$));
 
 // a turn waiting on its model names the model the server says: the
@@ -46,6 +58,13 @@ test("!command asks to run it on a device, from the chat or an agent's page; a b
   expect(v.notes.at(-1)).toBe("! needs a command: !<command>, run with the shell on a device.");
   View.view_act(v, { $: "Goto", name: "Mgr" });
   expect(View.view_act(v, { $: "Send", text: "!ls" })).toEqual([{ $: "bang", command: "ls" }]);
+  // !@device names the device to run on (K9); a bare !@device is a note
+  expect(View.view_act(v, { $: "Send", text: "!@pc-2 git log -3" })).toEqual([{ $: "bang", command: "git log -3", device: "pc-2" }]);
+  expect(View.view_act(v, { $: "Send", text: "!@pc" })).toEqual([]);
+  expect(v.notes.at(-1)).toBe("! needs a command: !<command>, run with the shell on a device.");
+  // the Files page's box: a command in a folder (K9)
+  expect(View.view_act(v, { $: "Bang", command: " ls ", dir: "/r" })).toEqual([{ $: "bang", command: "ls", dir: "/r" }]);
+  expect(View.view_act(v, { $: "Bang", command: "  ", dir: "/r" })).toEqual([]);
 });
 
 const crew = (name: string, parent: string, tier: View.Crew["tier"], status: View.Crew["status"], since = 0): View.Crew => ({ name, parent, tier, model: tier === "manager" ? "sonnet-5.5" : "haiku-5.5", status, since });
@@ -360,6 +379,10 @@ test("questions: Answer and Drop acts, and the pill counts them as needing you",
 test("questions in the terminal: the listing, and /answer and /drop parsed", () => {
   const v = View.view_new();
   expect(View.view_questions_note(v)).toBe("No open questions.");
+  View.view_hear(v, { $: "state", ...v, questions: [{ id: 9, text: "Chose x.\nIt was faster.", at: 0, date: "2026-11-12T10:00:00.000Z", fyi: true }] } as any);
+  expect(View.view_questions_note(v)).toBe("No open questions. Notes:\nnote 9: Chose x.\n   It was faster.\nDismiss one: /drop <n>.");
+  expect(View.view_drop(v, "9")).toEqual({ $: "Drop", q: 9 });
+  View.view_hear(v, { $: "state", ...v, questions: [] } as any);
   View.view_hear(v, { $: "state", ...v, questions: [
     { id: 4, text: "Which repo?", options: ["bank-recon", "pimco"], at: 0, date: "2026-11-12T10:00:00.000Z" },
     { id: 7, text: "Ship Friday?\nNeeds sign-off.", at: 0, date: "2026-11-12T13:00:00.000Z" },

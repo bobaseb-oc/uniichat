@@ -79,12 +79,13 @@ export type State = {
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
   trouble?  : string | null; // why the last summary failed and asks again (Memory's trouble)
   routines? : Routine[];     // the user's (Routines.ts)
+  drafts?   : Draft[];       // the timesheet's drafts (K5: Tools.timesheet)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number }; // spent: est. USD (Tools.spent)
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number; files?: string[] }; // spent: est. USD (Tools.spent); files: touched, newest first (Tools.touched)
 // a call waiting for the user's yes (Tools.ask_user): its number, who
 // calls, its tool, what it does
 export type Waiting = { id: number; who: string; tool: string; what: string };
@@ -96,7 +97,13 @@ export type DeviceStatus = { device: string; dir: string; branch: string | null;
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
 // chat message count when asked, when
-export type Question = { id: number; text: string; options?: string[]; at: number; date: string };
+// a timesheet entry an agent drafted (Tools.timesheet; K5, RED ZONE): its
+// number, Harvest's ids and names, date, hours, notes, why (its evidence),
+// who drafted it; draft, sending (the user submitted it), sent (its
+// Harvest id) or failed (why)
+export type Draft = { n: number; project_id: number; task_id: number; project: string; task: string; date: string; hours: number; notes: string; why: string; by: string; state: "draft" | "sending" | "sent" | "failed"; harvest?: number; error?: string };
+
+export type Question = { id: number; text: string; options?: string[]; at: number; date: string; fyi?: true }; // fyi: a note (notify), no answer awaited
 
 // an item of an agent's checklist (Tools.todo): what, and how far
 export type Todo = { text: string; status: "pending" | "doing" | "done" };
@@ -126,7 +133,7 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 export type Mode = "chat" | "crew" | Deck;
 // the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
 // (not "Page": an agent's page is)
-export const PAGES = ["home", "inbox", "routines", "digest", "transcripts"] as const;
+export const PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files", "timesheet"] as const;
 export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
@@ -157,6 +164,7 @@ export type View = State & {
   inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
   themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
   summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
+  looked    : Looked | null; // what a device showed last (the files pane, K4)
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -187,7 +195,16 @@ export type Server =
   | { $: "fetch" }                        // to devices: read the inbox now
   | { $: "themes"; themes: { key: string; by: Record<string, string[]> } } // the digest's themes (Chat.themes)
   | { $: "read"; id: string }             // to devices: read that transcript Doc (Device.device_transcript)
-  | { $: "summary"; id: string; summary: Summary }; // a transcript's summary (Chat.transcript)
+  | { $: "summary"; id: string; summary: Summary } // a transcript's summary (Chat.transcript)
+  | { $: "look"; id: string; what: Look }  // to devices: show a file or a repo's git (Device.device_look)
+  | { $: "harvest"; id: string; entries: unknown[] } // to one device: post the user's submitted timesheet entries (Device.device_harvest)
+  | Looked;                                 // to views: what a device showed
+
+// the files pane and git tab (K4): what a view asks a device to show, and
+// what it showed (or why not)
+export type Look = { kind: "file"; path: string; agent?: string } | { kind: "git"; repo: string; op: string; rev?: string };
+export type Harvested = { n: number; id?: number; error?: string };
+export type Looked = { $: "looked"; id: string; kind: "file" | "git"; path?: string; op?: string; text?: string; error?: string };
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -218,7 +235,7 @@ export type Client =
   | { $: "dismiss"; name: string } // a done agent out of the crew
   | { $: "approve"; name: string; yes: boolean } // a Claude Code worker asking to start: yes, or no
   | { $: "guess"; body: Body } // an import's cost
-  | { $: "bang"; command: string } // the person's !command, run with the shell on a device
+  | { $: "bang"; command: string; device?: string; dir?: string } // the person's !command, run with the shell on a device (!@name: that one), in a folder (the Files page's box)
   | { $: "answer"; q: number; text?: string } // open question q's answer; no text: dismissed (not "id": an act's own)
   | { $: "mode"; mode: Perm } // the chat's permission mode set
   | { $: "status"; dir: string; branch: string | null; spend: number | null; stale: boolean; week?: number | null } // a device's report
@@ -227,6 +244,10 @@ export type Client =
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
   | { $: "themes" } // the digest's merged PRs summarized by theme
   | { $: "transcript"; id: string; text?: string; error?: string } // a view: that transcript summarized; a device: its text, or why not
+  | { $: "look"; what: Look } // a view: show a file or a repo's git (a device shows it)
+  | { $: "timesheet"; op: "submit" | "drop"; ns: number[] } // a view: the user's Submit (or drop) of timesheet drafts
+  | { $: "harvested"; id: string; results: Harvested[] } // a device: each submitted entry's Harvest id, or why not
+  | Looked // a device: what it showed
   | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
   | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
   | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
@@ -278,6 +299,9 @@ export type Act =
   | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
   | { $: "Themes" }                             // the digest summarized by theme
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
+  | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
+  | { $: "Bang"; command: string; dir: string }  // a command run in a folder (the Files page's box)
+  | { $: "Timesheet"; op: "submit" | "drop"; ns: number[] } // timesheet drafts submitted to Harvest, or dropped (K5)
 
 // what a page draws, top to bottom
 export type Row =
@@ -330,7 +354,7 @@ export const MOVE  = 4001;
 // ~0.15 MB). A bigger one closes its socket (Server.ts)
 export const FRAME = 2 ** 22;
 
-export const HINT = "Message Legion";
+export const HINT = "Message Legion (!command runs it on your device; !@name on that one)";
 
 // the disclosure both views show (EU AI Act art. 50, California SB 243,
 // New York GBL art. 47, Anthropic's usage policy)
@@ -420,6 +444,7 @@ export function view_new(): View {
     inbox     : null,
     themes    : null,
     summaries : new Map(),
+    looked    : null,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -446,6 +471,14 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "looked": {
+      v.looked = msg;
+      return [];
+    }
+    case "look":
+    case "harvest": {
       return [];
     }
     case "summary": {
@@ -543,9 +576,10 @@ export function view_act(v: View, act: Act): Client[] {
       // !command: run with the shell on a device, its output a note the
       // AI reads (as Claude Code's), from any page
       if (text.startsWith("!")) {
-        const command = text.slice(1).trim();
+        const named = /^!@([\w.-]{1,64})(?:\s+|$)/.exec(text);
+        const command = text.slice(named === null ? 1 : named[0].length).trim();
         v.notes.push(...(command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []));
-        return command === "" ? [] : [{ $: "bang", command }];
+        return command === "" ? [] : [{ $: "bang", command, ...(named === null ? {} : { device: named[1]! }) }];
       }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
@@ -646,6 +680,16 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Look": {
+      return [{ $: "look", what: act.what }];
+    }
+    case "Bang": {
+      const command = act.command.trim();
+      return command === "" ? [] : [{ $: "bang", command, dir: act.dir }];
+    }
+    case "Timesheet": {
+      return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1052,21 +1096,27 @@ export function view_consent_cmd(v: View, arg: string, yes: boolean): Act | stri
 
 // the orchestrator's questions still open, oldest first
 export function view_questions(v: View): Question[] {
-  return [...(v.questions ?? [])].sort((a, b) => a.id - b.id);
+  return [...(v.questions ?? [])].filter((q) => !q.fyi).sort((a, b) => a.id - b.id);
+}
+
+// the orchestrator's notes for the person (notify), oldest first
+export function view_notes(v: View): Question[] {
+  return [...(v.questions ?? [])].filter((q) => q.fyi === true).sort((a, b) => a.id - b.id);
 }
 
 // the open questions as the terminal lists them (/questions)
 export function view_questions_note(v: View): string {
   const qs = view_questions(v);
+  const notes = view_notes(v).map((q) => "note " + q.id + ": " + q.text.split("\n").join("\n   "));
   if (qs.length === 0) {
-    return "No open questions.";
+    return notes.length === 0 ? "No open questions." : ["No open questions. Notes:", ...notes, "Dismiss one: /drop <n>."].join("\n");
   }
   const item = (q: Question) => {
     const [first, ...more] = q.text.split("\n");
     const pad = " ".repeat(String(q.id).length + 2);
     return [q.id + ". " + first, ...more.map((l) => pad + l), ...(q.options === undefined ? [] : [pad + "answers: " + q.options.join(" | ")])].join("\n");
   };
-  return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
+  return ["Your questions:", ...qs.map(item), ...(notes.length === 0 ? [] : ["Notes:", ...notes]), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
 }
 
 // the terminal's /routines: each with its number, when, tier, on or off
@@ -1116,13 +1166,25 @@ export function view_answer(v: View, arg: string): Act | string {
 
 // /drop's argument, a question's number, as a Drop; else why not
 export function view_drop(v: View, arg: string): Act | string {
-  const q = view_questions(v).find((x) => String(x.id) === arg.trim());
+  const q = [...view_questions(v), ...view_notes(v)].find((x) => String(x.id) === arg.trim());
   return q === undefined ? "No open question " + arg.trim() + ": /questions lists them." : { $: "Drop", q: q.id };
+}
+
+// a path named in the chat (an inline code's text), its :line dropped, for
+// the files pane (K4); null: not a path
+const PATH_EXT = /\.(ts|tsx|js|jsx|mjs|py|md|json|jsonl|sh|css|html|yml|yaml|toml|sql|go|rs|txt|ipynb|cfg|ini|lock|csv)$/i;
+export function view_path(text: string): string | null {
+  const p = text.trim().replace(/(:\d+){1,2}$/, "");
+  if (p.length === 0 || p.length > 500 || /\s|:\/\/|^-/.test(p)) {
+    return null;
+  }
+  const pathy = /^(~|\.{1,2})?\/?[\w.@+-]+(\/[\w.@+-]+)+\/?$/.test(p) || /^[\w.@+-]+$/.test(p);
+  return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
 }
 
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files|timesheet)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }

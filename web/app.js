@@ -500,8 +500,9 @@ function look_css(kind, look) {
 // Modes.ts
 var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
-var READS = ["read", "glob", "grep"];
+var READS = ["read", "glob", "grep", "google", "harvest"];
 var REVIEWED = ["shell", "write", "edit"];
+var SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
@@ -528,8 +529,12 @@ var Modes;
     return why + ": " + tool + " can change things. " + AFTER;
   }
   Modes2.allows = allows;
-  function reviews(mode, tool) {
-    return mode === "auto" && REVIEWED.includes(tool);
+  function reviews(mode, tool, input) {
+    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+      return false;
+    }
+    const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
+    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
   }
   Modes2.reviews = reviews;
   function readonly(command) {
@@ -1212,7 +1217,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var PAGES = ["home", "inbox", "routines", "digest", "transcripts"];
+var PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files", "timesheet"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1221,7 +1226,7 @@ var RETRY = 1000;
 var TICK = "+";
 var MOVE = 4001;
 var FRAME = 2 ** 22;
-var HINT = "Message Legion";
+var HINT = "Message Legion (!command runs it on your device; !@name on that one)";
 var AI = "Unii is an AI, not a person, and can make mistakes.";
 var NOTICE = 3 * 60 * 60 * 1000;
 var WAIT = "compressing…";
@@ -1274,6 +1279,7 @@ function view_new() {
     inbox: null,
     themes: null,
     summaries: new Map,
+    looked: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1299,6 +1305,14 @@ function view_hear(v, msg) {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "looked": {
+      v.looked = msg;
+      return [];
+    }
+    case "look":
+    case "harvest": {
       return [];
     }
     case "summary": {
@@ -1387,9 +1401,10 @@ function view_act(v, act) {
         return [];
       }
       if (text.startsWith("!")) {
-        const command = text.slice(1).trim();
+        const named = /^!@([\w.-]{1,64})(?:\s+|$)/.exec(text);
+        const command = text.slice(named === null ? 1 : named[0].length).trim();
         v.notes.push(...command === "" ? ["! needs a command: !<command>, run with the shell on a device."] : []);
-        return command === "" ? [] : [{ $: "bang", command }];
+        return command === "" ? [] : [{ $: "bang", command, ...named === null ? {} : { device: named[1] } }];
       }
       if (v.page !== null) {
         return text === "" ? [] : [{ $: "tell", name: v.page.name, text }];
@@ -1489,6 +1504,16 @@ function view_act(v, act) {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Look": {
+      return [{ $: "look", what: act.what }];
+    }
+    case "Bang": {
+      const command = act.command.trim();
+      return command === "" ? [] : [{ $: "bang", command, dir: act.dir }];
+    }
+    case "Timesheet": {
+      return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1733,10 +1758,22 @@ function view_waiting(v) {
   return (v.plan ? 1 : 0) + (v.calls ?? []).length;
 }
 function view_questions(v) {
-  return [...v.questions ?? []].sort((a, b) => a.id - b.id);
+  return [...v.questions ?? []].filter((q) => !q.fyi).sort((a, b) => a.id - b.id);
+}
+function view_notes(v) {
+  return [...v.questions ?? []].filter((q) => q.fyi === true).sort((a, b) => a.id - b.id);
+}
+var PATH_EXT = /\.(ts|tsx|js|jsx|mjs|py|md|json|jsonl|sh|css|html|yml|yaml|toml|sql|go|rs|txt|ipynb|cfg|ini|lock|csv)$/i;
+function view_path(text) {
+  const p = text.trim().replace(/(:\d+){1,2}$/, "");
+  if (p.length === 0 || p.length > 500 || /\s|:\/\/|^-/.test(p)) {
+    return null;
+  }
+  const pathy = /^(~|\.{1,2})?\/?[\w.@+-]+(\/[\w.@+-]+)+\/?$/.test(p) || /^[\w.@+-]+$/.test(p);
+  return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
 }
 function view_route(hash) {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files|timesheet)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }
@@ -2147,7 +2184,10 @@ function questions_html(v) {
     const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
     const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
     return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
-  });
+  }).concat(view_notes(v).map((q) => {
+    const head = `<div class="qh"><b>note</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    return `<div class="q fyi">${head}<div class="qt">${esc(q.text)}</div></div>`;
+  }));
 }
 function focus_html(v) {
   const name = v.page?.name ?? null;
@@ -2161,11 +2201,12 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill, asked = 0, perm, inbox = 0) {
+function mode_html(mode, pill, asked = 0, perm, inbox = 0, notes = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
   const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
-  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  const said = [asked === 0 ? "" : "? " + asked, notes === 0 ? "" : "i " + notes].filter((x) => x !== "").join(" · ");
+  const qs = said === "" ? [] : [`<button class="qs" data-qs title="${notes === 0 ? "your questions" : "your questions and notes"}">${said}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
   return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
@@ -2521,6 +2562,8 @@ var PAGE_ITEMS = [
   { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
   { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
+  { label: "Files", hint: "page · g f", go: { href: "#files" } },
+  { label: "Timesheet", hint: "page · g s", go: { href: "#timesheet" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
@@ -2732,6 +2775,72 @@ function transcripts_html(v, sel, reading) {
   }
   return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }
+function files_html(v) {
+  const looked = v.looked;
+  const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
+  const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
+    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
+    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+  }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
+  const repo = looked?.path ?? "@home";
+  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
+  const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
+}
+function shown_html(looked) {
+  if (looked === null) {
+    return `<p class="meta">Pick a file, or a git view.</p>`;
+  }
+  if (looked.error !== undefined) {
+    return `<p class="meta">${esc(looked.error)}</p>`;
+  }
+  const lines = (looked.text ?? "").replace(/\n$/, "").split(`
+`);
+  if (looked.kind === "file") {
+    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join(`
+`)}</pre>`;
+  }
+  const repo = looked.path ?? "@home";
+  const line = (l) => {
+    const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
+    if (sha !== undefined) {
+      return `<button class="sha"${act_html2({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc(sha)}</button>${esc(l.slice(sha.length))}`;
+    }
+    const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
+    return cls === "" ? esc(l) : `<span class="${cls}">${esc(l)}</span>`;
+  };
+  return `<pre class="code git">${lines.map(line).join(`
+`)}</pre>`;
+}
+var TIMESHEET_ROUTINE = {
+  name: "Timesheet drafts",
+  task: "Draft today's Harvest timesheet for the user, for their review. Read harvest projects and today's harvest entries (don't draft time already logged); read today's calendar (google calendar), their merged and open PRs and today's commits in their spaces, and their Jira tickets in progress. Map each piece of work to one of their Harvest projects and tasks by id, in hundredths of an hour, a day at most 8 hours unless the calendar shows more. File them with timesheet (each with notes as the user would write them and why: the evidence). Skip weekends and days with no evidence. Then say in a line what you drafted.",
+  when: { $: "daily", at: "17:30" },
+  tier: "worker"
+};
+function timesheet_html(v) {
+  const drafts = v.drafts ?? [];
+  const open2 = drafts.filter((d) => d.state === "draft" || d.state === "failed").map((d) => d.n);
+  const submit = open2.length === 0 ? "" : `<button class="pbtn go"${act_html2({ $: "Timesheet", op: "submit", ns: open2 })} title="posts them to Harvest from your device">Submit ${open2.length} to Harvest</button>`;
+  const routine = (v.routines ?? []).some((r) => r.name === TIMESHEET_ROUTINE.name) ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "add", routine: TIMESHEET_ROUTINE })} title="a worker drafts each day at 17:30; you submit">Draft daily at 17:30</button>`;
+  const head = `<div class="phead"><h2>Timesheet</h2><p class="meta">Drafts for Harvest: nothing is sent until you submit</p>${submit}${routine}</div>`;
+  if (drafts.length === 0) {
+    return [head, `<p class="meta">No drafts yet. Agents draft with the timesheet tool (they need legion harvest-login on your device): ask in the chat, or add the routine.</p>`];
+  }
+  const days = [...new Set(drafts.map((d) => d.date))].sort().reverse();
+  const row = (d) => {
+    const state = d.state === "sent" ? `<span class="tag ok">Harvest #${esc(String(d.harvest ?? ""))}</span>` : d.state === "failed" ? `<span class="tag bad">${esc(d.error ?? "failed")}</span>` : d.state === "sending" ? `<span class="tag">sending</span>` : `<button class="x" title="drop"${act_html2({ $: "Timesheet", op: "drop", ns: [d.n] })}>×</button>`;
+    return `<div class="trow ${esc(d.state)}"><span class="h">${esc(String(d.hours))} h</span><span class="p">${esc(d.project)} · ${esc(d.task)}</span><span class="n">${esc(d.notes)}</span><span class="meta why">${esc(d.why)} · by ${esc(d.by)}</span>${state}</div>`;
+  };
+  const body = days.map((day) => {
+    const of = drafts.filter((d) => d.date === day);
+    const total = Math.round(of.reduce((t, d) => t + d.hours, 0) * 100) / 100;
+    return `<div class="tday"><h3>${esc(day)} <span class="meta">${total} h</span></h3>${of.map(row).join("")}</div>`;
+  }).join("");
+  return [head, body];
+}
 
 // web/src/main.ts
 var APP = window.webkit?.messageHandlers?.unii ?? null;
@@ -2927,6 +3036,7 @@ function chat() {
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
+  $("#page").addEventListener("submit", files_run);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -3037,6 +3147,14 @@ function click(ev) {
   if (qs !== null) {
     P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
     paint();
+  }
+  const code = ev.target.closest("#log code");
+  const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : view_path(code.textContent ?? "");
+  if (named !== null) {
+    const agent = v.page?.name ?? null;
+    act({ $: "Look", what: { kind: "file", path: named, ...agent === null ? {} : { agent } } });
+    location.hash = "#files";
+    return;
   }
   const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
@@ -3575,7 +3693,8 @@ function crew_bars() {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = view_questions(v).length + view_waiting(v);
-  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox)));
+  const notes = view_notes(v).length;
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox), notes));
   side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
@@ -3585,7 +3704,7 @@ function crew_bars() {
     watch();
     return;
   }
-  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  const pane = !crew && asked + notes > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
   markup($("#questions"), pane ? [...waiting_html(v), ...questions_html(v)] : []);
@@ -3661,7 +3780,7 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files", s: "#timesheet" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -3685,6 +3804,14 @@ function page_bars(mode) {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180000).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "timesheet") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), timesheet_html(v));
+  } else if (mode === "files") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), files_html(v));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -3777,6 +3904,22 @@ function palette_run(k) {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+function files_run(ev) {
+  const form = ev.target.closest("form.fsh");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const box = form.querySelector("input");
+  const command = box.value.trim();
+  if (command === "") {
+    return;
+  }
+  const dir = form.dataset.dir ?? "";
+  act(dir === "" ? { $: "Send", text: "!" + command, images: [] } : { $: "Bang", command, dir });
+  box.value = "";
+  toast("Running " + command.slice(0, 60) + ": its output comes in the chat.");
 }
 function routine_add(ev) {
   const form = ev.target.closest("form.radd");

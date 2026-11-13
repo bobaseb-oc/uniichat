@@ -65,6 +65,7 @@ type Term = {
   branch? : string | null; // the branch of the folder Unii works in (term_status)
   spend?  : Cost.Spend;    // today's LiteLLM spend (term_status)
   reported?: string;       // the status last sent as this device's (term_status)
+  reads?  : (msg: View.Server) => void; // the cockpit's reads, as legion device's (Device.device_reads)
 };
 
 // a job running here: its stop, its send to the background (a shell's)
@@ -268,6 +269,7 @@ function term_new(url: string): Term {
   };
   term_status(t, false);
   setInterval(() => term_status(t), STATUS).unref();
+  t.reads = Device.device_reads(RULES, (out) => term_send(t, out));
   process.stdin.on("end", () => {
     if (t.scr.ed.text.trim() !== "") {
       term_enter(t);
@@ -338,6 +340,7 @@ function term_hear(t: Term, msg: View.Server): void {
     term_send(t, out);
   }
   term_went(t, was);
+  t.reads?.(msg);
   if (msg.$ === "jobs" || msg.$ === "job") {
     Device.device_jobs(t.v, t.jobs, msg, RULES, (out) => term_send(t, out));
     return;

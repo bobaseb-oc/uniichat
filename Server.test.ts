@@ -258,7 +258,14 @@ Tools.done(chat.tools, "pc", job.id, { text: "hi\\n(exit 0 in 0.0 s)", fail: fal
 for (let k = 0; k < 100 && !chat.mem.count; k++) await Bun.sleep(10);
 const { Memory } = await import(${JSON.stringify(import.meta.dir + "/Memory.ts")});
 const last = Memory.message(chat.mem, chat.mem.count - 1);
-console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty, ran, job: job && { name: job.job.name, input: job.job.input, cwd: job.job.cwd }, mac: jobs.mac.length, kind: last?.kind, text: last?.text, asks }));
+// K9: the web picks the device (!@name) and a folder (the Files page)
+const several = await Chat.act(chat, "b4", { $: "bang", command: "ls" }, "");
+const unknown = await Chat.act(chat, "b5", { $: "bang", command: "ls", device: "nas" }, "");
+const picked = await Chat.act(chat, "b6", { $: "bang", command: "ls", device: "mac", dir: "/r/it's here" }, "");
+const there = jobs.mac.at(-1);
+const baddir = await Chat.act(chat, "b7", { $: "bang", command: "ls", device: "mac", dir: "x".repeat(2000) }, "");
+console.log(JSON.stringify({ none, two: "error" in two, empty: "error" in empty, ran, job: job && { name: job.job.name, input: job.job.input, cwd: job.job.cwd }, mac: jobs.mac.length, kind: last?.kind, text: last?.text, asks,
+  several: several.error ?? null, unknown: unknown.error ?? null, picked, there: there && there.job.input.command, baddir: "error" in baddir }));
 process.exit(0);
 `;
 
@@ -295,7 +302,7 @@ test("a device's status is kept and told in the state; only a device's, its fiel
 
 // A device's inbox (Device.device_inbox): only a device's, checked
 // (Inbox.inbox_check), kept and told every view; a view's "fetch" asks
-// every socket (the devices) to read it anew
+// every socket (the devices) to read it anew; with no device up, it says so
 const INBOX = `
 const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
 const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
@@ -308,8 +315,10 @@ const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, 
 const web = await Chat.act(chat, "i0", { $: "inbox", inbox }, "");
 const ok = await Chat.act(chat, "i1", { $: "inbox", inbox: { ...inbox, extra: 1 } }, "mac");
 const bad = await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, merged: "many" } }, "mac");
-const fetch = await Chat.act(chat, "i3", { $: "fetch" }, "");
-console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
+const none = await Chat.act(chat, "i3", { $: "fetch" }, "");
+chat.tools.devices.set("mac", { terms: new Set(["t1"]) });
+const fetch = await Chat.act(chat, "i4", { $: "fetch" }, "");
+console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, none: none.error ?? null, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
 process.exit(0);
 `;
 
@@ -319,7 +328,94 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [], google: null };
+  expect(out.none).toMatch(/legion device/);
+  delete out.none;
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
+});
+
+// the files pane and git tab (K4): a view's look, checked, goes to the
+// devices with its act's id; a device's answer (only a device's, once per
+// id, shape checked) goes to the views; no device up: it says so
+const LOOK = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const none = await Chat.act(chat, "l0", { $: "look", what: { kind: "file", path: "a.ts" } }, "");
+chat.tools.devices.set("mac", { terms: new Set(["t1"]) });
+const bad = [
+  await Chat.act(chat, "l1", { $: "look", what: { kind: "rm", path: "a" } }, ""),
+  await Chat.act(chat, "l2", { $: "look", what: { kind: "file", path: "x".repeat(2000) } }, ""),
+  await Chat.act(chat, "l3", { $: "look", what: { kind: "git", repo: "/r", op: "log", rev: 5 } }, ""),
+].map((a) => "error" in a);
+const ok = await Chat.act(chat, "l4", { $: "look", what: { kind: "git", repo: "/r", op: "log", extra: 1 } }, "");
+const forged = await Chat.act(chat, "l5", { $: "looked", id: "l4", kind: "git", text: "fake" }, "");
+const shown = await Chat.act(chat, "l6", { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }, "mac");
+const twice = await Chat.act(chat, "l7", { $: "looked", id: "l4", kind: "git", text: "again" }, "mac");
+const unasked = await Chat.act(chat, "l8", { $: "looked", id: "zz", kind: "file", text: "x" }, "mac");
+console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.filter((m) => m.$ === "look" || m.$ === "looked") }));
+process.exit(0);
+`;
+
+test("a view's look goes to the devices; a device's answer, once, to the views", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/look.ts", LOOK);
+  const proc = Bun.spawn([process.execPath, dir + "/look.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.none).toMatch(/legion device/);
+  expect(out).toMatchObject({
+    bad: [true, true, true], ok: {}, forged: true, shown: {}, twice: true, unasked: true,
+    sent: [{ $: "look", id: "l4", what: { kind: "git", repo: "/r", op: "log" } }, { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }],
+  });
+});
+
+// the timesheet's Submit (K5, RED ZONE): the user's act sends the drafts
+// asked (only those not sent nor sending) to ONE device's terminal, never
+// to every socket (each would post them: billed twice); a device's answer
+// (only a device's, for that submit, once) marks each sent or failed;
+// drop removes an unsent draft only
+const HARVEST = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const views = [], one = [], two = [];
+chat.socks.add({ send: (s) => views.push(JSON.parse(s)), data: { watch: new Set(), seen: new Set() } });
+const d = (n, state) => ({ n, project_id: 7, task_id: 70, project: "P", task: "T", date: "2026-11-12", hours: 1, notes: "x", why: "w", by: "main", state });
+chat.mem.drafts = [d(1, "draft"), d(2, "draft"), d(3, "sent"), d(4, "failed")];
+const none = await Chat.act(chat, "h0", { $: "timesheet", op: "submit", ns: [1] }, "");
+chat.tools.devices.set("mac", { terms: new Map([["t1", { send: (m) => one.push(m) }], ["t2", { send: (m) => two.push(m) }]]) });
+const bad = await Chat.act(chat, "h1", { $: "timesheet", op: "submit", ns: [3] }, "");
+const ok = await Chat.act(chat, "h2", { $: "timesheet", op: "submit", ns: [1, 3, 4, 99] }, "");
+const again = await Chat.act(chat, "h3", { $: "timesheet", op: "submit", ns: [1] }, "");
+const states = chat.mem.drafts.map((x) => x.state);
+const forged = await Chat.act(chat, "h4", { $: "harvested", id: "h2", results: [{ n: 1, id: 5 }] }, "");
+const done = await Chat.act(chat, "h5", { $: "harvested", id: "h2", results: [{ n: 1, id: 555 }, { n: 4, error: "Harvest: HTTP 422." }, { n: 2, id: 9 }] }, "mac");
+const twice = await Chat.act(chat, "h6", { $: "harvested", id: "h2", results: [{ n: 1, id: 6 }] }, "mac");
+const dropped = await Chat.act(chat, "h7", { $: "timesheet", op: "drop", ns: [2, 1] }, "");
+console.log(JSON.stringify({ none: none.error ?? null, bad: bad.error ?? null, ok, again: again.error ?? null, states, forged: "error" in forged, done, twice: "error" in twice, dropped,
+  after: chat.mem.drafts.map((x) => [x.n, x.state, x.harvest ?? null, x.error ?? null]), one, two, toViews: views.some((m) => m.$ === "harvest"), shown: Chat.state(chat).drafts.length }));
+process.exit(0);
+`;
+
+test("timesheet: Submit sends the user's drafts to one device; its answer marks them; drop removes unsent ones", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/harvest.ts", HARVEST);
+  const proc = Bun.spawn([process.execPath, dir + "/harvest.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.none).toMatch(/legion device/);
+  expect(out.bad).toMatch(/No draft/);
+  expect(out.again).toMatch(/No draft/);
+  const entry = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1, notes: "x" };
+  expect(out).toMatchObject({
+    ok: {}, states: ["sending", "draft", "sent", "sending"], forged: true, done: {}, twice: true, dropped: {},
+    after: [[1, "sent", 555, null], [3, "sent", null, null], [4, "failed", null, "Harvest: HTTP 422."]],
+    one: [{ $: "harvest", id: "h2", entries: [{ n: 1, ...entry }, { n: 4, ...entry }] }], two: [], toViews: false, shown: 3,
+  });
 });
 
 // PRs of the inbox reviewed or fixed (the cockpit's Review / Fix): a native
@@ -652,13 +748,15 @@ await until(() => asks.length === 1);
 const msgs = () => Array.from({ length: chat.mem.count }, (_, i) => Memory.message(chat.mem, i));
 const said = msgs().filter((m) => m.kind === "user" && m.text.includes("question")).map((m) => m.text);
 const dismissed = await Chat.act(chat, "a2", { $: "answer", q: 2 }, "");
+await Tools.call(chat.tools, "main", "notify", { text: "Picked bank-recon." }, go, "n1");
+await Chat.act(chat, "a3", { $: "answer", q: 3 }, "");
 await Bun.sleep(100);
 const notes = msgs().filter((m) => m.kind === "note").map((m) => m.text);
 console.log(JSON.stringify({ listed, unknown, answered, said, dismissed, notes, asks: asks.length, left: Chat.state(chat).questions }));
 process.exit(0);
 `;
 
-test("an answer from the question backlog is a message quoting it, and a turn; no text dismisses it", async () => {
+test("an answer from the question backlog is a message quoting it, and a turn; no text dismisses it (a note, silently)", async () => {
   const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
   fs.writeFileSync(dir + "/answer.ts", ANSWER);
   const proc = Bun.spawn([process.execPath, dir + "/answer.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
@@ -677,8 +775,10 @@ test("!command runs as a shell job on the device it came from; its output is a n
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   expect(out).toEqual({
     none: { error: "No device is open: run legion (or legion device) on one." }, two: false, empty: true, ran: {},
-    job: { name: "shell", input: { command: "echo hi" }, cwd: "main" }, mac: 1, kind: "note",
+    job: { name: "shell", input: { command: "echo hi" }, cwd: "main" }, mac: 2, kind: "note",
     text: "The user ran on pc:\n$ echo hi\nhi\n(exit 0 in 0.0 s)", asks: 0,
+    several: "Several devices are open (mac, pc): name one, as !@mac <command>, or type it in that device's terminal.",
+    unknown: "No device nas is open: mac, pc.", picked: {}, there: "cd '/r/it'\\''s here' && ls", baddir: true,
   });
 });
 

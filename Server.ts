@@ -41,6 +41,7 @@ import { Disk } from "./Disk.ts";
 import { Mail } from "./Mail.ts";
 import * as Import from "./Import.ts";
 import { Mcp } from "./Mcp.ts";
+import { Harvest } from "./Harvest.ts";
 import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.ts";
 import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
@@ -49,7 +50,7 @@ import * as Inbox from "./Inbox.ts";
 import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Look, type Looked, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -133,6 +134,8 @@ type Chat = {
   rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
   tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
+  looks?: Set<string>; // the looks asked of the devices, not yet answered (Chat.look)
+  harvests?: Map<string, number[]>; // the timesheet's submits sent to a device, not yet answered: their drafts (Chat.timesheet)
 };
 
 // a chat as it moves to another process (Chat.move): its user (an id:
@@ -1133,7 +1136,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines, drafts: chat.mem.drafts };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1386,7 +1389,22 @@ export namespace Chat {
       case "transcript": {
         return Chat.transcript(chat, device, msg);
       }
+      case "look": {
+        return Chat.look(chat, id, msg.what);
+      }
+      case "timesheet": {
+        return Chat.timesheet(chat, id, msg);
+      }
+      case "harvested": {
+        return Chat.harvested(chat, device, msg);
+      }
+      case "looked": {
+        return Chat.looked(chat, device, msg);
+      }
       case "fetch": {
+        if (Tools.opened(chat.tools).length === 0) {
+          return { error: "No device is up to read the inbox: open a terminal (legion), or run legion device (legion device --install keeps one running)." };
+        }
         Chat.all(chat, { $: "fetch" });
         return {};
       }
@@ -1400,7 +1418,7 @@ export namespace Chat {
         return Chat.reply(chat, id, Number(msg.q), msg.text === undefined || msg.text === null ? "" : String(msg.text).trim());
       }
       case "bang": {
-        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device);
+        return Chat.bang(chat, id, String(msg.command ?? "").trim(), device, msg.device, msg.dir);
       }
       case "tell": {
         // the person's message to an agent, as Unii's tell; refused as a
@@ -1496,7 +1514,8 @@ export namespace Chat {
 
   // the person's answer to an open question (Tools.question): logged as
   // their message quoting it, which Unii answers in a turn (refused as a
-  // post is, short of credit); no text dismisses it, a note, no turn
+  // post is, short of credit); no text dismisses it, a note, no turn (a
+  // note of Unii's, notify, dismissed silently)
   export async function reply(chat: Chat, id: string, n: number, text: string): Promise<Answer> {
     const q = chat.mem.questions.find((x) => x.id === n);
     if (q === undefined) {
@@ -1510,10 +1529,12 @@ export namespace Chat {
     Memory.save(chat.mem);
     Chat.change(chat);
     if (text === "") {
-      Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      if (!q.fyi) {
+        Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      }
       return {};
     }
-    await Chat.said(chat, id, "Answer to your question " + n + " (" + q.text + "):\n" + text);
+    await Chat.said(chat, id, (q.fyi ? "Reply to your note " : "Answer to your question ") + n + " (" + q.text + "):\n" + text);
     return {};
   }
 
@@ -1546,6 +1567,110 @@ export namespace Chat {
 
   // a device's inbox (Device.device_inbox), only a device's, checked
   // (Inbox.inbox_check: what a view is shown); kept, told every view
+  // the files pane and git tab (K4): a view's look, its shape checked, to
+  // the devices (each checks it against its own roots: Device.device_look)
+  // under the act's id; at most LOOKS waiting (the oldest let go)
+  export function look(chat: Chat, id: string, raw: any): Answer {
+    const str = (x: unknown) => typeof x === "string" && x.length > 0 && x.length <= LOOK_TEXT;
+    const what: Look | null =
+      raw?.kind === "file" && str(raw.path) && (raw.agent === undefined || str(raw.agent)) ? { kind: "file", path: raw.path, ...(raw.agent === undefined ? {} : { agent: raw.agent }) }
+      : raw?.kind === "git" && str(raw.repo) && str(raw.op) && (raw.rev === undefined || str(raw.rev)) ? { kind: "git", repo: raw.repo, op: raw.op, ...(raw.rev === undefined ? {} : { rev: raw.rev }) }
+      : null;
+    if (what === null) {
+      return { error: "Ask to see a file (path) or a repo's git (repo, op)." };
+    }
+    if (Tools.opened(chat.tools).length === 0) {
+      return { error: "No device is up to show it: open a terminal (legion), or run legion device." };
+    }
+    const looks = (chat.looks ??= new Set());
+    if (looks.size >= LOOKS) {
+      looks.delete(looks.values().next().value!);
+    }
+    looks.add(id);
+    Chat.all(chat, { $: "look", id, what });
+    return {};
+  }
+
+  // the timesheet (K5, RED ZONE): the user's Submit of drafts (only those
+  // not sent nor sending), checked again, sent to ONE device's terminal
+  // (each that got them would post them: billed twice), marked sending;
+  // or their drop (unsent ones only)
+  export function timesheet(chat: Chat, id: string, msg: any): Answer {
+    const ns = new Set((Array.isArray(msg?.ns) ? msg.ns : []).filter((n: unknown) => Number.isInteger(n)));
+    const mem = chat.mem;
+    if (msg?.op === "drop") {
+      mem.drafts = mem.drafts.filter((d) => !ns.has(d.n) || d.state === "sent" || d.state === "sending");
+      Memory.save(mem);
+      Chat.change(chat);
+      return {};
+    }
+    if (msg?.op !== "submit") {
+      return { error: "Submit or drop drafts." };
+    }
+    const asked = mem.drafts.filter((d) => ns.has(d.n) && (d.state === "draft" || d.state === "failed") && typeof Harvest.entry_check(d) !== "string");
+    if (asked.length === 0) {
+      return { error: "No draft of those waits to be submitted." };
+    }
+    const link = Tools.opened(chat.tools).flatMap(([, d]) => [...d.terms.values()]).find((l) => l.live?.() !== false);
+    if (link === undefined) {
+      return { error: "No device is up to submit to Harvest: open a terminal (legion), or run legion device." };
+    }
+    for (const d of asked) {
+      d.state = "sending";
+      delete d.error;
+    }
+    (chat.harvests ??= new Map()).set(id, asked.map((d) => d.n));
+    link.send({ $: "harvest", id, entries: asked.map((d) => ({ n: d.n, project_id: d.project_id, task_id: d.task_id, date: d.date, hours: d.hours, notes: d.notes })) });
+    Memory.save(mem);
+    Chat.change(chat);
+    return {};
+  }
+
+  // a device's answer to a submit: each of its drafts sent (Harvest's id)
+  // or failed (why); only a device's, once
+  export function harvested(chat: Chat, device: string, msg: any): Answer {
+    const id = String(msg?.id ?? "");
+    const ns = chat.harvests?.get(id);
+    if (device === "" || ns === undefined) {
+      return { error: "No submit " + id.slice(0, 40) + " waits for a device's answer." };
+    }
+    chat.harvests!.delete(id);
+    const results: any[] = Array.isArray(msg?.results) ? msg.results : [];
+    for (const d of chat.mem.drafts.filter((x) => ns.includes(x.n) && x.state === "sending")) {
+      const r = results.find((x) => x?.n === d.n);
+      if (r !== undefined && Number.isInteger(r.id)) {
+        d.state = "sent";
+        d.harvest = r.id;
+      } else {
+        d.state = "failed";
+        d.error = String(r?.error ?? "no answer for it").slice(0, 300);
+      }
+    }
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    const sent = chat.mem.drafts.filter((d) => ns.includes(d.n) && d.state === "sent").length;
+    Chat.note(chat, "Timesheet: " + sent + " of " + ns.length + " entries submitted to Harvest" + (sent < ns.length ? "; the rest failed (the Timesheet page says why)." : "."));
+    return {};
+  }
+
+  // a device's answer to a look asked, once, its fields cut, to the views
+  export function looked(chat: Chat, device: string, msg: any): Answer {
+    const id = String(msg?.id ?? "");
+    if (device === "" || !chat.looks?.delete(id)) {
+      return { error: "No look " + id.slice(0, 40) + " waits for a device's answer." };
+    }
+    const s = (x: unknown, most: number) => (typeof x === "string" ? x.slice(0, most) : undefined);
+    const out: Looked = { $: "looked", id, kind: msg.kind === "git" ? "git" : "file" };
+    for (const [k, most] of [["path", LOOK_TEXT], ["op", 20], ["text", LOOK_SHOWN], ["error", 300]] as const) {
+      const v = s(msg[k], most);
+      if (v !== undefined) {
+        out[k] = v;
+      }
+    }
+    Chat.all(chat, out);
+    return {};
+  }
+
   export function inboxed(chat: Chat, device: string, raw: unknown): Answer {
     const inbox = device === "" ? "Only a device reports its inbox." : Inbox.inbox_check(raw);
     if (typeof inbox === "string") {
@@ -1617,7 +1742,12 @@ export namespace Chat {
 
   const SUMMARY = "Summarize this meeting transcript for its attendee: one sentence on what the meeting settled, then short sections (a heading each) of bullets with the decisions and the context behind them, then a 'Next steps' section of bullets with each owner's name in parentheses first. Plain Markdown, under 400 words. Only what the transcript says.";
   const SUMMARY_TEXT = 6000;
-  const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
+  // the files pane's looks (Chat.look): waiting at most, a path's length at
+// most, what a device's answer may show at most (Device.LOOK_BYTES)
+const LOOKS = 50;
+const LOOK_TEXT = 1000;
+const LOOK_SHOWN = 512 * 1024;
+const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
 
   export async function transcript(chat: Chat, device: string, msg: any): Promise<Answer> {
     const id = typeof msg.id === "string" ? msg.id : "";
@@ -1856,21 +1986,30 @@ export namespace Chat {
 
   // the person's !command: a shell job, as Unii's own (in the home repo,
   // gated by Claude Code's hooks there: Hooks.ts), on the device it came
-  // from, else the only one open; its command and output a note the AI
-  // reads, starting no turn. Answered at once; the note comes when it ends
-  export function bang(chat: Chat, id: string, command: string, from: string): Answer {
+  // from (or the one named: !@name), else the only one open; in a folder
+  // if given (the Files page's box: cd there first); its command and output
+  // a note the AI reads, starting no turn. Answered at once; the note comes
+  // when it ends
+  export function bang(chat: Chat, id: string, command: string, from: string, named?: unknown, dir?: unknown): Answer {
     if (command === "") {
       return { error: "No command." };
     }
+    if (dir !== undefined && (typeof dir !== "string" || dir === "" || dir.length > LOOK_TEXT)) {
+      return { error: "Not a folder to run it in." };
+    }
     const open = Tools.opened(chat.tools).map(([name]) => name);
-    const device = open.includes(from) ? from : open.length === 1 ? open[0]! : null;
+    if (named !== undefined && !open.includes(String(named))) {
+      return { error: "No device " + String(named).slice(0, 64) + " is open: " + (open.join(", ") || "none") + "." };
+    }
+    const device = named !== undefined ? String(named) : open.includes(from) ? from : open.length === 1 ? open[0]! : null;
     if (device === null) {
-      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): type the !command in the terminal of the one to run it on." };
+      return { error: open.length === 0 ? "No device is open: run legion (or legion device) on one." : "Several devices are open (" + open.join(", ") + "): name one, as !@" + open[0] + " <command>, or type it in that device's terminal." };
     }
     Chat.mark(chat, id, {});
-    const job = { name: "shell", input: { command }, cwd: "main" };
+    const quoted = dir === undefined ? null : "'" + dir.replace(/'/g, "'\\''") + "'";
+    const job = { name: "shell", input: { command: quoted === null ? command : "cd " + quoted + " && " + command }, cwd: "main" };
     Tools.job(chat.tools, device, job, new AbortController().signal, "bang-" + id).then((out) => {
-      Chat.note(chat, "The user ran on " + device + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
+      Chat.note(chat, "The user ran on " + device + (dir === undefined ? "" : " in " + dir) + ":\n$ " + command + "\n" + (out.fail ? "error: " : "") + out.text);
     });
     return {};
   }

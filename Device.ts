@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as Cost from "./Cost.ts";
 import { Google } from "./Google.ts";
+import { Harvest, type Creds, type New } from "./Harvest.ts";
 import * as Inbox from "./Inbox.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as View from "./View.ts";
@@ -324,6 +325,7 @@ export function device_open(url: string, auth: Record<string, string>, query: st
   const v = View.view_new();
   const jobs = new Map<string, Run>();
   const send = (msg: View.Client) => View.link_send(v, msg, (a) => a.error !== undefined && log("refused: " + a.error));
+  const heard = device_reads(rules, send);
   View.link_open(v, {
     open : (q) => new WebSocket(url.replace(/^http/, "ws") + "/ws" + q + query, { headers: auth } as any),
     post : (path, body) => fetch(url + path, { method: "POST", headers: auth, body }),
@@ -334,20 +336,183 @@ export function device_open(url: string, auth: Record<string, string>, query: st
       if (msg.$ === "jobs" || msg.$ === "job") {
         device_jobs(v, jobs, msg, rules, send);
       }
-      if (msg.$ === "fetch") {
-        void inbox();
-      }
-      if (msg.$ === "read") {
-        void device_transcript(msg.id).then(send);
-      }
+      heard(msg);
     },
     lost,
   });
   const report = () => send(device_status(rules, Date.now()));
-  const inbox = async () => send(await device_inbox(rules, exec, new Date()));
   report();
-  void inbox();
   setInterval(report, STATUS_EVERY).unref();
-  setInterval(inbox, INBOX_EVERY).unref();
   return v;
+}
+
+// The timesheet's Submit (K5, RED ZONE)
+// =====================================
+// The entries the server sent for the user's Submit (Chat.timesheet),
+// each checked again (Harvest.entry_check) and posted once, in order,
+// with the token kept in the Keychain; each one's Harvest id or why not.
+
+export type Posts = { creds: () => Promise<Creds>; post: (c: Creds, e: New) => Promise<{ id: number }> };
+export const posts: Posts = { creds: () => Harvest.creds(Harvest.store()), post: (c, e) => Harvest.post(c, e) };
+
+export async function device_harvest(id: string, entries: unknown, h: Posts = posts): Promise<View.Client> {
+  const list = (Array.isArray(entries) ? entries : []).filter((e: any) => e !== null && typeof e === "object" && Number.isInteger(e.n)) as (New & { n: number })[];
+  let c: Creds;
+  try {
+    c = await h.creds();
+  } catch (err: any) {
+    return { $: "harvested", id, results: list.map((e) => ({ n: e.n, error: String(err?.message ?? err).slice(0, 300) })) };
+  }
+  const results: View.Harvested[] = [];
+  for (const e of list) {
+    const ok = Harvest.entry_check(e);
+    if (typeof ok === "string") {
+      results.push({ n: e.n, error: "not posted: " + ok });
+      continue;
+    }
+    try {
+      results.push({ n: e.n, id: (await h.post(c, ok)).id });
+    } catch (err: any) {
+      results.push({ n: e.n, error: String(err?.message ?? err).slice(0, 300) });
+    }
+  }
+  return { $: "harvested", id, results };
+}
+
+// The files pane and git tab (K4, Terax-like, read-only)
+// ======================================================
+// What a view asks to see: a file (an agent's relative path from its own
+// dir), or a repo's git by one of GIT_VIEWS' fixed commands. Shown only
+// under the device's roots (its work dir, home repo, spaces), each path's
+// symlinks followed first; never a secret's file (SECRET), a binary or a
+// file past LOOK_BYTES; git's answer cut at LOOK_BYTES.
+
+export const LOOK_BYTES = 512 * 1024;
+const SECRET = /^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|\.netrc|\.npmrc|\.pypirc|credentials.*|\.credentials.*|secrets?(\..*)?)$/i;
+const GIT_VIEWS: Record<string, (rev: string | null) => string[]> = {
+  status  : () => ["status", "--porcelain=v1", "--branch"],
+  branches: () => ["branch", "--all", "-vv", "--no-color"],
+  log     : () => ["log", "--oneline", "--decorate", "--no-color", "-80"],
+  diff    : () => ["diff", "--no-color", "--no-ext-diff", "HEAD"],
+  show    : (rev) => ["show", "--no-color", "--no-ext-diff", "--stat", "--patch", rev ?? "HEAD"],
+};
+const REV = /^([0-9a-f]{4,40}|HEAD(~\d{1,3})?)$/;
+
+// the roots a device shows under, real paths
+function look_roots(rules: Rules): string[] {
+  const all = [rules.work, rules.home, ...device_spaces(rules, Date.now()).spaces.map((s) => s.path)];
+  return [...new Set(all.filter((p): p is string => typeof p === "string" && p !== "").map((p) => {
+    try {
+      return fs.realpathSync(home(p));
+    } catch {
+      return "";
+    }
+  }).filter((p) => p !== ""))];
+}
+
+// a path's real path if under a root; else why not
+function look_under(rules: Rules, p: string): string | { why: string } {
+  let real: string;
+  try {
+    real = fs.realpathSync(p);
+  } catch {
+    return { why: "No file " + p + " here." };
+  }
+  const roots = look_roots(rules);
+  return roots.some((r) => real === r || real.startsWith(r + path.sep)) ? real : { why: p + " is not under this device's work dir, home repo or spaces." };
+}
+
+// what a view asked to see, or why not (look_file, look_git)
+export async function device_look(rules: Rules, id: string, what: View.Look): Promise<View.Client> {
+  const kind = what?.kind === "git" ? "git" : "file";
+  try {
+    const shown = what?.kind === "file" ? look_file(rules, what) : what?.kind === "git" ? await look_git(rules, what) : "Ask for a file or a repo's git.";
+    return typeof shown === "string" ? { $: "looked", id, kind, error: shown.slice(0, 300) } : { $: "looked", id, kind, ...shown };
+  } catch (err: any) {
+    return { $: "looked", id, kind, error: String(err?.message ?? err).slice(0, 300) };
+  }
+}
+
+type Shown = { path: string; op?: string; text: string };
+
+// a file's text (an agent's path from its own dir), or why not
+function look_file(rules: Rules, what: View.Look & { kind: "file" }): Shown | string {
+  const agent = what.agent === undefined ? null : String(what.agent);
+  if (agent !== null && !/^[\w-]{1,64}$/.test(agent)) {
+    return "Not an agent's name.";
+  }
+  const given = String(what.path ?? "");
+  const at = path.resolve(agent === null ? home(rules.home ?? rules.work) : path.join(home(rules.work), agent), home(given));
+  if (SECRET.test(path.basename(at))) {
+    return path.basename(at) + " may hold a secret: not shown.";
+  }
+  const real = look_under(rules, at);
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  if (SECRET.test(path.basename(real))) {
+    return path.basename(real) + " may hold a secret: not shown.";
+  }
+  const st = fs.statSync(real);
+  if (!st.isFile()) {
+    return "No file " + given + " here (a directory?).";
+  }
+  if (st.size > LOOK_BYTES) {
+    return given + " is too big to show (" + st.size + " bytes).";
+  }
+  const data = fs.readFileSync(real);
+  if (data.includes(0)) {
+    return given + " is a binary file.";
+  }
+  return { path: at, text: data.toString("utf8") };
+}
+
+// a repo's git by one of GIT_VIEWS (a file's own repo; @home: the home
+// repo), or why not
+async function look_git(rules: Rules, what: View.Look & { kind: "git" }): Promise<Shown | string> {
+  const view = GIT_VIEWS[String(what.op)];
+  if (view === undefined || !Object.hasOwn(GIT_VIEWS, String(what.op))) {
+    return "No git view " + String(what.op).slice(0, 20) + ": " + Object.keys(GIT_VIEWS).join(", ") + ".";
+  }
+  const rev = what.rev === undefined ? null : String(what.rev);
+  if (rev !== null && !REV.test(rev)) {
+    return "Not a revision: a commit's hash, HEAD or HEAD~n.";
+  }
+  const repo = String(what.repo ?? "");
+  const real = look_under(rules, repo === "@home" ? home(rules.home ?? path.join(rules.work, "main")) : home(repo));
+  if (typeof real !== "string") {
+    return real.why;
+  }
+  const dir = fs.statSync(real).isDirectory() ? real : path.dirname(real);
+  const r = await exec(["git", "-C", dir, "--no-pager", "-c", "core.fsmonitor=false", ...view(rev)]);
+  if (r.code !== 0) {
+    return "git: " + r.out.trim();
+  }
+  return { path: dir, op: String(what.op), text: r.out.slice(0, LOOK_BYTES) };
+}
+
+// the reads a device does for the cockpit, the terminal's and legion
+// device's alike: the inbox now, every `every` ms (0: never again) and on
+// the server's "fetch"; a transcript's text on its "read". Returns what
+// hears the server's messages
+export function device_reads(rules: Rules, send: (msg: View.Client) => void, run: Exec = exec, g: Reads = reads, every = INBOX_EVERY): (msg: View.Server) => void {
+  const inbox = async () => send(await device_inbox(rules, run, new Date(), g));
+  void inbox();
+  if (every > 0) {
+    setInterval(inbox, every).unref();
+  }
+  return (msg) => {
+    if (msg.$ === "fetch") {
+      void inbox();
+    }
+    if (msg.$ === "read") {
+      void device_transcript(msg.id, g).then(send);
+    }
+    if (msg.$ === "look") {
+      void device_look(rules, msg.id, msg.what).then(send);
+    }
+    if (msg.$ === "harvest") {
+      void device_harvest(msg.id, msg.entries).then(send);
+    }
+  };
 }

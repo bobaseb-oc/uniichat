@@ -122,9 +122,15 @@ What is known not to work, or not checked yet:
 - **Cockpit limits.** Jira tickets need `acli jira auth login` on the
   device. Agent cost on Home is an estimate at list price, not the
   gateway's bill; the 7-day spend sums the daily cost caches present.
-  Routines run only while a view or a device is connected. There is no
-  calendar or meeting transcripts page yet: both need access Legion
-  doesn't have.
+  Routines run only while a view or a device is connected. Google
+  (calendar, transcripts, Gmail, Chat, read-only) needs `legion
+  google-login` on the device, and Chat needs a Chat app configured in
+  the Google Cloud project; agents read it with the `google` tool. The
+  inbox is read by a running terminal or `legion device` (`legion device
+  --install` keeps one running at login). Harvest needs `legion
+  harvest-login`; agents only draft entries (the Timesheet page), and
+  only your Submit posts them. The Files page and Git tab show what is
+  under the device's work dir, home repo and spaces, read-only.
 - **Not checked live yet:** recall over the imported history, a turn
   with the gateway down (the 60 s go-ahead and the shown reason), the
   auto-mode reviewer on the real gateway, sub-agents getting their own

@@ -212,6 +212,27 @@ test("questions: the pane, and the needs-you lane lists them first", () => {
   expect(Html.questions_html(v)).toEqual([]);
 });
 
+// the orchestrator's notes (notify) in the same pane, after the questions:
+// marked as notes, escaped, a dismiss, no answers offered; not in the
+// needs-you lane; the header's button counts them apart
+test("notes: in the pane after questions, dismissable, never needing you", () => {
+  const v = View.view_new();
+  const date = "2026-11-12T10:00:00.000Z";
+  View.view_hear(v, { $: "state", ...v, questions: [{ id: 5, text: "Chose <b>x</b>", at: 0, date, fyi: true }, { id: 4, text: "Ship?", at: 0, date }] } as any);
+  const pane = Html.questions_html(v);
+  expect(pane).toHaveLength(2);
+  expect(pane[0]).toContain("Ship?");
+  expect(pane[1]).toContain('class="q fyi"');
+  expect(pane[1]).toContain("Chose &lt;b&gt;x&lt;/b&gt;");
+  expect(pane[1]).toContain(act({ $: "Drop", q: 5 }));
+  expect(pane[1]).not.toContain("qa");
+  expect(Html.needs_html(v).join("")).not.toContain("Chose");
+  expect(View.view_questions(v).map((q) => q.id)).toEqual([4]);
+  expect(View.view_notes(v).map((q) => q.id)).toEqual([5]);
+  expect(Html.mode_html("chat", "", 0, undefined, 0, 2).join("")).toContain('title="your questions and notes">i 2</button>');
+  expect(Html.mode_html("chat", "", 1, undefined, 0, 2).join("")).toContain(">? 1 · i 2</button>");
+});
+
 // the mode chip; the waiting pane's plan card (approve into auto or full,
 // send back with feedback) and waiting calls (allow, refuse), escaped,
 // before the questions; the needs-you lane lists them first

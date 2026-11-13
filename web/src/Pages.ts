@@ -267,3 +267,84 @@ export function transcripts_html(v: View.View, sel: string | null, reading: Set<
   }
   return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }
+
+// the files pane and git tab (K4, Terax-like, read-only): each agent's
+// touched files (Tools.touched), a Look each; git's views of the shown
+// file's repo (else the home repo); what a device showed last: a file's
+// lines numbered, a diff's lines marked, a log's commits each opened
+export function files_html(v: View.View): string[] {
+  const looked = v.looked;
+  const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
+  const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
+    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
+    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+  }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
+  const repo = looked?.path ?? "@home";
+  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
+  const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
+}
+
+function shown_html(looked: View.Looked | null): string {
+  if (looked === null) {
+    return `<p class="meta">Pick a file, or a git view.</p>`;
+  }
+  if (looked.error !== undefined) {
+    return `<p class="meta">${esc(looked.error)}</p>`;
+  }
+  const lines = (looked.text ?? "").replace(/\n$/, "").split("\n");
+  if (looked.kind === "file") {
+    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join("\n")}</pre>`;
+  }
+  const repo = looked.path ?? "@home";
+  const line = (l: string) => {
+    const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
+    if (sha !== undefined) {
+      return `<button class="sha"${act_html({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc(sha)}</button>${esc(l.slice(sha.length))}`;
+    }
+    const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
+    return cls === "" ? esc(l) : `<span class="${cls}">${esc(l)}</span>`;
+  };
+  return `<pre class="code git">${lines.map(line).join("\n")}</pre>`;
+}
+
+// the routine that drafts the timesheet each workday (offered on the
+// Timesheet page): a native worker reads harvest, calendar, PRs, commits
+// and tickets, and files drafts; only the user submits them
+export const TIMESHEET_ROUTINE: Routines.Given = {
+  name: "Timesheet drafts",
+  task: "Draft today's Harvest timesheet for the user, for their review. Read harvest projects and today's harvest entries (don't draft time already logged); read today's calendar (google calendar), their merged and open PRs and today's commits in their spaces, and their Jira tickets in progress. Map each piece of work to one of their Harvest projects and tasks by id, in hundredths of an hour, a day at most 8 hours unless the calendar shows more. File them with timesheet (each with notes as the user would write them and why: the evidence). Skip weekends and days with no evidence. Then say in a line what you drafted.",
+  when: { $: "daily", at: "17:30" },
+  tier: "worker",
+};
+
+// the Timesheet page (K5, RED ZONE): the drafts by day, newest first, each
+// day's hours; each draft's project, task, hours, notes and why, a Drop
+// while unsent; Submit sends exactly those not sent nor sending (the
+// user's act, to one device); sent ones with Harvest's id, failed ones why
+export function timesheet_html(v: View.View): string[] {
+  const drafts = v.drafts ?? [];
+  const open = drafts.filter((d) => d.state === "draft" || d.state === "failed").map((d) => d.n);
+  const submit = open.length === 0 ? "" : `<button class="pbtn go"${act_html({ $: "Timesheet", op: "submit", ns: open })} title="posts them to Harvest from your device">Submit ${open.length} to Harvest</button>`;
+  const routine = (v.routines ?? []).some((r) => r.name === TIMESHEET_ROUTINE.name) ? "" : `<button class="pbtn"${act_html({ $: "Routine", op: "add", routine: TIMESHEET_ROUTINE })} title="a worker drafts each day at 17:30; you submit">Draft daily at 17:30</button>`;
+  const head = `<div class="phead"><h2>Timesheet</h2><p class="meta">Drafts for Harvest: nothing is sent until you submit</p>${submit}${routine}</div>`;
+  if (drafts.length === 0) {
+    return [head, `<p class="meta">No drafts yet. Agents draft with the timesheet tool (they need legion harvest-login on your device): ask in the chat, or add the routine.</p>`];
+  }
+  const days = [...new Set(drafts.map((d) => d.date))].sort().reverse();
+  const row = (d: View.Draft) => {
+    const state = d.state === "sent" ? `<span class="tag ok">Harvest #${esc(String(d.harvest ?? ""))}</span>`
+      : d.state === "failed" ? `<span class="tag bad">${esc(d.error ?? "failed")}</span>`
+      : d.state === "sending" ? `<span class="tag">sending</span>`
+      : `<button class="x" title="drop"${act_html({ $: "Timesheet", op: "drop", ns: [d.n] })}>×</button>`;
+    return `<div class="trow ${esc(d.state)}"><span class="h">${esc(String(d.hours))} h</span><span class="p">${esc(d.project)} · ${esc(d.task)}</span><span class="n">${esc(d.notes)}</span><span class="meta why">${esc(d.why)} · by ${esc(d.by)}</span>${state}</div>`;
+  };
+  const body = days.map((day) => {
+    const of = drafts.filter((d) => d.date === day);
+    const total = Math.round(of.reduce((t, d) => t + d.hours, 0) * 100) / 100;
+    return `<div class="tday"><h3>${esc(day)} <span class="meta">${total} h</span></h3>${of.map(row).join("")}</div>`;
+  }).join("");
+  return [head, body];
+}

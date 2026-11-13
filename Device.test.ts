@@ -242,3 +242,96 @@ test("Google on the device: events and Docs with the inbox; signed out said; a t
   expect(await Device.device_transcript("doc_1234567890", g)).toEqual({ $: "transcript", id: "doc_1234567890", text: "said in doc_1234567890" });
   expect(await Device.device_transcript("doc_1234567890", { ...g, text: async () => { throw new Error("Google: HTTP 403."); } })).toEqual({ $: "transcript", id: "doc_1234567890", error: "Google: HTTP 403." });
 });
+
+// the reads every device does for the cockpit (the terminal's and legion
+// device's alike): the inbox at once and on "fetch", a transcript on "read"
+test("device_reads reads the inbox at once and on fetch, a transcript on read", async () => {
+  const sent: any[] = [];
+  const run: Device.Exec = async () => ({ code: 1, out: "no" });
+  const g: Device.Reads = { events: async () => [], docs: async () => [], text: async (id) => "said in " + id };
+  const heard = Device.device_reads({ work: "/w", computer: false, spaces: [] }, (m) => sent.push(m), run, g, 0);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "inbox").length).toBe(1);
+  heard({ $: "fetch" } as any);
+  heard({ $: "state" } as any);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "inbox").length).toBe(2);
+  heard({ $: "read", id: "doc1" } as any);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "transcript")).toEqual([{ $: "transcript", id: "doc1", text: "said in doc1" }]);
+});
+
+// the timesheet's Submit on the device (K5, RED ZONE): each entry the
+// server sent posted once, in order, with the kept token; each one's
+// Harvest id or why not; signed out: all fail, none posted
+test("device_harvest posts each submitted entry once; signed out, none", async () => {
+  const posted: any[] = [];
+  const h: Device.Posts = {
+    creds: async () => ({ token: "t", account: "1" }),
+    post: async (_c, e) => {
+      posted.push(e);
+      if (e.hours === 3) {
+        throw new Error("Harvest: HTTP 422.");
+      }
+      return { id: 100 + posted.length };
+    },
+  };
+  const e = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1, notes: "x" };
+  const out = await Device.device_harvest("h2", [{ n: 1, ...e }, { n: 4, ...e, hours: 3 }, { n: 5, ...e, hours: 99 }, "junk"] as any, h);
+  expect(out).toEqual({ $: "harvested", id: "h2", results: [{ n: 1, id: 101 }, { n: 4, error: "Harvest: HTTP 422." }, { n: 5, error: expect.stringContaining("hours") }] });
+  expect(posted.map((p) => p.hours)).toEqual([1, 3]);
+  const none = await Device.device_harvest("h3", [{ n: 1, ...e }], { ...h, creds: async () => { throw new Error("not signed in to Harvest: legion harvest-login"); } });
+  expect(none).toEqual({ $: "harvested", id: "h3", results: [{ n: 1, error: "not signed in to Harvest: legion harvest-login" }] });
+  expect(posted).toHaveLength(2);
+});
+
+// the files pane and git tab (K4, Terax-like, read-only): a device shows a
+// file or a repo's git only under its roots (its work dir, home repo,
+// spaces), symlinks followed first; never a secret's file, a binary or one
+// past LOOK_BYTES; git by fixed commands, a revision checked
+test("device_look: files and git under the device's roots only, read-only", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-look-"));
+  const work = top + "/work", repo = top + "/repo", out = top + "/out";
+  fs.mkdirSync(work + "/Owl", { recursive: true });
+  fs.mkdirSync(out);
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", repo]);
+  fs.writeFileSync(repo + "/a.ts", "export const a = 1;\n");
+  fs.writeFileSync(repo + "/.env", "KEY=x");
+  fs.writeFileSync(repo + "/big.txt", "x".repeat(Device.LOOK_BYTES + 1));
+  fs.writeFileSync(repo + "/bin.dat", Buffer.from([1, 0, 2]));
+  fs.writeFileSync(out + "/other.txt", "outside");
+  fs.symlinkSync(out + "/other.txt", repo + "/link.txt");
+  fs.symlinkSync(repo + "/.env", repo + "/cfg.txt");   // an innocent name, a secret behind it
+  fs.symlinkSync(repo + "/a.ts", repo + "/.env.local"); // a secret's name, whatever is behind it
+  fs.writeFileSync(work + "/Owl/notes.md", "# hi");
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+  git("add", "a.ts");
+  git("commit", "-q", "-m", "first");
+  const rules = { work, computer: false, spaces: [repo] };
+  const look = (what: any) => Device.device_look(rules, "r1", what) as Promise<any>;
+  expect(await look({ kind: "file", path: repo + "/a.ts" })).toEqual({ $: "looked", id: "r1", kind: "file", path: repo + "/a.ts", text: "export const a = 1;\n" });
+  // an agent's relative path, from its own dir under the work dir
+  expect((await look({ kind: "file", path: "notes.md", agent: "Owl" })).text).toBe("# hi");
+  for (const [path, why] of [[out + "/other.txt", "not under"], [repo + "/link.txt", "not under"], [repo + "/../out/other.txt", "not under"], [repo + "/.env", "secret"], [repo + "/big.txt", "too big"], [repo + "/bin.dat", "binary"], [repo + "/none.ts", "No file"]]) {
+    const r = await look({ kind: "file", path });
+    expect([path, r.text, String(r.error)]).toEqual([path, undefined, expect.stringContaining(why!)]);
+  }
+  expect((await look({ kind: "file", path: "x", agent: "../../etc" })).error).toBe("Not an agent's name.");
+  expect((await look({ kind: "file", path: repo + "/cfg.txt" })).error).toContain("secret");
+  expect((await look({ kind: "file", path: repo + "/.env.local" })).error).toContain("secret");
+  // git: status, log, a commit, the working tree's diff; a bad rev refused
+  fs.writeFileSync(repo + "/a.ts", "export const a = 2;\n");
+  expect((await look({ kind: "git", repo, op: "status" })).text).toContain("a.ts");
+  const log = (await look({ kind: "git", repo, op: "log" })).text as string;
+  expect(log).toContain("first");
+  const sha = log.trim().split(/\s/)[0]!;
+  expect((await look({ kind: "git", repo, op: "show", rev: sha })).text).toContain("export const a = 1;");
+  expect((await look({ kind: "git", repo, op: "diff" })).text).toContain("+export const a = 2;");
+  expect((await look({ kind: "git", repo, op: "show", rev: "--output=/tmp/x" })).error).toContain("revision");
+  expect((await look({ kind: "git", repo, op: "push" })).error).toContain("No git view");
+  expect((await look({ kind: "git", repo, op: "constructor" })).error).toContain("No git view");
+  expect((await look({ kind: "git", repo: out, op: "log" })).error).toContain("not under");
+  // a file's own repo; the home repo by @home
+  expect((await look({ kind: "git", repo: repo + "/a.ts", op: "log" })).path).toBe(repo);
+  expect((await Device.device_look({ ...rules, home: repo }, "r2", { kind: "git", repo: "@home", op: "log" }) as any).text).toContain("first");
+});

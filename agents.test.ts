@@ -325,21 +325,25 @@ test("a manager spawns workers; a worker's report wakes its manager, never Unii,
 }));
 
 // the parent labels what it spawns, task by task: a title (its goal) and
-// its repos; a task given none has none
-test("spawn labels each agent with its task's title and repos", () => faked(async () => {
+// its repos; a task given no title gets one from its first line (user's
+// ask 2026-11-13: no agent with only its name), cut at a word
+test("spawn labels each agent with its task's title and repos; no title given: one from its task", () => faked(async () => {
   const mem = Memory.load(DIR + "/labels", () => SHARE);
   const tools = served(mem, []);
   script = () => answer("done");
   try {
-    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the notes"], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
+    const long = "Task: **audit** every Databricks job config in bank-recon for stale cluster policies and report\nmore detail here";
+    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the release notes.\nsecond line", long], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
     expect(out.fail).toBe(false);
   } finally {
     script = null;
   }
-  const [a, b] = Tools.crew(tools);
+  const [a, b, c] = Tools.crew(tools);
   expect(a).toMatchObject({ title: "Fix login tests", repos: ["auth-api", "web"] });
-  expect(b.title).toBeUndefined();
+  expect(b.title).toBe("Write the release notes");
   expect(b.repos ?? []).toEqual([]);
+  expect(c.title).toBe("Audit every Databricks job config in bank-recon for stale…");
+  expect(Tools.titled("  \n ")).toBeUndefined();
   Tools.close(tools);
   Memory.stop(mem);
 }));
@@ -526,6 +530,68 @@ test("ask: the orchestrator files questions, kept across a reload; close withdra
   await Tools.call(later, "main", "ask", { question: "and then?" }, new AbortController().signal, "y");
   expect(again.questions.at(-1)!.id).toBe(22);
   Tools.close(later);
+  Memory.stop(again);
+}));
+
+// the orchestrator's notes for the user (notify; user's ask 2026-11-13):
+// in the questions pane, not questions (no answer awaited, never counted
+// against the questions' cap); the oldest notes dropped past NOTES, never
+// a question; only the orchestrator
+test("notify: the orchestrator's notes go to the pane beside questions, capped apart, oldest dropped; agents can't", () => faked(async () => {
+  const mem = Memory.load(DIR + "/notify", () => SHARE);
+  const tools = served(mem, []);
+  const call = (who: string, name: string, args: object) => Tools.call(tools, who, name, args, new AbortController().signal, "x");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("notify");
+  await call("main", "ask", { question: "Which repo?" });
+  const one = await call("main", "notify", { text: "  Picked bank-recon:\nit holds the configs. " });
+  expect(one).toEqual({ text: "Noted for the user as note 2; no answer is awaited.", fail: false });
+  expect(mem.questions.map((q) => [q.id, q.text, q.fyi])).toEqual([[1, "Which repo?", undefined], [2, "Picked bank-recon:\nit holds the configs.", true]]);
+  expect((await call("main", "notify", { text: " " })).fail).toBe(true);
+  for (let k = 0; k < 40; k++) {
+    await call("main", "notify", { text: "n" + k });
+  }
+  expect(mem.questions.filter((q) => q.fyi)).toHaveLength(30);
+  expect(mem.questions.filter((q) => q.fyi).at(-1)!.text).toBe("n39");
+  expect(mem.questions.filter((q) => !q.fyi).map((q) => q.id)).toEqual([1]);
+  // notes don't fill the questions' cap
+  for (let k = 0; k < 19; k++) {
+    await call("main", "ask", { question: "q" + k });
+  }
+  expect((await call("main", "ask", { question: "one more" })).fail).toBe(true);
+  expect((await call("main", "notify", { text: "still fine" })).fail).toBe(false);
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("notify");
+  expect((await call(name, "notify", { text: "mine" })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
+// the timesheet's drafts (K5, RED ZONE): any agent files them, each checked
+// whole (Harvest.entry_check) with why; kept with the chat across a reload;
+// clear drops the agent's own drafts not yet sent; nothing reaches Harvest
+// (only the user's Submit does: Chat.timesheet)
+test("timesheet: agents file checked drafts, kept across a reload; clear drops their own unsent ones", () => faked(async () => {
+  const dir = DIR + "/timesheet";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const call = (who: string, args: object) => Tools.call(tools, who, "timesheet", args, new AbortController().signal, "t");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("timesheet");
+  const e = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1.5, notes: "PR #3 review", project: "PIMCO recon", task: "Development", why: "merged PR #3; 1.5h on the calendar" };
+  const one = await call("main", { entries: [e, { ...e, hours: 30 }] });
+  expect(one.fail).toBe(true);
+  expect(one.text).toContain("hours");
+  expect(mem.drafts).toEqual([]);
+  expect((await call("main", { entries: [e, { ...e, date: "2026-11-13", hours: 2 }] })).text).toContain("Filed 2 drafts");
+  expect(mem.drafts.map((d: any) => [d.n, d.date, d.hours, d.state, d.by, d.why])).toEqual([[1, "2026-11-12", 1.5, "draft", "main", e.why], [2, "2026-11-13", 2, "draft", "main", e.why]]);
+  mem.drafts[0].state = "sent";
+  expect((await call("main", { clear: true })).fail).toBe(false);
+  expect(mem.drafts.map((d: any) => d.n)).toEqual([1]);
+  expect((await call("main", { entries: Array(101).fill(e) })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect(again.drafts.map((d: any) => [d.n, d.state])).toEqual([[1, "sent"]]);
   Memory.stop(again);
 }));
 

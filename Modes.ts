@@ -32,10 +32,13 @@ export const ABOUT: Record<Mode, string> = {
 const AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 
 // the tools that only read, in every mode
-const READS = ["read", "glob", "grep"];
+const READS = ["read", "glob", "grep", "google", "harvest"];
 
 // the tools auto mode's reviewer checks
 const REVIEWED = ["shell", "write", "edit"];
+
+// a read-only command that may read secrets: still reviewed in auto mode
+const SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 
 // commands that only read, whatever their arguments
 // (not env, which runs its arguments; nor tree -o, uniq's output file:
@@ -80,9 +83,14 @@ export namespace Modes {
     return why + ": " + tool + " can change things. " + AFTER;
   }
 
-  // whether auto mode's reviewer checks a tool's call
-  export function reviews(mode: Mode, tool: string): boolean {
-    return mode === "auto" && REVIEWED.includes(tool);
+  // whether auto mode's reviewer checks a tool's call: not a plainly
+  // read-only shell command (as Claude Code), unless it reads secrets
+  export function reviews(mode: Mode, tool: string, input?: any): boolean {
+    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+      return false;
+    }
+    const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
+    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
   }
 
   // why a shell command is not plainly read-only; null: it is

@@ -197,3 +197,75 @@ test("Up next and Transcripts", async () => {
   expect(done).not.toContain(act({ $: "Transcript", id: "doc_1" }));
   expect(View.view_route("#transcripts")).toEqual({ mode: "transcripts", name: null });
 });
+
+// the files pane and git tab (K4): each agent's touched files, a Look each;
+// a file shown with its lines numbered, escaped; git's views of its repo;
+// a diff's lines marked; a log's commits each a Look; a device's refusal said
+test("files: agents' files, a file's lines, git's views, diffs marked, commits opened", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ name: "Owl", parent: "main", tier: "worker", model: "m", status: "working", since: 0, title: "Fix <login>", files: ["src/a.ts"] }, { name: "Elk", parent: "main", tier: "worker", model: "m", status: "done", since: 0 }] } as any);
+  expect(View.view_route("#files")).toEqual({ mode: "files", name: null });
+  expect(View.view_act(v, { $: "Look", what: { kind: "file", path: "a.ts" } })).toEqual([{ $: "look", what: { kind: "file", path: "a.ts" } }]);
+  const empty = Pages.files_html(v).join("");
+  expect(empty).toContain("Fix &lt;login&gt;");
+  expect(empty).toContain(act({ $: "Look", what: { kind: "file", path: "src/a.ts", agent: "Owl" } }));
+  expect(empty).not.toContain("Elk");
+  expect(empty).toContain(act({ $: "Look", what: { kind: "git", repo: "@home", op: "status" } }));
+  View.view_hear(v, { $: "looked", id: "x", kind: "file", path: "/w/Owl/src/a.ts", text: "const a = <b>;\nexport { a };" });
+  const file = Pages.files_html(v).join("");
+  expect(file).toContain('<span class="ln">2</span>export { a };');
+  expect(file).toContain("const a = &lt;b&gt;;");
+  expect(file).toContain(act({ $: "Look", what: { kind: "git", repo: "/w/Owl/src/a.ts", op: "log" } }));
+  View.view_hear(v, { $: "looked", id: "y", kind: "git", path: "/r", op: "log", text: "abc1234 (HEAD) first\ndef5678 second" });
+  const log = Pages.files_html(v).join("");
+  expect(log).toContain(act({ $: "Look", what: { kind: "git", repo: "/r", op: "show", rev: "abc1234" } }));
+  View.view_hear(v, { $: "looked", id: "s", kind: "git", path: "/r", op: "status", text: "## trunk <x>\n M a.ts" });
+  expect(Pages.files_html(v).join("")).toContain("## trunk &lt;x&gt;");
+  View.view_hear(v, { $: "looked", id: "z", kind: "git", path: "/r", op: "diff", text: "@@ -1 +1 @@\n-old\n+new" });
+  const diff = Pages.files_html(v).join("");
+  expect(diff).toContain('<span class="del">-old</span>');
+  expect(diff).toContain('<span class="add">+new</span>');
+  expect(diff).toContain('<span class="hunk">@@ -1 +1 @@</span>');
+  View.view_hear(v, { $: "looked", id: "w", kind: "file", error: ".env may hold a secret: not shown." });
+  expect(Pages.files_html(v).join("")).toContain(".env may hold a secret");
+  // a box to run a command in what is shown's folder (K9): a file's own
+  // folder, a repo's; none shown: the home repo (no folder)
+  View.view_hear(v, { $: "looked", id: "f", kind: "file", path: "/w/Owl/src/a.ts", text: "x" });
+  expect(Pages.files_html(v).join("")).toContain('<form class="fsh" data-dir="/w/Owl/src">');
+  View.view_hear(v, { $: "looked", id: "g", kind: "git", path: "/r/it's", op: "log", text: "" });
+  expect(Pages.files_html(v).join("")).toContain('data-dir="/r/it\'s"');
+  expect(Pages.files_html(View.view_new()).join("")).toContain('<form class="fsh" data-dir="">');
+});
+
+// the Timesheet page (K5, RED ZONE): drafts by day with each day's hours,
+// each escaped with its why and a Drop; Submit names exactly the drafts
+// not sent nor sending; sent ones show Harvest's id, failed ones why; a
+// routine to draft each workday offered when none drafts
+test("timesheet: drafts by day, totals, Submit only the unsent, sent and failed shown, the routine offered", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(View.view_route("#timesheet")).toEqual({ mode: "timesheet", name: null });
+  expect(View.view_act(v, { $: "Timesheet", op: "submit", ns: [1, 2] })).toEqual([{ $: "timesheet", op: "submit", ns: [1, 2] }]);
+  expect(View.view_act(v, { $: "Timesheet", op: "submit", ns: [] })).toEqual([]);
+  const d = (n: number, date: string, hours: number, state: string, more = {}) => ({ n, project_id: 7, task_id: 70, project: "PIMCO <recon>", task: "Dev", date, hours, notes: "PR #" + n, why: "calendar: standup", by: "main", state, ...more });
+  View.view_hear(v, { $: "state", ...v, drafts: [d(1, "2026-11-12", 1.5, "draft"), d(2, "2026-11-12", 2, "failed", { error: "Harvest: HTTP 422." }), d(3, "2026-11-13", 1, "sent", { harvest: 555 }), d(4, "2026-11-13", 0.5, "sending")] } as any);
+  const html = Pages.timesheet_html(v).join("");
+  expect(html).toContain("PIMCO &lt;recon&gt;");
+  expect(html).toContain("calendar: standup");
+  expect(html).toContain("3.5 h");
+  expect(html).toContain(act({ $: "Timesheet", op: "submit", ns: [1, 2] }));
+  expect(html).toContain(act({ $: "Timesheet", op: "drop", ns: [1] }));
+  expect(html).not.toContain(act({ $: "Timesheet", op: "drop", ns: [3] }));
+  expect(html).toContain("Harvest #555");
+  expect(html).toContain("Harvest: HTTP 422.");
+  expect(html).toContain("sending");
+  expect(html).not.toContain('"$":"Routine"');
+  const empty = View.view_new();
+  const none = Pages.timesheet_html(empty).join("");
+  expect(none).toContain("No drafts");
+  expect(none).toContain(act({ $: "Routine", op: "add", routine: Pages.TIMESHEET_ROUTINE }));
+  expect(Pages.TIMESHEET_ROUTINE.when).toEqual({ $: "daily", at: "17:30" });
+  const Routines = await import("./Routines.ts");
+  expect(typeof Routines.routine_check(Pages.TIMESHEET_ROUTINE)).toBe("object");
+});

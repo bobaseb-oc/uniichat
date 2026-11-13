@@ -2,7 +2,7 @@
 // ============
 // `bun local/google-login.ts [client.json] [--logout]` (legion
 // google-login, legion google-logout). RED ZONE draft (Google.ts): signs
-// in to Google for the cockpit's calendar and transcripts, read-only. The
+// in to Google for the cockpit's calendar, transcripts, mail and Chat, read-only. The
 // first time, give the OAuth client file Google Cloud gives for a desktop
 // app (OnCorps' project, Internal); it goes to the Keychain with the grant
 // and can be deleted after. The browser opens at Google's consent; the
@@ -31,7 +31,7 @@ try {
       Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
     },
   });
-  console.log("legion: signed in to Google (calendar and Drive, read-only)." + (file !== undefined ? " The client is in the Keychain: you may delete " + file + "." : ""));
+  console.log("legion: signed in to Google (calendar, Drive, Gmail and Chat, read-only)." + (file !== undefined ? " The client is in the Keychain: you may delete " + file + "." : ""));
 } catch (err: any) {
   console.error("legion: " + String(err?.message ?? err).split("\n")[0]);
   process.exit(1);

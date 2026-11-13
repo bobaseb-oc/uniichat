@@ -297,6 +297,7 @@ function chat(): void {
   $("#picks").addEventListener("click", page_click);
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
+  $("#page").addEventListener("submit", files_run);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -424,6 +425,16 @@ function click(ev: MouseEvent): void {
   if (qs !== null) {
     P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
     paint();
+  }
+  // a path named in the chat (inline code) opens in the files pane (K4),
+  // from the agent in focus's own dir
+  const code = (ev.target as HTMLElement).closest<HTMLElement>("#log code");
+  const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : View.view_path(code.textContent ?? "");
+  if (named !== null) {
+    const agent = v.page?.name ?? null;
+    act({ $: "Look", what: { kind: "file", path: named, ...(agent === null ? {} : { agent }) } });
+    location.hash = "#files";
+    return;
   }
   const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
@@ -1100,7 +1111,8 @@ function crew_bars(): void {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = View.view_questions(v).length + View.view_waiting(v);
-  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox)));
+  const notes = View.view_notes(v).length;
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox), notes));
   side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
@@ -1111,7 +1123,7 @@ function crew_bars(): void {
     return;
   }
   // the question backlog, beside the chat, till put away
-  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  const pane = !crew && asked + notes > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
   markup($("#questions"), pane ? [...Html.waiting_html(v), ...Html.questions_html(v)] : []);
@@ -1205,7 +1217,7 @@ function crew_keys(ev: KeyboardEvent): void {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" } as Record<string, string>)[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files", s: "#timesheet" } as Record<string, string>)[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -1239,6 +1251,14 @@ function page_bars(mode: View.Mode): boolean {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180e3).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), Pages.transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "timesheet") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.timesheet_html(v));
+  } else if (mode === "files") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.files_html(v));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -1343,6 +1363,25 @@ function palette_run(k: number): void {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+
+// the Files page's box sent (K9): its command run on the device in the
+// folder shown (none: the home repo), its output a note in the chat
+function files_run(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.fsh");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  const box = form.querySelector("input")!;
+  const command = box.value.trim();
+  if (command === "") {
+    return;
+  }
+  const dir = form.dataset.dir ?? "";
+  act(dir === "" ? { $: "Send", text: "!" + command, images: [] } : { $: "Bang", command, dir });
+  box.value = "";
+  toast("Running " + command.slice(0, 60) + ": its output comes in the chat.");
 }
 
 // the Routines page's form sent: a routine added (the server checks it)

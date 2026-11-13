@@ -11,8 +11,19 @@ import * as os from "node:os";
 
 process.env.UNII_DIR = fs.mkdtempSync(os.tmpdir() + "/unii-tools-");
 
-const { Tools } = await import("./Tools.ts");
+const { Tools, MASTER } = await import("./Tools.ts");
 const { Price } = await import("./Price.ts");
+
+// the orchestrator decides what is its to decide (user's ask 2026-11-13):
+// reversible, in-scope calls made and reported; asked only for what is the
+// user's (Red Zone, outward or irreversible, a real fork in what they want)
+test("the orchestrator's prompt: it decides reversible, in-scope calls itself, and asks only for the user's", () => {
+  expect(MASTER).toContain("Decide what is yours to decide");
+  expect(MASTER).toMatch(/reversible/);
+  expect(MASTER).toMatch(/Red Zone/);
+  expect(MASTER).toMatch(/say what you decided/i);
+  expect(MASTER).not.toContain("File each question for the user that can wait (a decision, an input)");
+});
 
 test("a call's MCP requests follow its chat past a process that ended", async () => {
   const tools = Tools.serve({} as any, {} as any);
@@ -311,9 +322,13 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
     const shell = (command: string, id = "c") => Tools.call(tools, "main", "shell", { device: "mac", command }, go, id);
     // allowed: on to the device (none here, so refused for that)
     reply = { ok: true, text: 'Sure. {"allow": true}' };
-    const allowed = await shell("ls");
+    const allowed = await shell("make build");
     expect(allowed.text).not.toContain("reviewer");
-    expect(told.at(-1)).toContain("ls");
+    expect(told.at(-1)).toContain("make build");
+    // a read-only command never reaches the reviewer (as Claude Code)
+    const quiet = told.length;
+    await shell("git status");
+    expect(told.length).toBe(quiet);
     // refused, with its reason
     reply = { ok: true, text: '{"allow": false, "reason": "it deletes the repo"}' };
     expect(await shell("rm -rf .")).toEqual({ text: "Refused by auto mode's reviewer: it deletes the repo", fail: true });
@@ -354,6 +369,58 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
   } finally {
     (AskAI as any).ask = real;
   }
+});
+
+// the reviewer is told the user's last 3 messages, oldest first (a bare
+// "yes, go" says nothing alone), and refuses only clear harm: not work
+// outside the repo, nor "beyond what the user asked"
+test("auto mode's reviewer sees the user's last 3 messages and refuses only clear harm", async () => {
+  const { AskAI } = await import("./AskAI.ts");
+  const { Memory } = await import("./Memory.ts");
+  const real = { ask: AskAI.ask, message: Memory.message };
+  const told: string[] = [];
+  const msgs = [{ kind: "user", text: "first ask" }, { kind: "user", text: "fix the build in api/" }, { kind: "agent", text: "plan..." }, { kind: "user", text: "sounds good" }, { kind: "user", text: "yes, go" }];
+  (AskAI as any).ask = (ask: any) => {
+    told.push(ask.system + "\n" + ask.blocks.map((b: any) => b.text).join(""));
+    return { send: () => {}, stop: () => {}, move: () => {}, done: Promise.resolve({ ok: true, text: '{"allow": true}', left: [] }) };
+  };
+  (Memory as any).message = (_: any, i: number) => msgs[i] ?? null;
+  try {
+    const tools = Tools.serve({ mode: "auto", count: msgs.length } as any, { change: () => {} } as any);
+    await Tools.call(tools, "main", "shell", { device: "mac", command: "make build" }, new AbortController().signal, "c");
+    const said = told[0]!;
+    expect(said).toContain("fix the build in api/");
+    expect(said.indexOf("fix the build in api/")).toBeLessThan(said.indexOf("sounds good"));
+    expect(said.indexOf("sounds good")).toBeLessThan(said.indexOf("yes, go"));
+    expect(said).not.toContain("first ask");
+    expect(said).not.toContain("goes beyond what the user asked");
+    expect(said).not.toContain("works outside the repo");
+    expect(said).toMatch(/pushes|deploys/);
+    expect(said).toMatch(/credentials|secrets/);
+  } finally {
+    (AskAI as any).ask = real.ask;
+    (Memory as any).message = real.message;
+  }
+});
+
+// the files an agent touches (read, write, edit, glob/grep under a path),
+// newest first, none twice, at most FILES: the files pane lists them (K4)
+test("touched: an agent's files, newest first, once each, capped, in the crew", () => {
+  const tools = Tools.serve({ dir: "/nowhere" } as any, { change: () => {}, pick: () => null } as any);
+  const a = { name: "Owl", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set(a.name, a);
+  expect(Tools.crew(tools)[0].files).toBeUndefined();
+  Tools.touched(a, "read", { device: "mac", path: "src/a.ts" });
+  Tools.touched(a, "shell", { command: "cat x.ts" });
+  Tools.touched(a, "edit", { edits: [{ path: "src/b.ts" }, { path: "src/a.ts" }, { path: 7 }] });
+  Tools.touched(a, "grep", { pattern: "x" });
+  Tools.touched(a, "glob", { pattern: "*.ts", path: "lib" });
+  expect(Tools.crew(tools)[0].files).toEqual(["lib", "src/a.ts", "src/b.ts"]);
+  for (let k = 0; k < 60; k++) {
+    Tools.touched(a, "write", { path: "f" + k + ".md" });
+  }
+  expect(a.files).toHaveLength(40);
+  expect(a.files[0]).toBe("f59.md");
 });
 
 // an agent's cost so far, an estimate at list price (Price.ts) from each
