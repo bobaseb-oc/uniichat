@@ -49,9 +49,11 @@ const SHAPES: Array<[string, RegExp]> = [
   // word character, so no \b around the parts; each run bounded (no
   // line is slow, however made)
   ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){0,16}(?:api[_-]?key|secret|token|password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,64}){0,8}(?<![_-](?:file|path|dir|name|url|uri|id|type|count))(?![A-Za-z0-9])["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
-  // a name ending in _KEY (LITELLM_MASTER_KEY), its value with a digit
-  // in its first 64 (so not primary_key = account_id)
-  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}key["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)(?=[^\s"'\\,;)\d]{0,63}\d)[^\s"'\\,;)]{8,}/gi],
+  // a name ending in _KEY (LITELLM_MASTER_KEY), its value unless an
+  // identifier: lowercase snake_case (primary_key = account_id) but a
+  // key's own (rk_live_...), a dotted name (settings.KEY, os.environ) or
+  // a $VAR; case kept, so no i
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}[Kk][Ee][Yy]["']?\s*[:=]\s*["']?)(?!\$|<|\{|\[REDACTED|[A-Za-z_][A-Za-z0-9_]{0,63}\.[A-Za-z_]|(?![a-z]{1,5}_(?:live|test)_)[a-z]{1,64}(?:_[a-z]{1,64}){0,16}(?![^\s"'\\,;)]))[^\s"'\\,;)]{8,}/g],
 ];
 
 // name segments of a variable that holds a secret (PATH is not PAT)

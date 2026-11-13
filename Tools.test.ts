@@ -540,9 +540,10 @@ test("H3: MCP writes and computer tasks are reviewed; MCP answers are fenced as 
       const mem: any = { mode: "auto", count: 0 };
       const tools = Tools.serve(mem, { change: () => {} } as any);
       const go = new AbortController().signal;
-      await Tools.call(tools, "main", "mcp__plugin_atlassian_atlassian__getJiraIssue", { issueIdOrKey: "X-1" }, go, "a");
+      await Tools.call(tools, "main", "mcp__atlassian__getJiraIssue", { issueIdOrKey: "X-1" }, go, "a");
       expect(told.length).toBe(0);
       set('{"allow": false, "reason": "no"}');
+      expect((await Tools.call(tools, "main", "mcp__x__getRevoke", {}, go, "a2")).text).toBe("Refused by auto mode's reviewer: no");
       expect((await Tools.call(tools, "main", "mcp__jira__createJiraIssue", { summary: "x" }, go, "b")).text).toBe("Refused by auto mode's reviewer: no");
       expect(told.at(-1)).toContain("mcp__jira__createJiraIssue");
       expect((await Tools.call(tools, "main", "computer", { device: "mac", task: "click buy" }, go, "c")).text).toBe("Refused by auto mode's reviewer: no");

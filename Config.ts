@@ -66,6 +66,11 @@ export const SEARXNG    = config_get("searxng_url", "");
 // the MCP servers the agents may use (Mcp.ts; "": none)
 export const MCP        = config_path(config_get("mcp", ""));
 
+// RED ZONE (security review U3, DRAFT awaiting the user's sign-off): the
+// MCP tools auto mode lets by unreviewed besides Modes.MCP_READS, each by
+// its whole name, mcp__<server>__<tool>, comma-separated; else no start
+export const MCP_READS  = config_reads(config_get("mcp_reads", ""));
+
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
@@ -123,6 +128,15 @@ function config_vendors(text: string): Vendor[] {
   const bad = list.find((v) => !VENDORS.includes(v));
   if (bad !== undefined) {
     throw new Error("config: vendors can't offer " + bad);
+  }
+  return list;
+}
+
+function config_reads(text: string): string[] {
+  const list = String(text).split(",").map((t) => t.trim()).filter((t) => t !== "");
+  const bad = list.find((t) => !/^mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+$/.test(t));
+  if (bad !== undefined) {
+    throw new Error("config: mcp_reads has no exact mcp__<server>__<tool> name: " + bad);
   }
   return list;
 }

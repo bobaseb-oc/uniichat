@@ -40,20 +40,13 @@ const READS = ["read", "glob", "grep", "google", "harvest"];
 // the tools auto mode's reviewer checks
 const REVIEWED = ["shell", "write", "edit", "computer"];
 
-// an MCP tool auto mode lets by unreviewed: its name (after its server's)
-// plainly only reads, and says nothing of a change (nor is cut with a
-// hash), nor has a word (_ - camelCase) that writes, runs or queries
-const MCP_READS = /^(get|list|search|read|find|lookup|describe|view|show)([_A-Z-]|$)/;
-const MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
-const MCP_WORDS = new Set(["replace", "reset", "run", "exec", "execute", "query"]);
-
 // RED ZONE (security review follow-up, DRAFT awaiting the user's
 // sign-off): the one list of where a secret may be, in any case (macOS's
 // disk is case-insensitive). A file's name (a key, credentials, a token,
 // .env, a login's dotfile, a service account's JSON), a dir it is in
 // (~/.ssh, ~/.aws, ~/.kube...) or a repo's .git/config: Machine's read,
 // grep and glob refuse them (Machine.secret), so does Device's files pane
-const DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json|server-key`;
+const DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json`;
 const DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
 export const SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
 export const SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
@@ -117,17 +110,27 @@ export namespace Modes {
     return why + ": " + tool + " can change things. " + AFTER;
   }
 
+  // RED ZONE (security review U3, DRAFT awaiting the user's sign-off):
+  // the MCP tools auto mode lets by unreviewed, by whole name, of the
+  // servers local/mcp.ts sets up: plainly reads (no fetch, navigate,
+  // evaluate, execute*, nor a screenshot written to a path). Config's
+  // mcp_reads adds more (Tools.ts passes them); any other is reviewed
+  export const MCP_READS: readonly string[] = [
+    ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
+    ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
+    ...["list_pages", "take_snapshot", "list_console_messages", "get_console_message", "list_network_requests", "get_network_request"].map((t) => "mcp__chrome-devtools__" + t),
+  ];
+
   // whether auto mode's reviewer checks a tool's call: not a plainly
   // read-only shell command (as Claude Code), unless it reads secrets (in
-  // its line or its words, quotes off), nor an MCP tool that only reads
-  export function reviews(mode: Mode, tool: string, input?: any): boolean {
+  // its line or its words, quotes off), nor an MCP tool whose exact name
+  // is on MCP_READS or reads (one cut with a hash, Mcp.name, never is)
+  export function reviews(mode: Mode, tool: string, input?: any, reads: readonly string[] = []): boolean {
     if (mode !== "auto") {
       return false;
     }
     if (tool.startsWith("mcp__")) {
-      const own = tool.split("__").slice(2).join("__");
-      const words = own.split(/[_-]|(?<=[a-z0-9])(?=[A-Z])/).map((w) => w.toLowerCase());
-      return !MCP_READS.test(own) || MCP_WRITES.test(own) || words.some((w) => MCP_WORDS.has(w));
+      return /_[0-9a-f]{8}$/.test(tool) || !(MCP_READS.includes(tool) || reads.includes(tool));
     }
     if (!REVIEWED.includes(tool)) {
       return false;

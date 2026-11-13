@@ -521,10 +521,7 @@ var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 var READS = ["read", "glob", "grep", "google", "harvest"];
 var REVIEWED = ["shell", "write", "edit", "computer"];
-var MCP_READS = /^(get|list|search|read|find|lookup|describe|view|show)([_A-Z-]|$)/;
-var MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
-var MCP_WORDS = new Set(["replace", "reset", "run", "exec", "execute", "query"]);
-var DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json|server-key`;
+var DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json`;
 var DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
 var SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
 var SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
@@ -534,6 +531,8 @@ var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-f
 var GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
 var GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
 var GH = { pr: ["view", "diff", "checks", "list"], issue: ["view", "list"], repo: ["view"] };
+var HOME_WIDE = /^(~\/?|\$HOME\/?|\$\{HOME\}\/?|\/|\/Users(\/[^\/]+)?\/?)$/;
+var GH_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 var GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m"]);
 var GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
 var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
@@ -559,24 +558,27 @@ var Modes;
     return why + ": " + tool + " can change things. " + AFTER;
   }
   Modes2.allows = allows;
-  function reviews(mode, tool, input) {
+  Modes2.MCP_READS = [
+    ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
+    ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
+    ...["list_pages", "take_snapshot", "list_console_messages", "get_console_message", "list_network_requests", "get_network_request"].map((t) => "mcp__chrome-devtools__" + t)
+  ];
+  function reviews(mode, tool, input, reads = []) {
     if (mode !== "auto") {
       return false;
     }
     if (tool.startsWith("mcp__")) {
-      const own = tool.split("__").slice(2).join("__");
-      const words = own.split(/[_-]|(?<=[a-z0-9])(?=[A-Z])/).map((w) => w.toLowerCase());
-      return !MCP_READS.test(own) || MCP_WRITES.test(own) || words.some((w) => MCP_WORDS.has(w));
+      return /_[0-9a-f]{8}$/.test(tool) || !(Modes2.MCP_READS.includes(tool) || reads.includes(tool));
     }
     if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    if (command === null || SECRETS.test(command) || Modes.readonly(command) !== null) {
+    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || Modes.readonly(command) !== null) {
       return true;
     }
     const lexed = lex(command);
-    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w));
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w) || HOME_WIDE.test(w));
   }
   Modes2.reviews = reviews;
   function readonly(command) {
@@ -707,7 +709,17 @@ var Modes;
       return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
     }
     const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]));
-    return bad === undefined ? null : "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    if (bad !== undefined) {
+      return "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    }
+    for (let k = 0;k < rest.length; k++) {
+      const a = rest[k];
+      const repo = a === "-R" || a === "--repo" ? rest[++k] ?? "" : /^(?:-R|--repo)=(.*)$/.exec(a)?.[1];
+      if (repo !== undefined && !GH_REPO.test(repo)) {
+        return "gh -R takes OWNER/REPO on GitHub, not " + repo;
+      }
+    }
+    return null;
   }
   function check(words) {
     const [cmd, ...args] = words;
@@ -2312,12 +2324,14 @@ function account_html(a, app) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
   const closes = a.bills ? `<p>This also closes your BendAI account (same sign-in). Credit you bought and didn't use goes back to your card.</p>` : "";
   const kill = `<form class="kill" hidden>${closes}<p>Type <b>${esc(a.name)}</b> to confirm.</p><input name="name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(a.name)}"><p class="why"></p><div><button type="button" class="chip keep">Cancel</button><button class="chip red" disabled>Delete for good</button></div></form>`;
+  const ends = `<form class="kill ends" hidden><p>Sign out of every browser and app?</p><div><button type="button" class="chip keep">Cancel</button><button class="chip red">Sign out everywhere</button></div></form>`;
   const acts = [
     item(esc(a.name), "", `<button class="chip out">Sign out</button>`),
+    item("Sign out everywhere", "Every browser and app signed in as you, this one too.", `<button class="chip outs">Sign out everywhere</button>`),
     item("Export memory", "Chat and account, in one file.", `<a class="chip" href="/export">Download</a>`),
     item("Delete account", "Erases chat and memory for good.", `<button class="chip red del">Delete</button>`)
   ];
-  const account = section_html("Sign-in and data", acts.join("") + kill);
+  const account = section_html("Sign-in and data", acts.join("") + kill + ends);
   const links = a.bills ? `<p class="foot"><a href="/pricing" target="_blank">Prices</a> · <a href="/terms.html" target="_blank">Terms</a> · <a href="/privacy.html" target="_blank">Privacy</a> · <a href="mailto:contact@higherorderco.com">Help</a></p>` : "";
   return `<a class="back" href="/" data-go="/">← Chat</a><h1>Account</h1>` + money + account + links;
 }
@@ -4165,7 +4179,7 @@ async function account() {
     return;
   }
   el.innerHTML = account_html(a, APP !== null);
-  const kill = $("#account .kill");
+  const kill = $("#account .kill:not(.ends)");
   const del = $("#account .del");
   const name = kill.querySelector("input");
   const sure = (open2) => {
@@ -4176,9 +4190,21 @@ async function account() {
     sure(true);
     name.focus();
   };
-  $("#account .keep").onclick = () => sure(false);
+  kill.querySelector(".keep").onclick = () => sure(false);
   name.oninput = () => kill.querySelector(".red").disabled = name.value.trim().toLowerCase() !== a.name.toLowerCase();
   $("#account .out").onclick = signout;
+  const ends = $("#account .ends");
+  const outs = $("#account .outs");
+  const ending = (open2) => {
+    ends.hidden = !open2;
+    outs.hidden = open2;
+  };
+  outs.onclick = () => ending(true);
+  ends.querySelector(".keep").onclick = () => ending(false);
+  ends.onsubmit = (ev) => {
+    ev.preventDefault();
+    signout_all();
+  };
   kill.onsubmit = (ev) => {
     ev.preventDefault();
     account_delete(kill);
@@ -4186,6 +4212,10 @@ async function account() {
 }
 async function signout() {
   await post("/api/logout", {});
+  location.href = "/";
+}
+async function signout_all() {
+  await post("/api/logout-all", {});
   location.href = "/";
 }
 async function account_delete(kill) {

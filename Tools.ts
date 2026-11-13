@@ -706,7 +706,7 @@ export namespace Tools {
     if (refused !== null) {
       return { text: refused, fail: true };
     }
-    if (Modes.reviews(Tools.mode_of(tools, who), name, args)) {
+    if (Modes.reviews(Tools.mode_of(tools, who), name, args, config.MCP_READS)) {
       const why = await Tools.review(tools, who, name, args, signal);
       if (why !== null) {
         return { text: why, fail: true };

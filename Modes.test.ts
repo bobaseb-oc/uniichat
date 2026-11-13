@@ -181,13 +181,15 @@ test("M4: a secret path hidden by quotes or escapes is still reviewed", () => {
   }
 });
 
+// RED ZONE (security review U3, DRAFT awaiting the user's sign-off):
 // auto mode reviews computer use always, and every MCP tool but one whose
-// name plainly only reads (H3); a fetch may send data off: reviewed
-test("H3: computer and MCP tools that may change things are reviewed; plain MCP reads are not", () => {
-  for (const tool of ["computer", "mcp__jira__createJiraIssue", "mcp__x__executeRead", "mcp__x__get_and_delete", "mcp__x__transitionJiraIssue", "mcp__x__send_message", "mcp__x__frobnicate", "mcp__x__getOrUpdate", "mcp__srv__get_thing_1234abcd", "mcp__x__list_and_post", "mcp__x__fetch"]) {
+// whole name is on the read-only allowlist (shipped, plus config's
+// mcp_reads); a name only looking like a read is reviewed (H3)
+test("U3: an MCP tool skips review only if its exact name is allowlisted", () => {
+  for (const tool of ["computer", "mcp__jira__createJiraIssue", "mcp__atlassian__executeRead", "mcp__atlassian__executeWrite", "mcp__x__getRevoke", "mcp__x__get_drop_table", "mcp__x__readAndTrigger", "mcp__x__getJiraIssue", "mcp__x__search", "mcp__plugin_atlassian_atlassian__getJiraIssue", "mcp__atlassian__getJiraIssueX", "mcp__playwright__browser_navigate", "mcp__playwright__browser_evaluate", "mcp__chrome-devtools__evaluate_script", "mcp__x__fetch"]) {
     expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, true]);
   }
-  for (const tool of ["mcp__plugin_atlassian_atlassian__getJiraIssue", "mcp__x__searchJiraIssuesUsingJql", "mcp__x__list_pages", "mcp__x__read_file", "mcp__x__search", "mcp__x__getConfluenceContent"]) {
+  for (const tool of ["mcp__atlassian__getJiraIssue", "mcp__atlassian__searchJiraIssuesUsingJql", "mcp__atlassian__getConfluenceContent", "mcp__playwright__browser_snapshot", "mcp__chrome-devtools__list_pages"]) {
     expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, false]);
   }
   for (const tool of ["computer", "mcp__jira__createJiraIssue"]) {
@@ -195,11 +197,29 @@ test("H3: computer and MCP tools that may change things are reviewed; plain MCP 
   }
 });
 
+test("U3: config's mcp_reads adds exact names; a cut name is reviewed even if listed", () => {
+  const cut = "mcp__srv__" + "a".repeat(45) + "_1234abcd";
+  const reads = ["mcp__x__list_pages", cut];
+  expect(Modes.reviews("auto", "mcp__x__list_pages", {}, reads)).toBe(false);
+  expect(Modes.reviews("auto", "mcp__x__list_pages_all", {}, reads)).toBe(true);
+  expect(Modes.reviews("auto", "mcp__y__list_pages", {}, reads)).toBe(true);
+  expect(Modes.reviews("auto", cut, {}, reads)).toBe(true);
+  expect(Modes.reviews("auto", "mcp__x__list_pages", {})).toBe(true);
+});
+
+test("U3: the shipped allowlist holds no tool that runs, fetches, navigates or evaluates", () => {
+  expect(Modes.MCP_READS.length).toBeGreaterThan(0);
+  for (const tool of Modes.MCP_READS) {
+    expect([tool, /^mcp__(atlassian|playwright|chrome-devtools)__[A-Za-z_]+$/.test(tool)]).toEqual([tool, true]);
+    expect([tool, /exec|fetch|navigat|evaluat|click|fill|type|press|creat|edit|updat|delet|transition|add|upload|run|script/i.test(tool.split("__")[2]!)]).toEqual([tool, false]);
+  }
+});
+
 // one secret list (Machine's read refuses the same paths): a read-only
 // command of one is reviewed in auto mode, whatever its case; a plain one
 // that only says key is not
-test("the shell's secrets are read's: kube, docker, gh, server-key, git-credentials, pgpass, any case", () => {
-  for (const command of ["cat ~/.kube/config", "cat ~/.unii/server-key", "cat ~/.docker/config.json", "cat ~/.config/gh/hosts.yml", "cat ~/.git-credentials", "cat ~/.pgpass", "cat ~/.claude.json", "cat .npmrc", "cat ~/.pypirc", "cat repo/.git/config", "cat ~/.KUBE/config", "cat ~/.SSH/id_rsa", "cat ~/.Aws/credentials"]) {
+test("the shell's secrets are read's: kube, docker, gh, git-credentials, pgpass, any case", () => {
+  for (const command of ["cat ~/.kube/config", "cat ~/.docker/config.json", "cat ~/.config/gh/hosts.yml", "cat ~/.git-credentials", "cat ~/.pgpass", "cat ~/.claude.json", "cat .npmrc", "cat ~/.pypirc", "cat repo/.git/config", "cat ~/.KUBE/config", "cat ~/.SSH/id_rsa", "cat ~/.Aws/credentials"]) {
     expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
   }
   for (const command of ["git log --format=%H keyword", "cat keyboard.md", "ls .dockerignore", "cat docs/kube.md"]) {
@@ -261,17 +281,6 @@ test("gh: pr/issue/repo views and a GET of gh api only read; anything else is re
     "gh api -H 'X-HTTP-Method-Override: DELETE' repos/o/r",
   ]) {
     expect([bad, Modes.readonly(bad)]).not.toEqual([bad, null]);
-  }
-});
-
-// an MCP tool's name read as words (_ - camelCase): one with a word that
-// writes, runs or queries is reviewed, whatever its first word
-test("MCP: a name with replace, reset, run, exec or query in its words is reviewed", () => {
-  for (const tool of ["mcp__x__search_and_replace", "mcp__x__query", "mcp__x__query_db", "mcp__x__get_or_reset", "mcp__x__searchAndReplace", "mcp__x__getAndExecute", "mcp__x__list-and-run", "mcp__x__readQuery"]) {
-    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, true]);
-  }
-  for (const tool of ["mcp__x__list_queries_saved", "mcp__x__getJiraIssue", "mcp__x__search_repositories"]) {
-    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, false]);
   }
 });
 

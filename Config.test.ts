@@ -45,3 +45,21 @@ test("proxy: on only with UNII_PROXY=1", () => {
   expect(proxy("true")).toBe("false");
   expect(proxy("1")).toBe("true");
 });
+
+// RED ZONE (security review U3, DRAFT awaiting the user's sign-off):
+// mcp_reads, the MCP tools auto mode lets by unreviewed (Modes.reviews),
+// by whole name; one that is no mcp__<server>__<tool> refuses to start
+test("mcp_reads: exact mcp__server__tool names, comma-separated; others refuse to start", () => {
+  const reads = (value: string | null) => {
+    const env: Record<string, string | undefined> = { ...process.env, UNII_DIR: DIR, UNII_MCP_READS: value ?? undefined };
+    const out = Bun.spawnSync([process.execPath, "-e", 'import { MCP_READS } from "./Config.ts"; console.log(JSON.stringify(MCP_READS))'], { cwd: import.meta.dir, env });
+    return { code: out.exitCode, text: (out.stdout.toString() + out.stderr.toString()).trim() };
+  };
+  expect(reads(null)).toEqual({ code: 0, text: "[]" });
+  expect(reads("mcp__x__list_pages, mcp__chrome-devtools__take_snapshot")).toEqual({ code: 0, text: '["mcp__x__list_pages","mcp__chrome-devtools__take_snapshot"]' });
+  for (const bad of ["mcp__x__*", "list_pages", "mcp__x__", "mcp__x__a b", "my_mcp__x__y"]) {
+    const out = reads(bad);
+    expect([bad, out.code]).not.toEqual([bad, 0]);
+    expect(out.text).toContain("config: mcp_reads");
+  }
+});

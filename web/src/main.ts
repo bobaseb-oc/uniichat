@@ -1582,7 +1582,7 @@ async function account(): Promise<void> {
     return;
   }
   el.innerHTML = Html.account_html(a, APP !== null);
-  const kill = $<HTMLFormElement>("#account .kill");
+  const kill = $<HTMLFormElement>("#account .kill:not(.ends)");
   const del  = $<HTMLButtonElement>("#account .del");
   const name = kill.querySelector("input")!;
   const sure = (open: boolean) => {
@@ -1593,9 +1593,21 @@ async function account(): Promise<void> {
     sure(true);
     name.focus();
   };
-  $("#account .keep").onclick = () => sure(false);
+  kill.querySelector<HTMLButtonElement>(".keep")!.onclick = () => sure(false);
   name.oninput = () => (kill.querySelector<HTMLButtonElement>(".red")!.disabled = name.value.trim().toLowerCase() !== a.name.toLowerCase());
   $("#account .out").onclick = signout;
+  const ends = $<HTMLFormElement>("#account .ends");
+  const outs = $<HTMLButtonElement>("#account .outs");
+  const ending = (open: boolean) => {
+    ends.hidden = !open;
+    outs.hidden = open;
+  };
+  outs.onclick = () => ending(true);
+  ends.querySelector<HTMLButtonElement>(".keep")!.onclick = () => ending(false);
+  ends.onsubmit = (ev) => {
+    ev.preventDefault();
+    signout_all();
+  };
   kill.onsubmit = (ev) => {
     ev.preventDefault();
     account_delete(kill);
@@ -1604,6 +1616,12 @@ async function account(): Promise<void> {
 
 async function signout(): Promise<void> {
   await View.post("/api/logout", {});
+  location.href = "/";
+}
+
+// every session of the user's ends (Cloud.ts), this one's too
+async function signout_all(): Promise<void> {
+  await View.post("/api/logout-all", {});
   location.href = "/";
 }
 

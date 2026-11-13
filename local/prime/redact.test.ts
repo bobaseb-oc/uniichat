@@ -75,6 +75,11 @@ test("secrets assigned to names with the keyword inside or a _KEY end, and URL p
     expect(redact(name + "=" + v, []).text).toBe(name + "=[REDACTED:assigned]");
   }
   expect(redact("client_secret_value: " + v, []).text).toBe("client_secret_value: [REDACTED:assigned]");
+  // security review U3: a _KEY's value with no digit is a secret too,
+  // unless it reads as an identifier (snake_case, a dotted name, a $VAR)
+  expect(redact("LITELLM_MASTER_KEY=sk-abcdefgh", []).text).toBe("LITELLM_MASTER_KEY=[REDACTED:assigned]");
+  expect(redact("STRIPE_KEY=rk_live_abcdefghijklmn", []).text).toBe("STRIPE_KEY=[REDACTED:assigned]");
+  expect(redact("MASTER_KEY: AbCdEfGhIjKl", []).text).toBe("MASTER_KEY: [REDACTED:assigned]");
   expect(redact("redis://:" + v + "@cache:6379", []).text).toBe("redis://:[REDACTED:url-password]@cache:6379");
   expect(redact("postgres://u:p@ssw0rd@db/x", []).text).toBe("postgres://u:[REDACTED:url-password]@db/x");
 });
@@ -86,6 +91,10 @@ test("names like a secret's that hold none stay as they are", () => {
     "primary_key: user_id",
     "foreign_key = account_id",
     "sort_key=created_at_desc",
+    "partition_key = tenant_region",
+    "cache_key = settings.CACHE_KEY",
+    "MASTER_KEY=$LITELLM_MASTER_KEY",
+    "MASTER_KEY=${LITELLM_MASTER_KEY}",
     "secret_name = prod-database-creds",
     "token_url: https://oauth2.example.com/token",
     "https://host:8080?next=a@b",
@@ -99,7 +108,7 @@ test("names like a secret's that hold none stay as they are", () => {
 // a repeat of what a pattern's unbounded run would scan again and again)
 test("a 1 MB line made to be slow redacts in under 200 ms, whatever its shape", () => {
   const M = 1 << 20;
-  for (const s of ["a+b.c-", "a-", "a_", "secret_", "x_key=", "=", "token=", "_=", "eyJ-", "eyJa.", "-----BEGIN PRIVATE KEY-----\n", "a://b:c", "x://:", "a://b:c@"]) {
+  for (const s of ["a+b.c-", "a-", "a_", "secret_", "x_key=", "=", "token=", "_=", "eyJ-", "eyJa.", "-----BEGIN PRIVATE KEY-----\n", "a://b:c", "x://:", "a://b:c@", "x_key=a_", "x_key=a.", "x_key=rk_live_"]) {
     const line = s.repeat(Math.ceil(M / s.length)).slice(0, M);
     const t = performance.now();
     redact(line, []);

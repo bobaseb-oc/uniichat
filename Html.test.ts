@@ -264,3 +264,16 @@ test("the switch has the cockpit's pages: Home, Inbox with its count", () => {
   expect(Html.mode_html("home", "").join("")).toContain('href="#home" class="here"');
   expect(Html.mode_html("home", "").join("")).not.toContain('class="pill');
 });
+
+// security review U3: the account page signs out everywhere, after a
+// confirm in place (main.ts posts /api/logout-all on its submit only)
+test("account: sign out everywhere, asked first in a hidden confirm", () => {
+  const html = Html.account_html({ name: "<i>", bills: false, credits: null }, false);
+  expect(html).toContain('<button class="chip out">Sign out</button>');
+  expect(html).toContain('<button class="chip outs">Sign out everywhere</button>');
+  const ends = html.match(/<form class="kill ends" hidden>.*?<\/form>/)?.[0] ?? "";
+  expect(ends).toContain('<button type="button" class="chip keep">Cancel</button>');
+  expect(ends).toContain('<button class="chip red">Sign out everywhere</button>');
+  expect(html.indexOf('<form class="kill ends"')).toBeGreaterThan(html.indexOf('<form class="kill" hidden>'));
+  expect(html).not.toContain("<i>");
+});

@@ -288,7 +288,7 @@ test("write and edit refuse the settings files and ~/.claude in any case", async
 // shell: the dotfiles that hold a login, in any case
 test("read refuses every dotfile that holds a login, in any case", async () => {
   const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-dots-"));
-  const files = [".git-credentials", ".pgpass", ".claude.json", ".npmrc", ".pypirc", ".kube/config", ".docker/config.json", ".config/gh/hosts.yml", ".unii/server-key"];
+  const files = [".git-credentials", ".pgpass", ".claude.json", ".npmrc", ".pypirc", ".kube/config", ".docker/config.json", ".config/gh/hosts.yml"];
   for (const f of files) {
     fs.mkdirSync(root + "/Ann/" + f.split("/").slice(0, -1).join("/"), { recursive: true });
     fs.writeFileSync(root + "/Ann/" + f, "pass\n");
