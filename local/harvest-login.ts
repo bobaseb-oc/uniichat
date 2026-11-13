@@ -42,7 +42,7 @@ try {
   const token = await hidden("Harvest personal access token (https://id.getharvest.com/developers): ");
   const me = await Harvest.login(store, token, account);
   // RED ZONE (security review SD, DRAFT awaiting the user's sign-off)
-  console.log("legion: signed in to Harvest as " + (me.name || "user " + me.id) + " (account " + account + "); the token is in the Keychain only, and macOS asks you each time it is read: click Allow (never Always Allow), and Deny a prompt you didn't expect.");
+  console.log("legion: signed in to Harvest as " + (me.name || "user " + me.id) + " (account " + account + "); the token is in the Keychain only, and macOS asks you each time it is read. Legion asks for it only when you press Submit on the Timesheet page or an agent reads your timesheet (its harvest tool): click Allow (never Always Allow). A prompt at any other time means something else is reading it: click Deny.");
 } catch (err: any) {
   console.error("legion: " + String(err?.message ?? err).split("\n")[0]);
   process.exit(1);

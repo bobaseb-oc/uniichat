@@ -86,9 +86,9 @@ test("the token's store: no app trusted, so each read asks; never an argument; t
     return { code: 1, out: "" };
   };
   const old = memory();
-  old.all.set("token", "old-token-123");
   const store = Harvest.store(run, old);
   expect(await store.get("token")).toBeNull();
+  old.all.set("token", "old-token-123");
   await store.set("token", "1234567.pt.synthetic-value_0");
   expect(old.all.has("token")).toBe(false);
   expect(calls.find((c) => c.args[0] === "-i")).toEqual({ args: ["-i"], input: 'add-generic-password -s legion-harvest-token -a oauth -T "" -w 1234567.pt.synthetic-value_0\n' });
@@ -105,6 +105,39 @@ test("the token's store: no app trusted, so each read asks; never an argument; t
   const denied = Harvest.store(async () => ({ code: 128, out: "" }), memory());
   await expect(denied.get("token")).rejects.toThrow("the Keychain refused");
   await expect(denied.set("token", "1234567.pt.synthetic-value_0")).rejects.toThrow("the Keychain refused");
+});
+
+// security review follow-up (RED ZONE): a token Bun.secrets kept before
+// (readable by any bun) is moved to the asking store at its first read,
+// then deleted; if it can't be moved, nothing is deleted and that is said.
+// Fakes for both stores: no real Keychain is touched.
+test("the old Bun.secrets token: moved at first read, then deleted; kept where it was if it can't be", async () => {
+  const items = new Map<string, string>();
+  const run = async (args: string[], input?: string) => {
+    if (args[0] === "-i") {
+      items.set("token", input!.match(/ -w (\S+)/)![1]);
+      return { code: 0, out: "" };
+    }
+    if (args[0] === "find-generic-password") {
+      return items.has("token") ? { code: 0, out: items.get("token") + "\n" } : { code: 44, out: "" };
+    }
+    return { code: items.delete("token") ? 0 : 44, out: "" };
+  };
+  const old = memory();
+  old.all.set("token", "1234567.pt.old-synthetic_0");
+  old.all.set("account", "540457");
+  const store = Harvest.store(run, old);
+  expect(await Harvest.creds(store)).toEqual({ token: "1234567.pt.old-synthetic_0", account: "540457" });
+  expect(items.get("token")).toBe("1234567.pt.old-synthetic_0");
+  expect(old.all.has("token")).toBe(false);
+  expect(await store.get("token")).toBe("1234567.pt.old-synthetic_0");
+  const stuck = memory();
+  stuck.all.set("token", "1234567.pt.old-synthetic_0");
+  const refusing = Harvest.store(async (args) => ({ code: args[0] === "find-generic-password" ? 44 : 1, out: "" }), stuck);
+  await expect(refusing.get("token")).rejects.toThrow("nothing deleted");
+  expect(stuck.all.get("token")).toBe("1234567.pt.old-synthetic_0");
+  const none = Harvest.store(async () => ({ code: 44, out: "" }), memory());
+  expect(await none.get("token")).toBeNull();
 });
 
 test("reads: the user's active assignments and active tasks; their entries for a range", async () => {

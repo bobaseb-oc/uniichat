@@ -67,6 +67,46 @@ test("secrets assigned to longer names, Basic auth and a URL's password are reda
   expect(redact("postgres://admin:" + v + "@db.internal:5432/x", []).text).toBe("postgres://admin:[REDACTED:url-password]@db.internal:5432/x");
 });
 
+// security review follow-up: the keyword any part of the name, names
+// ending in _KEY; a URL's empty user, a password with an @ in it
+test("secrets assigned to names with the keyword inside or a _KEY end, and URL passwords with no user or an @, are redacted", () => {
+  const v = "q7Rz0plain0value0042";
+  for (const name of ["AWS_SECRET_ACCESS_KEY", "LITELLM_MASTER_KEY", "secret_key", "x-api-key", "--password"]) {
+    expect(redact(name + "=" + v, []).text).toBe(name + "=[REDACTED:assigned]");
+  }
+  expect(redact("client_secret_value: " + v, []).text).toBe("client_secret_value: [REDACTED:assigned]");
+  expect(redact("redis://:" + v + "@cache:6379", []).text).toBe("redis://:[REDACTED:url-password]@cache:6379");
+  expect(redact("postgres://u:p@ssw0rd@db/x", []).text).toBe("postgres://u:[REDACTED:url-password]@db/x");
+});
+
+test("names like a secret's that hold none stay as they are", () => {
+  const keep = [
+    "KEY_FILE=/etc/ssl/private/server.pem",
+    "primary_key = id",
+    "primary_key: user_id",
+    "foreign_key = account_id",
+    "sort_key=created_at_desc",
+    "secret_name = prod-database-creds",
+    "token_url: https://oauth2.example.com/token",
+    "https://host:8080?next=a@b",
+  ];
+  for (const text of keep) {
+    expect(redact(text, []).text).toBe(text);
+  }
+});
+
+// security review follow-up: no shape is slow on a line made to be (each
+// a repeat of what a pattern's unbounded run would scan again and again)
+test("a 1 MB line made to be slow redacts in under 200 ms, whatever its shape", () => {
+  const M = 1 << 20;
+  for (const s of ["a+b.c-", "a-", "a_", "secret_", "x_key=", "=", "token=", "_=", "eyJ-", "eyJa.", "-----BEGIN PRIVATE KEY-----\n", "a://b:c", "x://:", "a://b:c@"]) {
+    const line = s.repeat(Math.ceil(M / s.length)).slice(0, M);
+    const t = performance.now();
+    redact(line, []);
+    expect([s, performance.now() - t < 200]).toEqual([s, true]);
+  }
+});
+
 test("names, URLs and prose like secrets' stay as they are", () => {
   const keep = [
     "token = os.environ['GITHUB_TOKEN']",

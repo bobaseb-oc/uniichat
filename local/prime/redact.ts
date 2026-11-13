@@ -22,7 +22,7 @@ const CAP = 64 * 1024;
 // shapes of secrets, by name, most specific first; a pattern with a
 // group keeps it (what names the secret) and redacts the rest
 const SHAPES: Array<[string, RegExp]> = [
-  ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
+  ["private-key", /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]{0,30}PRIVATE KEY-----/g],
   ["anthropic", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
   ["openai", /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}/g],
   ["aws", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
@@ -38,13 +38,20 @@ const SHAPES: Array<[string, RegExp]> = [
   ["npm", /\bnpm_[A-Za-z0-9]{36}\b/g],
   ["huggingface", /\bhf_[A-Za-z0-9]{30,}/g],
   ["harvest", /\b\d{4,}\.pt\.[A-Za-z0-9_-]{20,}/g],
-  ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
+  ["jwt", /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
   ["bearer", /(\bBearer\s+)(?![$<{])[A-Za-z0-9._~+/-]{16,}=*/g],
   ["basic", /(\bAuthorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/]{8,}={0,2}/gi],
-  ["url-password", /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)(?![$<{]|\[REDACTED)[^\s/@]+(?=@)/gi],
-  // a name ending in one (GITHUB_TOKEN, "access_token", X_API_KEY): `_` is
-  // a word character, so no \b before the name
-  ["assigned", /((?<![A-Za-z0-9_])(?:[A-Za-z0-9]*_)*(?:api[_-]?key|secret|token|password|passwd|pwd)\b["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
+  // the password up to the authority's last @ (one may be in it); the
+  // user may be empty
+  ["url-password", /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:/@]*:)(?![$<{]|\[REDACTED)[^\s/?#]+(?=@)/gi],
+  // a name with one as a part (GITHUB_TOKEN, "access_token", X_API_KEY,
+  // client_secret_value) but not a file's, a URL's, an id's...: `_` is a
+  // word character, so no \b around the parts; each run bounded (no
+  // line is slow, however made)
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){0,16}(?:api[_-]?key|secret|token|password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,64}){0,8}(?<![_-](?:file|path|dir|name|url|uri|id|type|count))(?![A-Za-z0-9])["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
+  // a name ending in _KEY (LITELLM_MASTER_KEY), its value with a digit
+  // in its first 64 (so not primary_key = account_id)
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}key["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)(?=[^\s"'\\,;)\d]{0,63}\d)[^\s"'\\,;)]{8,}/gi],
 ];
 
 // name segments of a variable that holds a secret (PATH is not PAT)

@@ -58,11 +58,27 @@ export namespace Harvest {
   // RED ZONE (security review SD, DRAFT awaiting the user's sign-off):
   // the token where every read asks the user (Auth.asking), the account
   // id (no secret) where it was (old: Auth.keychain). A token kept by
-  // Bun.secrets before is deleted when one is kept, and on logout.
+  // Bun.secrets before (any bun reads it) is moved to the asking store at
+  // its first read, then deleted (if it can't be moved, nothing is
+  // deleted, and that is said); deleted too when one is kept, and on
+  // logout.
   export function store(run: Auth.Run = Auth.security, old: Store = Auth.keychain("legion-harvest")): Store {
     const asked = Auth.asking("legion-harvest", run);
+    const moved = async (): Promise<string | null> => {
+      const was = await old.get("token").catch(() => null);
+      if (was === null) {
+        return null;
+      }
+      try {
+        await asked.set("token", was);
+      } catch (err: any) {
+        throw new Error("the Harvest token kept by Bun could not be moved to the Keychain (" + String(err?.message ?? err) + "); nothing deleted: legion harvest-login again.");
+      }
+      await old.delete("token").catch(() => false);
+      return was;
+    };
     return {
-      get    : (name) => (name === "token" ? asked : old).get(name),
+      get    : async (name) => (name === "token" ? (await asked.get(name)) ?? moved() : old.get(name)),
       set    : async (name, value) => {
         if (name === "token") {
           await old.delete(name).catch(() => false);
