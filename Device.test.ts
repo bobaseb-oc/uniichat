@@ -527,3 +527,28 @@ test("device git: a crafted repo's fsmonitor, textconv and filter never run", as
   expect(await Device.device_trusted(fsm, Device.exec)).toBe(true);
   expect(await Device.device_trusted(evil, Device.exec)).toBe(false);
 });
+
+// a space's worktrees beside it (<repo>-worktrees/<slug>, local/rules.md)
+// show too; not a worktree elsewhere, nor a stray folder there
+test("device_look: a space's worktrees at <repo>-worktrees/<slug> only", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-wt-"));
+  const repo = top + "/repo", beside = top + "/repo-worktrees", far = top + "/elsewhere";
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", repo]);
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+  fs.writeFileSync(repo + "/a.ts", "1\n");
+  git("add", "a.ts");
+  git("commit", "-q", "-m", "first");
+  git("worktree", "add", "-q", "-b", "fix/one", beside + "/one");
+  git("worktree", "add", "-q", "-b", "fix/two", far + "/two");
+  fs.mkdirSync(beside + "/stray");
+  fs.writeFileSync(beside + "/stray/s.txt", "stray");
+  fs.writeFileSync(beside + "/one/b.ts", "2\n");
+  const rules = { work: top + "/work", computer: false, spaces: [repo] };
+  fs.mkdirSync(rules.work);
+  const look = (what: any) => Device.device_look(rules, "w", what) as Promise<any>;
+  expect((await look({ kind: "file", path: beside + "/one/b.ts" })).text).toBe("2\n");
+  expect((await look({ kind: "git", repo: beside + "/one", op: "status" })).text).toContain("b.ts");
+  expect((await look({ kind: "file", path: far + "/two/a.ts" })).error).toContain("not under");
+  expect((await look({ kind: "file", path: beside + "/stray/s.txt" })).error).toContain("not under");
+  expect((await look({ kind: "file", path: beside + "/one/.env" })).error).toContain("secret");
+});

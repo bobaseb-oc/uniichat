@@ -470,7 +470,8 @@ export async function device_harvest(id: string, entries: unknown, h: Posts = po
 // ======================================================
 // What a view asks to see: a file (an agent's relative path from its own
 // dir), or a repo's git by one of GIT_VIEWS' fixed commands. Shown only
-// under the device's roots (its work dir, home repo, spaces), each path's
+// under the device's roots (its work dir, home repo, spaces and their
+// worktrees at <repo>-worktrees/<slug>), each path's
 // symlinks followed first; never a secret's file (Machine.secret), a binary or a
 // file past LOOK_BYTES; git's answer cut at LOOK_BYTES.
 
@@ -484,16 +485,41 @@ const GIT_VIEWS: Record<string, (rev: string | null) => string[]> = {
 };
 const REV = /^([0-9a-f]{4,40}|HEAD(~\d{1,3})?)$/;
 
-// the roots a device shows under, real paths
-function look_roots(rules: Rules): string[] {
-  const all = [rules.work, rules.home, ...device_spaces(rules, Date.now()).spaces.map((s) => s.path)];
-  return [...new Set(all.filter((p): p is string => typeof p === "string" && p !== "").map((p) => {
+// a path's real path, or "" if none
+function real_or_none(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return "";
+  }
+}
+
+// a repo's linked worktrees where local/rules.md puts them, beside it at
+// <repo>-worktrees/<slug> (its .git/worktrees/*/gitdir names each one's
+// .git); one elsewhere (a temp dir, say) is not shown
+function look_worktrees(repo: string): string[] {
+  const beside = path.join(path.dirname(repo), path.basename(repo) + "-worktrees");
+  let names: string[];
+  try {
+    names = fs.readdirSync(repo + "/.git/worktrees");
+  } catch {
+    return [];
+  }
+  return names.map((n) => {
     try {
-      return fs.realpathSync(home(p));
+      return real_or_none(path.dirname(fs.readFileSync(repo + "/.git/worktrees/" + n + "/gitdir", "utf8").trim()));
     } catch {
       return "";
     }
-  }).filter((p) => p !== ""))];
+  }).filter((wt) => wt !== "" && path.dirname(wt) === beside);
+}
+
+// the roots a device shows under, real paths: its work dir, home repo,
+// spaces and their worktrees
+function look_roots(rules: Rules): string[] {
+  const all = [rules.work, rules.home, ...device_spaces(rules, Date.now()).spaces.map((s) => s.path)];
+  const roots = all.filter((p): p is string => typeof p === "string" && p !== "").map((p) => real_or_none(home(p))).filter((p) => p !== "");
+  return [...new Set([...roots, ...roots.flatMap(look_worktrees)])];
 }
 
 // a path's real path if under a root; else why not
@@ -505,7 +531,7 @@ function look_under(rules: Rules, p: string): string | { why: string } {
     return { why: "No file " + p + " here." };
   }
   const roots = look_roots(rules);
-  return roots.some((r) => real === r || real.startsWith(r + path.sep)) ? real : { why: p + " is not under this device's work dir, home repo or spaces." };
+  return roots.some((r) => real === r || real.startsWith(r + path.sep)) ? real : { why: p + " is not under this device's work dir, home repo, spaces or their worktrees." };
 }
 
 // what a view asked to see, or why not (look_file, look_git)
