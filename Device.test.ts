@@ -551,4 +551,11 @@ test("device_look: a space's worktrees at <repo>-worktrees/<slug> only", async (
   expect((await look({ kind: "file", path: far + "/two/a.ts" })).error).toContain("not under");
   expect((await look({ kind: "file", path: beside + "/stray/s.txt" })).error).toContain("not under");
   expect((await look({ kind: "file", path: beside + "/one/.env" })).error).toContain("secret");
+  // a repo whose folder is named x.git keeps its worktrees at x-worktrees
+  const bare = top + "/pay.git";
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", bare]);
+  Bun.spawnSync(["git", "-C", bare, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"]);
+  Bun.spawnSync(["git", "-C", bare, "worktree", "add", "-q", "-b", "fix/p", top + "/pay-worktrees/p"]);
+  fs.writeFileSync(top + "/pay-worktrees/p/c.ts", "3\n");
+  expect((await Device.device_look({ ...rules, spaces: [bare] }, "w", { kind: "file", path: top + "/pay-worktrees/p/c.ts" }) as any).text).toBe("3\n");
 });

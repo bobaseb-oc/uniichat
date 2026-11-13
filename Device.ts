@@ -495,10 +495,10 @@ function real_or_none(p: string): string {
 }
 
 // a repo's linked worktrees where local/rules.md puts them, beside it at
-// <repo>-worktrees/<slug> (its .git/worktrees/*/gitdir names each one's
+// <repo>-worktrees/<slug> (a folder x.git: x-worktrees) (its .git/worktrees/*/gitdir names each one's
 // .git); one elsewhere (a temp dir, say) is not shown
 function look_worktrees(repo: string): string[] {
-  const beside = path.join(path.dirname(repo), path.basename(repo) + "-worktrees");
+  const beside = path.join(path.dirname(repo), path.basename(repo).replace(/\.git$/, "") + "-worktrees");
   let names: string[];
   try {
     names = fs.readdirSync(repo + "/.git/worktrees");

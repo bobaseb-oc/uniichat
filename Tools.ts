@@ -699,8 +699,19 @@ export namespace Tools {
     return touches ? Modes.allows(mode, name, args, config.MCP_READS) : null;
   }
 
-  // id: a job's, if it starts one
+  // id: a job's, if it starts one; a call that succeeds lists the files
+  // it touched (one refused, a relative path tried first, say, lists none)
   export async function call(tools: Tools, who: string, name: string, args: any, signal: AbortSignal, id: string): Promise<Out> {
+    const out = await Tools.dispatch(tools, who, name, args, signal, id);
+    const caller = tools.agents.get(who);
+    if (!out.fail && caller !== undefined) {
+      Tools.touched(caller, name, args);
+    }
+    return out;
+  }
+
+  // a call made (Tools.call)
+  export async function dispatch(tools: Tools, who: string, name: string, args: any, signal: AbortSignal, id: string): Promise<Out> {
     // the chat's mode first (Modes.ts): plan mode lets only reading reach
     // a device, an MCP server or a Claude Code worker
     const refused = Tools.moded(tools, name, args, who);
@@ -712,10 +723,6 @@ export namespace Tools {
       if (why !== null) {
         return { text: why, fail: true };
       }
-    }
-    const caller = tools.agents.get(who);
-    if (caller !== undefined) {
-      Tools.touched(caller, name, args);
     }
     if (name.startsWith("mcp__")) {
       const out = await Mcp.call(MCP, name, args, signal);
