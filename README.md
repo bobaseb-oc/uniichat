@@ -111,7 +111,15 @@ also be set as `UNII_<KEY>`. The ones that matter here:
   imports your ~/.claude/CLAUDE.md and the skills index.
 - `mcp`: a JSON file of MCP servers whose tools the agents get
   (local/mcp.ts makes one; `legion mcp-login atlassian` keeps the
-  OAuth grant in the Keychain).
+  OAuth grant in the Keychain). It includes `okf-wiki`
+  (local/okf-wiki.ts): search and read the OnCorps Knowledge Framework
+  wiki, and `record_gap` for what it lacks (~/.unii/okf-gaps.jsonl, never
+  sent anywhere). For OKF's ontology too, register its MCP server with
+  Claude Code, and Legion gets it at its next start: in an OKF checkout of
+  `0.x`, `uv run src/scripts/build_client_dataset.py --internal --out-dir
+  build --okf-commit "$(git rev-parse HEAD)"`, then
+  `claude mcp add okf -s user -e OKF_DATASET_MANIFEST=<okf>/build/internal.manifest.json
+  -- uv run --project <okf> python <okf>/src/scripts/okf_mcp_server.py`.
 - `searches`: 0 turns off the vendor's web search (Bedrock behind
   LiteLLM rejects it); `searxng_url` is the local search instead.
 - `after`: a shell command run after each turn.
