@@ -625,8 +625,8 @@ var Modes;
     return MODES[(MODES.indexOf(mode) + 1) % MODES.length];
   }
   Modes2.next = next;
-  function allows(mode, tool, input) {
-    if (mode !== "plan" || READS.includes(tool)) {
+  function allows(mode, tool, input, reads = []) {
+    if (mode !== "plan" || READS.includes(tool) || tool.startsWith("mcp__") && !Modes.reviews("auto", tool, input, reads)) {
       return null;
     }
     const why = "In plan mode only reading is allowed, until the user approves a plan";
@@ -1013,16 +1013,29 @@ function routine_next(r, now) {
   if (r.when.$ === "every") {
     return base + r.when.hours * 3600000;
   }
-  if (r.when.$ !== "daily") {
+  if (r.when.$ !== "daily" && r.when.$ !== "weekly") {
     return null;
   }
   const [h, m] = r.when.at.split(":").map(Number);
   const d = new Date(now);
-  const today = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
-  return today > base ? today : today + DAY2;
+  if (r.when.$ === "daily") {
+    const today = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m).getTime();
+    return today > base ? today : today + DAY2;
+  }
+  const back = (d.getDay() - r.when.day + 7) % 7;
+  let week = new Date(d.getFullYear(), d.getMonth(), d.getDate() - back, h, m).getTime();
+  if (week > now) {
+    week = new Date(d.getFullYear(), d.getMonth(), d.getDate() - back - 7, h, m).getTime();
+  }
+  if (week > base) {
+    return week;
+  }
+  const on = new Date(week);
+  return new Date(on.getFullYear(), on.getMonth(), on.getDate() + 7, h, m).getTime();
 }
+var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function when_text(w) {
-  return w.$ === "daily" ? "daily at " + w.at : w.$ === "every" ? w.hours === 1 ? "every hour" : "every " + w.hours + " hours" : "on each new review request";
+  return w.$ === "daily" ? "daily at " + w.at : w.$ === "weekly" ? DAYS[w.day] + "s at " + w.at : w.$ === "every" ? w.hours === 1 ? "every hour" : "every " + w.hours + " hours" : "on each new review request";
 }
 
 // Names.ts
@@ -2956,7 +2969,7 @@ function routines_html(v, now) {
     return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
   });
   const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
-  const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
+  const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="weekly">weekly on</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<select name="day" aria-label="day">${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => `<option value="${i}"${i === 5 ? " selected" : ""}>${d}</option>`).join("")}</select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
   return [head, ...rows.length === 0 ? [`<p class="meta">No routines yet.</p>`] : rows, form];
 }
 function digest_html(v) {
@@ -3035,15 +3048,15 @@ function shown_html(looked) {
 }
 var TIMESHEET_ROUTINE = {
   name: "Timesheet drafts",
-  task: "Draft today's Harvest timesheet for the user, for their review. Read harvest projects and today's harvest entries (don't draft time already logged); read today's calendar (google calendar), their merged and open PRs and today's commits in their spaces, and their Jira tickets in progress. Map each piece of work to one of their Harvest projects and tasks by id, in hundredths of an hour, a day at most 8 hours unless the calendar shows more. File them with timesheet (each with notes as the user would write them and why: the evidence). Skip weekends and days with no evidence. Then say in a line what you drafted.",
-  when: { $: "daily", at: "17:30" },
+  task: "Draft this week's Harvest timesheet, Monday to Friday, for the user's review. Read harvest projects and this week's harvest entries (don't draft time already logged); read this week's calendar (google calendar), their merged and open PRs and this week's commits in their spaces, and their Jira tickets in progress. Map each piece of work to one of their Harvest projects and tasks by id, in hundredths of an hour, a day at most 8 hours unless the calendar shows more; for today, draft only what the evidence shows so far. File them with timesheet (each with its date, notes as the user would write them and why: the evidence). Skip days with no evidence. Then say in a line what you drafted, by day.",
+  when: { $: "weekly", day: 5, at: "09:00" },
   tier: "worker"
 };
 function timesheet_html(v) {
   const drafts = v.drafts ?? [];
   const open2 = drafts.filter((d) => d.state === "draft" || d.state === "failed").map((d) => d.n);
   const submit = open2.length === 0 ? "" : `<button class="pbtn go"${act_html2({ $: "Timesheet", op: "submit", ns: open2 })} title="posts them to Harvest from your device">Submit ${open2.length} to Harvest</button>`;
-  const routine = (v.routines ?? []).some((r) => r.name === TIMESHEET_ROUTINE.name) ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "add", routine: TIMESHEET_ROUTINE })} title="a worker drafts each day at 17:30; you submit">Draft daily at 17:30</button>`;
+  const routine = (v.routines ?? []).some((r) => r.name === TIMESHEET_ROUTINE.name) ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "add", routine: TIMESHEET_ROUTINE })} title="a worker drafts the week on Friday mornings; you submit">Draft weekly, Fridays at 09:00</button>`;
   const head = `<div class="phead"><h2>Timesheet</h2><p class="meta">Drafts for Harvest: nothing is sent until you submit</p>${submit}${routine}</div>`;
   if (drafts.length === 0) {
     return [head, `<p class="meta">No drafts yet. Agents draft with the timesheet tool (they need legion harvest-login on your device): ask in the chat, or add the routine.</p>`];
@@ -4148,7 +4161,7 @@ function routine_add(ev) {
   ev.preventDefault();
   const f = new FormData(form);
   const kind = String(f.get("kind"));
-  const when = kind === "daily" ? { $: "daily", at: String(f.get("at")) } : kind === "every" ? { $: "every", hours: Number(f.get("hours")) } : { $: "review" };
+  const when = kind === "daily" ? { $: "daily", at: String(f.get("at")) } : kind === "weekly" ? { $: "weekly", day: Number(f.get("day")), at: String(f.get("at")) } : kind === "every" ? { $: "every", hours: Number(f.get("hours")) } : { $: "review" };
   const tier = f.get("tier") === "manager" ? "manager" : "worker";
   act({ $: "Routine", op: "add", routine: { name: String(f.get("name")), task: String(f.get("task")), when, tier } });
   form.reset();

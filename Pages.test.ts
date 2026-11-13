@@ -265,7 +265,8 @@ test("timesheet: drafts by day, totals, Submit only the unsent, sent and failed 
   const none = Pages.timesheet_html(empty).join("");
   expect(none).toContain("No drafts");
   expect(none).toContain(act({ $: "Routine", op: "add", routine: Pages.TIMESHEET_ROUTINE }));
-  expect(Pages.TIMESHEET_ROUTINE.when).toEqual({ $: "daily", at: "17:30" });
+  expect(Pages.TIMESHEET_ROUTINE.when).toEqual({ $: "weekly", day: 5, at: "09:00" }); // user, 2026-11-13: Friday mornings only
+  expect(Pages.TIMESHEET_ROUTINE.task).toContain("Monday to Friday");
   const Routines = await import("./Routines.ts");
   expect(typeof Routines.routine_check(Pages.TIMESHEET_ROUTINE)).toBe("object");
 });

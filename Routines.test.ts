@@ -95,3 +95,24 @@ test("views: the act sent, the terminal's commands and list, the web's page and 
   expect(html).toContain('<form class="radd">');
   expect(Cockpit.home_apps(v).routines).toBe("1 scheduled");
 });
+
+// weekly on a day at a time (0 Sunday … 6 Saturday, as Date.getDay): due
+// once that day's time passed this week and it hasn't run since
+test("weekly on a day at a time: due on that day once its time passed, then a week on", () => {
+  expect(Routines.routine_check({ name: "n", task: "t", when: { $: "weekly", day: 5, at: "09:00" } })).toMatchObject({ when: { $: "weekly", day: 5, at: "09:00" } });
+  for (const bad of [{ $: "weekly", day: 7, at: "09:00" }, { $: "weekly", day: 1.5, at: "09:00" }, { $: "weekly", day: 5, at: "9am" }]) {
+    expect(typeof Routines.routine_check({ name: "n", task: "t", when: bad as any })).toBe("string");
+  }
+  const r = { ...routine({ $: "weekly", day: 5, at: "09:00" }), made: at(9, 0, 11) }; // made Wednesday
+  expect(Routines.routine_next(r, at(15))).toBe(at(9, 0, 13)); // Thursday: Friday's
+  expect(Routines.routine_due(r, at(15))).toBe(false);
+  expect(Routines.routine_due(r, at(8, 59, 13))).toBe(false);
+  expect(Routines.routine_due(r, at(9, 1, 13))).toBe(true);
+  expect(Routines.routine_next({ ...r, last: at(9, 1, 13) }, at(12, 0, 13))).toBe(at(9, 0, 20));
+  expect(Routines.routine_due({ ...r, last: at(9, 1, 13) }, at(9, 0, 17))).toBe(false); // Tuesday after
+  expect(Routines.routine_due({ ...r, made: at(10, 0, 13) }, at(11, 0, 13))).toBe(false); // made after Friday's: next week
+  expect(Routines.when_text({ $: "weekly", day: 5, at: "09:00" })).toBe("Fridays at 09:00");
+  expect(Routines.routine_parse("weekly fri 09:00 Timesheet: draft the week")).toEqual({ name: "Timesheet", task: "draft the week", when: { $: "weekly", day: 5, at: "09:00" }, tier: "worker" });
+  expect(Routines.routine_parse("weekly Mon 08:30 Plan: plan the week")).toMatchObject({ when: { $: "weekly", day: 1, at: "08:30" } });
+  expect(typeof Routines.routine_parse("weekly funday 09:00 X: y")).toBe("string");
+});
