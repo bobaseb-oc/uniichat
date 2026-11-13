@@ -242,3 +242,21 @@ test("Google on the device: events and Docs with the inbox; signed out said; a t
   expect(await Device.device_transcript("doc_1234567890", g)).toEqual({ $: "transcript", id: "doc_1234567890", text: "said in doc_1234567890" });
   expect(await Device.device_transcript("doc_1234567890", { ...g, text: async () => { throw new Error("Google: HTTP 403."); } })).toEqual({ $: "transcript", id: "doc_1234567890", error: "Google: HTTP 403." });
 });
+
+// the reads every device does for the cockpit (the terminal's and legion
+// device's alike): the inbox at once and on "fetch", a transcript on "read"
+test("device_reads reads the inbox at once and on fetch, a transcript on read", async () => {
+  const sent: any[] = [];
+  const run: Device.Exec = async () => ({ code: 1, out: "no" });
+  const g: Device.Reads = { events: async () => [], docs: async () => [], text: async (id) => "said in " + id };
+  const heard = Device.device_reads({ work: "/w", computer: false, spaces: [] }, (m) => sent.push(m), run, g, 0);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "inbox").length).toBe(1);
+  heard({ $: "fetch" } as any);
+  heard({ $: "state" } as any);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "inbox").length).toBe(2);
+  heard({ $: "read", id: "doc1" } as any);
+  await Bun.sleep(30);
+  expect(sent.filter((m) => m.$ === "transcript")).toEqual([{ $: "transcript", id: "doc1", text: "said in doc1" }]);
+});

@@ -295,7 +295,7 @@ test("a device's status is kept and told in the state; only a device's, its fiel
 
 // A device's inbox (Device.device_inbox): only a device's, checked
 // (Inbox.inbox_check), kept and told every view; a view's "fetch" asks
-// every socket (the devices) to read it anew
+// every socket (the devices) to read it anew; with no device up, it says so
 const INBOX = `
 const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
 const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
@@ -308,8 +308,10 @@ const inbox = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, 
 const web = await Chat.act(chat, "i0", { $: "inbox", inbox }, "");
 const ok = await Chat.act(chat, "i1", { $: "inbox", inbox: { ...inbox, extra: 1 } }, "mac");
 const bad = await Chat.act(chat, "i2", { $: "inbox", inbox: { ...inbox, merged: "many" } }, "mac");
-const fetch = await Chat.act(chat, "i3", { $: "fetch" }, "");
-console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
+const none = await Chat.act(chat, "i3", { $: "fetch" }, "");
+chat.tools.devices.set("mac", { terms: new Set(["t1"]) });
+const fetch = await Chat.act(chat, "i4", { $: "fetch" }, "");
+console.log(JSON.stringify({ web: "error" in web, ok, bad: "error" in bad, none: none.error ?? null, fetch, kept: chat.inbox, sent: sent.filter((m) => m.$ === "inbox" || m.$ === "fetch") }));
 process.exit(0);
 `;
 
@@ -319,6 +321,8 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   const proc = Bun.spawn([process.execPath, dir + "/inbox.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   const kept = { at: 1, login: "me", reviews: [], mine: [], merged: 2, today: 0, tickets: null, clean: [], notes: [], errors: [], digest: null, spaces: [], google: null };
+  expect(out.none).toMatch(/legion device/);
+  delete out.none;
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 

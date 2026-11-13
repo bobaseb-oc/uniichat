@@ -1387,6 +1387,9 @@ export namespace Chat {
         return Chat.transcript(chat, device, msg);
       }
       case "fetch": {
+        if (Tools.opened(chat.tools).length === 0) {
+          return { error: "No device is up to read the inbox: open a terminal (legion), or run legion device (legion device --install keeps one running)." };
+        }
         Chat.all(chat, { $: "fetch" });
         return {};
       }

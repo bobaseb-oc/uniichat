@@ -12,7 +12,8 @@
 #   legion start|stop   start (background) or stop the server and SearXNG
 #   legion web          open the site in your browser, signed in as your terminal
 #   legion device       this computer runs the agents' jobs with no terminal open
-#                     (foreground; e.g. `unii device &` for the background)
+#                     (foreground; `legion device --install` keeps one running
+#                     at login with launchd, `--uninstall` removes it)
 #   legion log          follow the server's log (sign-in links print there)
 #   legion knowledge    rebuild ~/.unii-prime/knowledge.json (OKF, graphify guides,
 #                     repo digests and cards; local/prime/knowledge.ts)
@@ -99,6 +100,52 @@ term_exec() {
   exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" UNII_IMPORT_ASK="${UNII_IMPORT_ASK:-}" bun "$ROOT/Term.ts" "$@"
 }
 
+# `legion device --install`: a launchd agent (at login, kept alive) that
+# runs `legion device-run`, so the cockpit's reads go on with no window
+# open; it gets this shell's PATH (gh, acli, git, bun) and UNII_* settings,
+# never a secret (the device signs in with the terminal's saved session).
+# It does not start the server: it waits for one (the socket opens again)
+AGENT_LABEL="com.oncorps.legion.device"
+AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
+xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
+device_install() {
+  local env="" name
+  for name in PATH HOME UNII_PORT UNII_DIR UNII_SPACES UNII_HOME_REPO UNII_WORK UNII_COMPUTER; do
+    if [[ -n "${!name:-}" ]]; then
+      env+="    <key>$name</key><string>$(xml "${!name}")</string>"$'\n'
+    fi
+  done
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat >"$AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>$(xml "$ROOT/local/unii-local.sh")</string><string>device-run</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+$env  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardErrorPath</key><string>$(xml "$DIR/device.log")</string>
+  <key>StandardOutPath</key><string>/dev/null</string>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$AGENT_PLIST" >/dev/null
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
+  echo "legion: device agent installed ($AGENT_PLIST); its log: $DIR/device.log; legion device --uninstall removes it" >&2
+}
+device_uninstall() {
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+  rm -f "$AGENT_PLIST"
+  echo "legion: device agent removed" >&2
+}
+
 # the MCP servers the agents may use (local/mcp.ts): Claude Code's and
 # the extra ones installed in local/tools, no secret written (each is read
 # from ~/.claude.json as its server opens)
@@ -158,7 +205,13 @@ case "${1:-}" in
   start) server_start ;;
   stop)  server_stop ;;
   web)   server_start && term_exec web "$URL" ;;
-  device) server_start && term_exec device "$URL" ;;
+  device)
+    case "${2:-}" in
+      --install)   device_install ;;
+      --uninstall) device_uninstall ;;
+      *)           server_start && term_exec device "$URL" ;;
+    esac ;;
+  device-run) term_exec device "$URL" ;;
   log)   exec tail -f "$LOG" ;;
   knowledge) bun "$ROOT/local/prime/knowledge.ts" && echo "legion: then, in the chat: /import ~/.unii-prime/knowledge.json" >&2 ;;
   mcp-login)  mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" ;;

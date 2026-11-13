@@ -550,6 +550,36 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
       SUMMARIES constant shadowed View's wait (lesson recorded). Suite (bun run test, --isolate) 308
       pass, 2 known. Not run live: a real Google sign-in (needs the user's client).
 
+## Connect: Refresh, auto mode, Gmail/Chat, files pane (branch worktree-feat-connect-files; user's ask 2026-11-13) - PLAN, awaiting decisions
+
+Intent: four separate, reviewable changes, in this order (one commit set each):
+
+- [ ] K1 Refresh works. Today the button only reaches a running `legion device`; the terminal `legion` never reads the inbox, and the page says nothing when no device answers.
+  - Server answers Fetch with an error note ("no device reads the inbox: run legion device") when no device socket is up; the page shows "reading..." until the inbox arrives or 60 s pass.
+  - The terminal `legion` reads the inbox too (it is a device already: same Device.device_inbox, same 5 min timer).
+  - Optional: `legion device --install` writes a launchd agent so reads keep going with no window open (decision D2).
+  - verify: Server test (Fetch with no device returns the note), e2e (button shows reading..., then updated time).
+- [ ] K2 Auto mode more lenient (RED ZONE: permission engine; draft, user signs off).
+  - Read-only shell (Modes.readonly says null) skips the reviewer, as Claude Code does.
+  - The reviewer sees the last 3 user messages, not only the latest one (a "yes, go" carries no context).
+  - The prompt changes from "refuse if any of 6 things" to "refuse only clear harm": deletes beyond the task, off-machine sends (push/deploy/publish/send), secrets/.env, system changes, piped-from-internet code. Dropped: "goes beyond what the user asked", "outside the repo". Installing from a lockfile is allowed.
+  - Invariant: still fails closed (no answer from the reviewer: ask the user), and plan mode's rules are unchanged.
+  - verify: Tools/Modes tests: `git status` never reaches the reviewer; `rm -rf ~` still goes to the reviewer; a reviewer timeout still asks the user. Negative tests kill mutants.
+- [ ] K3 Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
+  - Scopes added: gmail.readonly, chat.spaces.readonly, chat.messages.readonly. Users re-run `legion google-login` once.
+  - Device reads (the Keychain grant stays on the device): gmail search/read, chat spaces/messages; inbox gains unread threads that need the user and recent Chat mentions.
+  - Agent tools (native, read-only, run on the device): google_mail_search, google_mail_read, google_chat_read, google_calendar, google_doc_read. Tool output is marked untrusted (an email can carry instructions); in auto mode, a tool call right after reading mail still goes to the reviewer.
+  - Console setup the user does: enable the APIs (done), add scopes on the consent screen, configure the Chat app (the Chat API needs one even for user reads).
+  - verify: fake-Google tests (as Google.test.ts), scope check fails closed, tool output tagged untrusted.
+- [ ] K4 Files pane (Terax-style), read-only first.
+  - Paths come from the agent's own tool calls (read, edit, write, grep hits), plus paths it names in its messages that exist under its work dir or a space.
+  - The web view gets a Files pane: a tree of those paths for the watched agent, and a viewer (syntax-highlighted, line anchors; diff for edited files). A path in a message turns into a link that opens it.
+  - Reading goes through the device (read job), limited to the agent's work dir and the spaces; no symlink escape, size cap.
+  - Writes later (an edit sent as a reviewed edit call, so modes and the reviewer apply).
+  - verify: Pages/View tests, path allowlist tests (../, symlink, outside the space refused), e2e.
+
+Decisions (user, 2026-11-13): D1 Claude Code-like reviewer; D2 terminal reads + `legion device --install` launchd; D3 gmail.readonly; D4 tool calls + mentions.
+
 ## Later
 - Web page reading: webfetch doesn't work on Bedrock; agents read pages with curl in the (guarded) shell. Our own fetch tool only if it can be made safe (results as data, SSRF/local-address refusal).
 - `Mcp.test.ts` process-group tests ("children have their own process groups…", "the next start kills children…") fail 2 of 13 about 1 run in 6, at HEAD too: timing.

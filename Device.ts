@@ -324,6 +324,7 @@ export function device_open(url: string, auth: Record<string, string>, query: st
   const v = View.view_new();
   const jobs = new Map<string, Run>();
   const send = (msg: View.Client) => View.link_send(v, msg, (a) => a.error !== undefined && log("refused: " + a.error));
+  const heard = device_reads(rules, send);
   View.link_open(v, {
     open : (q) => new WebSocket(url.replace(/^http/, "ws") + "/ws" + q + query, { headers: auth } as any),
     post : (path, body) => fetch(url + path, { method: "POST", headers: auth, body }),
@@ -334,20 +335,32 @@ export function device_open(url: string, auth: Record<string, string>, query: st
       if (msg.$ === "jobs" || msg.$ === "job") {
         device_jobs(v, jobs, msg, rules, send);
       }
-      if (msg.$ === "fetch") {
-        void inbox();
-      }
-      if (msg.$ === "read") {
-        void device_transcript(msg.id).then(send);
-      }
+      heard(msg);
     },
     lost,
   });
   const report = () => send(device_status(rules, Date.now()));
-  const inbox = async () => send(await device_inbox(rules, exec, new Date()));
   report();
-  void inbox();
   setInterval(report, STATUS_EVERY).unref();
-  setInterval(inbox, INBOX_EVERY).unref();
   return v;
+}
+
+// the reads a device does for the cockpit, the terminal's and legion
+// device's alike: the inbox now, every `every` ms (0: never again) and on
+// the server's "fetch"; a transcript's text on its "read". Returns what
+// hears the server's messages
+export function device_reads(rules: Rules, send: (msg: View.Client) => void, run: Exec = exec, g: Reads = reads, every = INBOX_EVERY): (msg: View.Server) => void {
+  const inbox = async () => send(await device_inbox(rules, run, new Date(), g));
+  void inbox();
+  if (every > 0) {
+    setInterval(inbox, every).unref();
+  }
+  return (msg) => {
+    if (msg.$ === "fetch") {
+      void inbox();
+    }
+    if (msg.$ === "read") {
+      void device_transcript(msg.id, g).then(send);
+    }
+  };
 }
