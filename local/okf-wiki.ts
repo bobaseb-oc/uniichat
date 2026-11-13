@@ -181,17 +181,22 @@ async function serve(): Promise<void> {
       send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no method " + msg.method } });
     }
   };
+  // a line from the client: a message handled, or a parse error told
+  const take = (line: string): Promise<void> => {
+    let msg: unknown;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
+      return Promise.resolve();
+    }
+    return handle(msg);
+  };
   for await (const chunk of process.stdin) {
     rest += Buffer.from(chunk).toString("utf8");
     const lines = rest.split("\n");
     rest = lines.pop() ?? "";
-    for (const line of lines.filter((l) => l.trim() !== "")) {
-      try {
-        pending.push(handle(JSON.parse(line)));
-      } catch {
-        send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
-      }
-    }
+    lines.filter((l) => l.trim() !== "").forEach((line) => pending.push(take(line)));
   }
   await Promise.all(pending);
 }
