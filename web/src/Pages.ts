@@ -339,16 +339,23 @@ function found_html(v: View.View): string {
     if (got.error !== undefined || got.text === undefined) {
       return head + `<p class="meta fx" style="--d:1">${esc(got.error ?? (f.kind === "find" ? "Finding…" : "Searching…"))}</p>`;
     }
-    const rows = got.text.split("\n").filter((l) => l !== "").map((l) => {
-      if (f.kind === "find") {
-        return `<button class="fx" style="--d:1"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc(l)}</button>`;
-      }
-      const m = /^(.*?):(\d+):(.*)$/.exec(l);
-      return m === null ? "" : `<button class="fx" style="--d:1" title="${esc(m[1]! + ":" + m[2]!)}"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + m[1]!, line: Number(m[2]) } })}><b>${esc(m[1]!.slice(m[1]!.lastIndexOf("/") + 1))}:${m[2]}</b> ${esc(m[3]!.trim())}</button>`;
-    });
+    const rows = got.text.split("\n").filter((l) => l !== "").map((l) => hit_html(f.kind, w, l));
     return head + (rows.join("") || `<p class="meta fx" style="--d:1">none</p>`);
   }).join("");
   return boxes + `<div class="ffound"><h3>${f.kind === "find" ? "Files" : "Lines"} with “${esc(f.q)}” ${close}</h3>${each}</div>`;
+}
+
+// a hit in workspace w: a found file, or a search's file:line:text, a Look
+function hit_html(kind: "find" | "grep", w: string, l: string): string {
+  if (kind === "find") {
+    return `<button class="fx" style="--d:1"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc(l)}</button>`;
+  }
+  const m = /^(.*?):(\d+):(.*)$/.exec(l);
+  if (m === null) {
+    return "";
+  }
+  const [, file, line, text] = m as unknown as [string, string, string, string];
+  return `<button class="fx" style="--d:1" title="${esc(file + ":" + line)}"${act_html({ $: "Look", what: { kind: "file", path: w + "/" + file, line: Number(line) } })}><b>${esc(file.slice(file.lastIndexOf("/") + 1))}:${line}</b> ${esc(text.trim())}</button>`;
 }
 
 // the explorer (Terax-like): workspaces opened from the device's roots,

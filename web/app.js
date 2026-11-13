@@ -3268,16 +3268,21 @@ function found_html(v) {
       return head + `<p class="meta fx" style="--d:1">${esc2(got.error ?? (f.kind === "find" ? "Finding…" : "Searching…"))}</p>`;
     }
     const rows = got.text.split(`
-`).filter((l) => l !== "").map((l) => {
-      if (f.kind === "find") {
-        return `<button class="fx" style="--d:1"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc2(l)}</button>`;
-      }
-      const m = /^(.*?):(\d+):(.*)$/.exec(l);
-      return m === null ? "" : `<button class="fx" style="--d:1" title="${esc2(m[1] + ":" + m[2])}"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + m[1], line: Number(m[2]) } })}><b>${esc2(m[1].slice(m[1].lastIndexOf("/") + 1))}:${m[2]}</b> ${esc2(m[3].trim())}</button>`;
-    });
+`).filter((l) => l !== "").map((l) => hit_html(f.kind, w, l));
     return head + (rows.join("") || `<p class="meta fx" style="--d:1">none</p>`);
   }).join("");
   return boxes + `<div class="ffound"><h3>${f.kind === "find" ? "Files" : "Lines"} with “${esc2(f.q)}” ${close2}</h3>${each}</div>`;
+}
+function hit_html(kind, w, l) {
+  if (kind === "find") {
+    return `<button class="fx" style="--d:1"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc2(l)}</button>`;
+  }
+  const m = /^(.*?):(\d+):(.*)$/.exec(l);
+  if (m === null) {
+    return "";
+  }
+  const [, file, line, text] = m;
+  return `<button class="fx" style="--d:1" title="${esc2(file + ":" + line)}"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + file, line: Number(line) } })}><b>${esc2(file.slice(file.lastIndexOf("/") + 1))}:${line}</b> ${esc2(text.trim())}</button>`;
 }
 function explorer_html(v) {
   const roots = (v.dirs.get("@roots")?.text ?? "").split(`
