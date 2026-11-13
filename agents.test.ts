@@ -325,21 +325,25 @@ test("a manager spawns workers; a worker's report wakes its manager, never Unii,
 }));
 
 // the parent labels what it spawns, task by task: a title (its goal) and
-// its repos; a task given none has none
-test("spawn labels each agent with its task's title and repos", () => faked(async () => {
+// its repos; a task given no title gets one from its first line (user's
+// ask 2026-11-13: no agent with only its name), cut at a word
+test("spawn labels each agent with its task's title and repos; no title given: one from its task", () => faked(async () => {
   const mem = Memory.load(DIR + "/labels", () => SHARE);
   const tools = served(mem, []);
   script = () => answer("done");
   try {
-    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the notes"], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
+    const long = "Task: **audit** every Databricks job config in bank-recon for stale cluster policies and report\nmore detail here";
+    const out = await Tools.call(tools, "main", "spawn", { tasks: ["fix the login tests", "write the release notes.\nsecond line", long], as: "worker", titles: ["Fix login tests"], repos: [["auth-api", "web"]] }, new AbortController().signal, "s1");
     expect(out.fail).toBe(false);
   } finally {
     script = null;
   }
-  const [a, b] = Tools.crew(tools);
+  const [a, b, c] = Tools.crew(tools);
   expect(a).toMatchObject({ title: "Fix login tests", repos: ["auth-api", "web"] });
-  expect(b.title).toBeUndefined();
+  expect(b.title).toBe("Write the release notes");
   expect(b.repos ?? []).toEqual([]);
+  expect(c.title).toBe("Audit every Databricks job config in bank-recon for stale…");
+  expect(Tools.titled("  \n ")).toBeUndefined();
   Tools.close(tools);
   Memory.stop(mem);
 }));

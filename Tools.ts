@@ -96,6 +96,7 @@ export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string 
 // an agent's label (Tools.labels): its goal, the repos its work touches
 export type Label = { title?: string; repos?: string[] };
 const TITLE = 80;
+const AUTO_TITLE = 60; // a title made from a task (Tools.titled), at most
 const REPOS = 8;
 
 // a checklist's most items, and an item's most characters (Tools.todo)
@@ -344,7 +345,7 @@ const AS_WORKER = "worker (the default): does its task itself; claude: Claude Co
 const MODEL = { type: "string", enum: LABELS, description: "The model it runs on: its tier's (the default) or a cheaper one below it, as for a simple task." };
 function boss(main: boolean): Spec[] {
   const labels = {
-    titles: { type: "array", items: STR, description: "Each task's goal in a few words, in order (\"Fix flaky login tests\"): the label the user sees for it." },
+    titles: { type: "array", items: STR, description: "Each task's goal in a few words, in order (\"Fix flaky login tests\"): the label the user sees for it in the crew. Always give one per task: an agent with none shows only its made-up name (a title cut from the task's first line stands in)." },
     repos: { type: "array", items: { type: "array", items: STR }, description: "The repos each task's work touches, in order: shown with its label." },
   };
   const tasks = { tasks: { type: "array", items: STR }, effort: { type: "string", enum: EFFORTS, description: "How hard they think; by default, as their model does." }, model: MODEL };
@@ -1023,7 +1024,7 @@ export namespace Tools {
     if (typeof view === "string") {
       return view;
     }
-    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "sub", tier, effort, model }, task + Tools.brief(view, who), false, labels[k]));
+    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "sub", tier, effort, model }, task + Tools.brief(view, who), false, Tools.titling(labels[k], task)));
     return "Started " + names.join(", ") + ". Each one's report will reach you as a message when it finishes.";
   }
 
@@ -1097,7 +1098,7 @@ export namespace Tools {
       return { text: view, fail: true };
     }
     const here = dir === null ? [] : [path.basename(dir.replace(/\/+$/, ""))].filter((r) => r !== "");
-    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "cli", device, dir }, task + Tools.brief(view, who), false, { repos: here, ...labels[k] }));
+    const names = tasks.map((task, k) => Tools.start(tools, who, { $: "cli", device, dir }, task + Tools.brief(view, who), false, Tools.titling({ repos: here, ...labels[k] }, task)));
     return { text: "Asked the user to approve " + names.join(", ") + " (Claude Code on " + device + "). Each one's report, or the user's no, will reach you as a message.", fail: false };
   }
 
@@ -1214,6 +1215,24 @@ export namespace Tools {
     tools.hooks.change();
     const box = { pending: "[ ]", doing: "[>]", done: "[x]" };
     return { text: list.length === 0 ? "Checklist cleared." : list.map((x) => box[x.status] + " " + x.text).join("\n"), fail: false };
+  }
+
+  // a title made from a task (spawn's, when it gives none): its first
+  // line, its markup and a leading "Task:" dropped, capitalized, cut at a
+  // word past AUTO_TITLE; nothing there: none
+  export function titled(task: string): string | undefined {
+    const first = (task.split("\n").find((l) => l.trim() !== "") ?? "").replace(/[*_`#>]+/g, "").replace(/^\s*(task|goal)\s*:\s*/i, "").replace(/\s+/g, " ").trim().replace(/[.:;,]+$/, "");
+    if (first === "") {
+      return undefined;
+    }
+    const cut = first.length <= AUTO_TITLE ? first : first.slice(0, first.lastIndexOf(" ", AUTO_TITLE) > 0 ? first.lastIndexOf(" ", AUTO_TITLE) : AUTO_TITLE) + "…";
+    return cut[0]!.toUpperCase() + cut.slice(1);
+  }
+
+  // a label given a title from its task if it has none
+  export function titling(label: Label | undefined, task: string): Label {
+    const title = label?.title ?? Tools.titled(task);
+    return { ...label, ...(title === undefined ? {} : { title }) };
   }
 
   // labels by task (spawn's titles and repos, in order), cleaned: a title
