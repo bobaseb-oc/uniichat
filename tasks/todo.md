@@ -624,3 +624,41 @@ Decisions (user, 2026-11-13): D1 Claude Code-like reviewer; D2 terminal reads + 
   the "unii" message kind, server log prefixes, ios/ (phones off), and the AI's own name "Unii" in its
   prompt and memories (asked separately). Proof: no "UniiChat" left outside ios/ and history; suite 194
   pass, the 3 known fails; `local/legion version` / `help` print legion, aligned.
+
+## S: Security review fixes (main 0450e14 review, 2026-11-13), branch feat/security-review
+
+Intent: close every finding of the 5-slice security review. Constraints: TDD (failing test first), each
+slice touches only its owned files, Red Zone items (auth, sessions, credentials, access control, gating)
+land as DRAFT for the user's sign-off. Success: every finding has a test that fails if the fix is removed,
+full suite stays at baseline (328 pass, 2 known log-staging fails) plus the new tests.
+
+- [x] SA gating (Modes.ts, Tools.ts, Mcp.ts): C1 zsh glob/brace bypass, git grep -O / reflog / sort
+      --compress-program / file -C / flag-prefix matching; H2 refuse over-long actions instead of cutting;
+      H3 review mcp__* (except a read-only allowlist) and computer, fence MCP output; M4 SECRETS on
+      unquoted words + globbed paths reviewed; L reviewer reply must be exactly one JSON object.
+- [x] SB device (Term.ts, Device.ts, Machine.ts, Hooks.ts, local/unii-local.sh, local/legion, new Proof.ts):
+      H1 device proves the server (HMAC of a nonce with a 0600 per-install key) before sending its token
+      or taking jobs; M2 job shells get an allowlisted env; M3 refuse writes to .claude/settings*, ignore
+      project disableAllHooks; L hardened git args everywhere (fsmonitor, textconv, filters); L look_file
+      blocks .git/config, token, *.json keys and opens with O_NOFOLLOW; M4 read/grep secret-path denylist.
+- [x] SC server (Server.ts, Cloud.ts, Memory.ts, web/index.html): M1 single-use sign-in link + confirm
+      click; M6 body size caps; M7 per-socket backpressure; L session expiry + sign-out-everywhere; L XFF
+      rightmost hop; L generic client errors; L CSP + frame-ancestors + Origin/Host allowlist; H4 review
+      routines run in plan mode; /api/proof route for SB; Memory.save 0600.
+- [x] SD integrations (local/prime/redact.ts, Google.ts, local/google-login.ts, Import.ts, Config.ts,
+      Harvest.ts, Auth.ts, local/harvest-login.ts): M5 redaction boundary + missing shapes; L revoke result;
+      L import cycle/depth/inflate caps; I gateway URL must be https; H5 Harvest token readable only with a
+      Keychain prompt.
+- [x] SE iOS + CI (ios/**, .github/workflows/ios.yml): M8 session in Keychain (ThisDeviceOnly); L web view
+      allows only the site origin + blob:, bridge and mic check origin; L XcodeGen sha256, actions pinned
+      to SHAs, permissions: contents: read.
+
+Review (2026-11-13): all five slices done test-first, every Red Zone change marked DRAFT awaiting the
+user's sign-off. Proof: full suite 367 pass, 3 fail: the known log-staging pair and `link_ask`, which
+fails the same way on a clean 0450e14 when cache.test.ts runs first (a frozen clock it leaves behind).
+Mutation checks: SA 16/16, SB 36/37 (the survivor is the look_file re-check after open, a race no test
+can trigger), SC 35/35, SD 10/10, H4 2/2. iOS: both targets typecheck against the iOS 27.2 SDK; not
+built, signed or run on a device. Left open, by design or for the user: Google's Keychain grant is
+still readable by an agent's shell (a prompt per inbox read is unworkable; documented in Google.ts);
+the proof is checked just before a socket opens, not bound to it; no UI button for /api/logout-all yet;
+the request ceiling is 4 GiB for imports.
