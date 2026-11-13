@@ -1,0 +1,40 @@
+web/style.css
+  s_72d3a1e44de313::t_447fa9cba8d6f4 588-600
+Pages.test.ts
+  s_72d3a1e44de313::t_8bff6fb9a9972a 150
+  s_72d3a1e44de313::t_073b712c693a2c 113-149,151-153
+Cockpit.test.ts
+  s_72d3a1e44de313::t_43ca2e453cde49 228-282
+Cockpit.ts
+  s_72d3a1e44de313::t_7bd05f3a5ca37c 8
+  s_72d3a1e44de313::t_fb3d96423f0be4 228-277
+web/src/Pages.ts
+  s_72d3a1e44de313::t_9f81f7d7a17d83 129-148,150-152
+  s_72d3a1e44de313::t_5929f5d613be47 171
+web/src/main.ts
+  s_72d3a1e44de313::t_b9c20805ed95a6 1317-1319
+  s_72d3a1e44de313::t_5a71ed9c566833 395-397
+  s_72d3a1e44de313::t_b910da113bd78b 126-128
+  s_72d3a1e44de313::t_56d130161cdf56 370-377,382-386
+  s_72d3a1e44de313::t_523ec62db9f04c 341
+  s_72d3a1e44de313::t_d2b6c34908b87b 342-369,378-381,387-394,398-409,411
+  s_72d3a1e44de313::t_ebb0c55d3010a1 1353
+  s_72d3a1e44de313::t_eb03725ef5b6a5 1531-1534
+  s_72d3a1e44de313::t_96ae21804bedcb 410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbb0fa6d70e31d14863d1bf8ec9947ba0eb157e3",
+  "prompts": {},
+  "sessions": {
+    "s_72d3a1e44de313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a4d1272-b980-4254-be8a-6c45581b7b32",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
