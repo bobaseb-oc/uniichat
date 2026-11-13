@@ -1,0 +1,66 @@
+web/src/main.ts
+  s_72d3a1e44de313::t_35f3417d28a9d0 455-461
+Server.test.ts
+  s_72d3a1e44de313::t_663488a863b297 473-474
+  s_72d3a1e44de313::t_92967085238cce 448-472,475-492
+Machine.ts
+  s_72d3a1e44de313::t_8ba6b6d4186cf8 172
+  s_72d3a1e44de313::t_a42e121bae8ec4 235-241
+  s_72d3a1e44de313::t_171c0d30eb496d 30-33
+  s_72d3a1e44de313::t_3d63d4422be978 201-206
+Tools.test.ts
+  s_72d3a1e44de313::t_9cab1d28402316 580-617,619-624,626
+  s_72d3a1e44de313::t_6e325afd4973d0 618
+  s_72d3a1e44de313::t_303aac32fabd9e 625
+Tools.ts
+  s_72d3a1e44de313::t_a2b4691fbcdb63 109
+  s_72d3a1e44de313::t_fbfe1b5b4a07da 92
+  s_72d3a1e44de313::t_2a8c3ccfe8315e 820-824
+  s_72d3a1e44de313::t_a67b80d0bd2602 1336-1363
+Server.ts
+  s_72d3a1e44de313::t_676a0533408cb8 1688-1725
+  s_72d3a1e44de313::t_f988a2bf26af1b 140
+  s_72d3a1e44de313::t_bbc6dc25270c57 1419-1425
+Html.test.ts
+  s_72d3a1e44de313::t_1ccce2c05e6b65 103-104
+  s_72d3a1e44de313::t_a0f79f6d3e1d7d 93-102,105-108
+Device.ts
+  s_72d3a1e44de313::t_45b46dea5cfa8a 876-881
+  s_72d3a1e44de313::t_50458d4808c40a 29-32
+  s_72d3a1e44de313::t_04427ca49e0086 20
+  s_72d3a1e44de313::t_fed3676a99b231 61
+  s_72d3a1e44de313::t_71c0b2a40c9c58 680-852
+Undo.ts
+  s_72d3a1e44de313::t_620b618e34e4f1 101-103
+  s_72d3a1e44de313::t_febaaf34aba7b2 1-100,104-133,149-153,157,159-245
+  s_72d3a1e44de313::t_21c86f9485e817 154-156,158
+  s_72d3a1e44de313::t_e618dd65a41d05 134-148
+Undo.test.ts
+  s_72d3a1e44de313::t_a82e39a24e8467 130
+  s_72d3a1e44de313::t_f841c8097c2b70 1-129,131-165
+View.ts
+  s_72d3a1e44de313::t_42834bbf153ba9 686-691
+  s_72d3a1e44de313::t_a8355045c2d770 263-265
+  s_72d3a1e44de313::t_9155f7f56108e6 206-207
+  s_72d3a1e44de313::t_a4612c0284d9b2 304-305
+web/src/Html.ts
+  s_72d3a1e44de313::t_529eb61598197c 258-266
+web/style.css
+  s_72d3a1e44de313::t_6711b17267998c 223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ad88b074c5db5f349784ef80b14656ec22ac800",
+  "prompts": {},
+  "sessions": {
+    "s_72d3a1e44de313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a4d1272-b980-4254-be8a-6c45581b7b32",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
