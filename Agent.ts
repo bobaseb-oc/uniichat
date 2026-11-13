@@ -122,6 +122,9 @@ export const TRIES = 8;
 
 // what a call the vendor never answered says
 const BUSY  = "the AI service is busy or unavailable right now";
+// a spent budget or quota behind a 429 (LiteLLM, OpenAI), not a rate limit
+// (Anthropic's "credit balance is too low" is a 400: down, held for credit)
+const SPENT = /budget has been exceeded|exceeded your current quota|insufficient_quota/i;
 
 // the most tokens a model reads an image as (scaled to 1568 px at most),
 // and a web search's results are booked as (0.1k to 8k)
@@ -384,7 +387,7 @@ export namespace Agent {
         timeout : false,
       } as RequestInit);
       const why = res.ok && res.body ? "" : "HTTP " + res.status + ": " + Agent.reason(await res.text());
-      step = why ? Agent.fail(why, [], Agent.passing(res) ? "busy" : "down") : await Agent.stream(wire, run, res.body!, timer, seen, st, flight.begun, read);
+      step = why ? Agent.verdict(res, why) : await Agent.stream(wire, run, res.body!, timer, seen, st, flight.begun, read);
     } catch (err: any) {
       step = Agent.fail(err.message, [], "busy");
     }
@@ -422,6 +425,16 @@ export namespace Agent {
     } catch {
       return body.slice(0, 2000);
     }
+  }
+
+  // a failed answer's step: a spent budget or quota (a
+  // gateway's 429 like a rate limit's, but asking again cannot help) fails
+  // at once, saying so; else busy (asked again) if passing, down if not
+  export function verdict(res: Response, why: string): Step {
+    if (SPENT.test(why)) {
+      return Agent.fail("The AI gateway's spending limit is reached, so asking again will not help: ask its admin to raise it. (" + why.slice(0, 300) + ")", [], "fail");
+    }
+    return Agent.fail(why, [], Agent.passing(res) ? "busy" : "down");
   }
 
   export function passing(res: Response): boolean {
