@@ -1,0 +1,65 @@
+Hooks.test.ts
+  s_0a2ebc44ae045f::t_a44c4546dd25b5 123-140
+Term.test.ts
+  s_0a2ebc44ae045f::t_c7e7342b286556 1-71
+Machine.ts
+  s_0a2ebc44ae045f::t_ba363ed060db07 174-175
+  s_0a2ebc44ae045f::t_6b99b982e40433 55-73
+  s_0a2ebc44ae045f::t_99dae3fee051fe 592,594-595,603
+  s_0a2ebc44ae045f::t_e6f10fad4053c7 197-240,604
+  s_0a2ebc44ae045f::t_762cb2db69ceff 23,74-75,176-177,241-242,294,379,591,605,621
+local/unii-local.sh
+  s_0a2ebc44ae045f::t_7cb7c18ab2e694 101-104,106-107
+Launcher.test.ts
+  s_0a2ebc44ae045f::t_e6a0cfb01e2836 1-31
+Term.ts
+  s_0a2ebc44ae045f::t_6c153ad01810a0 1334
+  s_0a2ebc44ae045f::t_e0fff0711d2a8b 1292-1304,1306-1308,1313-1315,1321-1322
+  s_0a2ebc44ae045f::t_b4b6e7d9a646a6 300,302
+  s_0a2ebc44ae045f::t_12c14b8c037015 1197-1201
+  s_0a2ebc44ae045f::t_588577a8baea53 84
+  s_0a2ebc44ae045f::t_ade90c6a025e80 890,892
+  s_0a2ebc44ae045f::t_435fd63d27a6af 900-903,905
+  s_0a2ebc44ae045f::t_c95c168a34f86d 102-105
+  s_0a2ebc44ae045f::t_b7e6b89d51b320 1341-1343
+  s_0a2ebc44ae045f::t_6bb44350a22450 904
+  s_0a2ebc44ae045f::t_18ec1492acb1ff 32
+Device.ts
+  s_0a2ebc44ae045f::t_03c66e9c4a4d7a 520,527-550
+  s_0a2ebc44ae045f::t_be942ab32f8b3a 519
+  s_0a2ebc44ae045f::t_953c161e6c997a 325-326,328-330,573
+  s_0a2ebc44ae045f::t_c6c20722091252 347-396,399-402,407-416
+  s_0a2ebc44ae045f::t_4b79a7963d3771 124-146
+  s_0a2ebc44ae045f::t_acfb54e293198f 76,295-296,331,336-337,340,461,469-470,571-572,574
+Device.test.ts
+  s_0a2ebc44ae045f::t_740e7049096f0a 394-400,477
+  s_0a2ebc44ae045f::t_bed09d49949728 485-486
+  s_0a2ebc44ae045f::t_d63e0a6ac534a1 433-435
+  s_0a2ebc44ae045f::t_a906e35a3bc61c 58
+  s_0a2ebc44ae045f::t_74753e41084e66 468
+  s_0a2ebc44ae045f::t_d479febfe85721 191-195
+  s_0a2ebc44ae045f::t_12b2ca7edb7acf 13
+  s_0a2ebc44ae045f::t_b73a63a0ebb90d 157-165
+  s_0a2ebc44ae045f::t_f0b499e6b7c169 105-156,166-170
+  s_0a2ebc44ae045f::t_b9e287a54522d5 209,212,227,233,246-247,417-432,436-467,469-476,478-484,487-496
+Hooks.ts
+  s_0a2ebc44ae045f::t_13292468177541 25-27,79-80,193-195,212
+Machine.test.ts
+  s_0a2ebc44ae045f::t_52c2023ad87934 8,166-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d78693f93ed9cb0ac881c773cf6494dbebac22b3",
+  "prompts": {},
+  "sessions": {
+    "s_0a2ebc44ae045f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b1419cf-cca1-47f7-99ff-12a223ec12ff",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
