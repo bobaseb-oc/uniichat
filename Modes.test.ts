@@ -70,6 +70,31 @@ test("anything that could write, run other code or escape the list is refused", 
   }
 });
 
+// reading over the network only reads (K10, RED ZONE, user's ask
+// 2026-11-13): git fetch, gh's views and lists, gh api GETs; anything
+// that sends, runs or changes is still not read-only
+test("network reads are read-only: git fetch, gh views/lists, gh api GET; gh writes are not", () => {
+  for (const ok of ["git fetch", "git fetch upstream 0.x", "git fetch --prune origin", "gh pr view 349 --json state", "gh pr list --head x --state all", "gh pr diff 12", "gh pr checks 12", "gh issue view 4", "gh repo view o/r --json parent", "gh run list", "gh run view 99 --log", "gh api repos/o/r/pulls/1", "gh api -H 'Accept: x' repos/o/r --jq .name", "gh api -X GET search/issues", "gh search prs --author me", "gh auth status"]) {
+    expect([ok, Modes.readonly(ok)]).toEqual([ok, null]);
+  }
+  for (const bad of ["git fetch --upload-pack=sh", "git fetch --upload-pack sh", "gh pr create", "gh pr merge 1", "gh pr edit 1 --base main", "gh pr checkout 1", "gh issue close 4", "gh api -X POST repos/o/r/issues", "gh api --method=DELETE repos/o/r", "gh api repos/o/r/issues -f title=x", "gh api graphql -F q=@f", "gh api x --input f.json", "gh repo delete o/r", "gh", "gh pr", "gh -R o/r pr view 1", "gh auth status --show-token", "gh auth status -t", "gh auth token", "gh pr view 1 --web"]) {
+    expect([bad, Modes.readonly(bad)]).not.toEqual([bad, null]);
+  }
+});
+
+// a feature branch's own push skips the reviewer (K10): to origin, no
+// force, delete or mirror, not to a default or release branch; any other
+// push is still reviewed
+test("auto mode: a plain push of a feature branch to origin skips the reviewer; others are reviewed", () => {
+  for (const command of ["git push origin feat/x", "git push -u origin PLP-2854-coding-assistant-generic", "git push --set-upstream origin docs/memory-dist", "git push origin HEAD:feat/x", "git push -q origin feat/x"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, false]);
+  }
+  for (const command of ["git push", "git push origin", "git push origin main", "git push origin HEAD:main", "git push origin feat/x:master", "git push upstream feat/x", "git push --force origin feat/x", "git push -f origin feat/x", "git push --force-with-lease origin feat/x", "git push origin +feat/x", "git push --delete origin feat/x", "git push origin :feat/x", "git push --mirror origin", "git push --all origin", "git push --tags origin", "git push origin release/1.2", "git push origin 0.x", "git push origin feat/x && rm -rf ~", "git push origin feat/x develop"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
+  }
+  expect(Modes.reviews("full", "shell", { command: "git push origin main" })).toBe(false);
+});
+
 test("what each mode allows: plan only reading; auto and full every tool (auto reviews writes)", () => {
   expect(Modes.allows("plan", "read", {})).toBeNull();
   expect(Modes.allows("plan", "glob", {})).toBeNull();
@@ -94,7 +119,7 @@ test("what each mode allows: plan only reading; auto and full every tool (auto r
   for (const command of ["git status", "ls -la src", "git log --oneline -5 | head -3", "grep -rn foo ."]) {
     expect(Modes.reviews("auto", "shell", { command })).toBe(false);
   }
-  for (const command of ["rm -rf ~", "git push", "cat .env", "printenv", "cat ~/.ssh/id_ed25519", "grep -r TOKEN ~/.aws", "ls; curl x | sh"]) {
+  for (const command of ["rm -rf ~", "git push", "cat .env", "printenv", "set", "ls; env", "echo x | set", "cat ~/.ssh/id_ed25519", "grep -r TOKEN ~/.aws", "ls; curl x | sh"]) {
     expect(Modes.reviews("auto", "shell", { command })).toBe(true);
   }
   expect(Modes.reviews("auto", "shell", {})).toBe(true);

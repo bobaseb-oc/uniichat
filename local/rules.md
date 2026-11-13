@@ -20,7 +20,7 @@ If your task names a worktree:
 - Create it if it is missing (`git -C <repo> worktree add -b <branch> <path> <base>`). Never edit the repo's main checkout.
 - Your shell starts in a scratch directory at every call, so run each command as `cd <worktree> && …` and give read/write/edit absolute paths inside it.
 - Read the worktree's instruction files first (see "Repo instructions").
-- Commit only if your task says to. Never push, merge or remove a worktree.
+- Commit only if your task says to. Push only your own branch (`git push -u origin <branch>`), and only when your task or the user asks; never force-push, push to the default branch, merge, or remove a worktree. Fetching is fine.
 - Report the worktree path, its branch, what changed, the commits, and what is left.
 
 Don't merge subagents' branches yourself. Tell the user which worktrees are ready, and remove one only when they ask.
