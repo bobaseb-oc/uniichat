@@ -11,8 +11,19 @@ import * as os from "node:os";
 
 process.env.UNII_DIR = fs.mkdtempSync(os.tmpdir() + "/unii-tools-");
 
-const { Tools } = await import("./Tools.ts");
+const { Tools, MASTER } = await import("./Tools.ts");
 const { Price } = await import("./Price.ts");
+
+// the orchestrator decides what is its to decide (user's ask 2026-11-13):
+// reversible, in-scope calls made and reported; asked only for what is the
+// user's (Red Zone, outward or irreversible, a real fork in what they want)
+test("the orchestrator's prompt: it decides reversible, in-scope calls itself, and asks only for the user's", () => {
+  expect(MASTER).toContain("Decide what is yours to decide");
+  expect(MASTER).toMatch(/reversible/);
+  expect(MASTER).toMatch(/Red Zone/);
+  expect(MASTER).toMatch(/say what you decided/i);
+  expect(MASTER).not.toContain("File each question for the user that can wait (a decision, an input)");
+});
 
 test("a call's MCP requests follow its chat past a process that ended", async () => {
   const tools = Tools.serve({} as any, {} as any);

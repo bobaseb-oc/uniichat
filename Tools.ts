@@ -370,7 +370,7 @@ const TODO = spec("todo", "Set your checklist, the whole list each time, in orde
 const ASKS = 20;
 const ASK_TEXT = 2000;
 const ASK_OPTIONS = 6;
-const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: anything you need their decision or input on, one question each, said in full (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
+const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: only a decision that is theirs (Red Zone, outward or hard to undo, money or credentials, a real fork in what they want); one question each, said in full as a short brief with your pick (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
   question: STR, options: { type: "array", items: STR }, close: INT,
 }, []);
 // plan mode's way out (Modes.ts), as Claude Code's ExitPlanMode

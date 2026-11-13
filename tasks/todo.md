@@ -573,7 +573,7 @@ Intent: four separate, reviewable changes, in this order (one commit set each):
   - Console setup the user does: enable the APIs (done), add scopes on the consent screen, configure the Chat app (the Chat API needs one even for user reads).
   - verify: fake-Google tests (as Google.test.ts), scope check fails closed, tool output tagged untrusted.
 - [ ] K5 Harvest timesheets (RED ZONE: billable hours written to Harvest). Token in the Keychain (legion harvest-login), read tools for agents, a routine that drafts entries from calendar, PRs, Jira and commits; D5 (user, 2026-11-13): drafts only; the user approves on a Timesheet page and one click submits; nothing reaches Harvest without it.
-- [ ] K6 The orchestrator decides more on its own (user's ask 2026-11-13): its prompt (Tools.MASTER) makes reversible, in-scope calls itself and reports them; it asks only for Red Zone items, outward or irreversible acts, and real forks in what the user wants.
+- [x] K6 (prompt.txt + the ask tool's text; a guard test in Tools.test.ts; behavior not live-checked) The orchestrator decides more on its own (user's ask 2026-11-13): its prompt (Tools.MASTER) makes reversible, in-scope calls itself and reports them; it asks only for Red Zone items, outward or irreversible acts, and real forks in what the user wants.
 - [ ] K4 Files pane (Terax-style), read-only first.
   - Paths come from the agent's own tool calls (read, edit, write, grep hits), plus paths it names in its messages that exist under its work dir or a space.
   - The web view gets a Files pane: a tree of those paths for the watched agent, and a viewer (syntax-highlighted, line anchors; diff for edited files). A path in a message turns into a link that opens it.
