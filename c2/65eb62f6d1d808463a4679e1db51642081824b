@@ -1,0 +1,89 @@
+web/style.css
+  s_72d3a1e44de313::t_9999be4584b859 755
+  s_72d3a1e44de313::t_abff8f124672e0 744-754,756-763
+Cockpit.ts
+  s_72d3a1e44de313::t_4068538600a01e 289
+Memory.ts
+  s_72d3a1e44de313::t_61954bfa7ce810 162-163
+  s_72d3a1e44de313::t_04dbaa10912e69 282-283
+  s_72d3a1e44de313::t_7d744426d63280 314
+  s_72d3a1e44de313::t_c80b7c78846c79 233-235
+  s_72d3a1e44de313::t_ceb0c548fc7e80 122
+  s_72d3a1e44de313::t_6b390ad8371473 68-69
+  s_72d3a1e44de313::t_0df209be2451e9 259
+  s_72d3a1e44de313::t_26c960882152a1 1114-1119
+  s_72d3a1e44de313::t_1d8301852595ed 56-62
+  s_72d3a1e44de313::t_f881ff3cc2bad1 1256-1331
+View.ts
+  s_72d3a1e44de313::t_95c35e3729f156 764-803
+  s_72d3a1e44de313::t_32bdbaf440608c 291-293
+  s_72d3a1e44de313::t_f321cca955bbd9 500-503
+  s_72d3a1e44de313::t_64ac0d94177f63 194-197
+  s_72d3a1e44de313::t_5a4c737a2d669f 1327
+  s_72d3a1e44de313::t_efb230d4ae306d 83,86-104
+  s_72d3a1e44de313::t_6a63efde11166a 157
+  s_72d3a1e44de313::t_f05880e28edf73 347-351
+  s_72d3a1e44de313::t_fa23756fdb1b6e 564-571
+  s_72d3a1e44de313::t_9fbc51133b1ae4 231
+  s_72d3a1e44de313::t_f9a2c0523ea534 105
+web/src/Html.ts
+  s_72d3a1e44de313::t_161bcc6a2ecf83 77-80
+Server.ts
+  s_72d3a1e44de313::t_55b426a96a6902 1482-1484,1489-1519
+  s_72d3a1e44de313::t_bb067f84c3388b 1258-1267
+  s_72d3a1e44de313::t_cc59a289e033fa 53
+  s_72d3a1e44de313::t_009fdb6130ec78 1141
+  s_579b54b3888f76::t_10afbfb150dd6a 1520
+Pins.test.ts
+  s_72d3a1e44de313::t_d9d04b473961bb 206,208
+  s_72d3a1e44de313::t_fc68c94c1f5401 218,221
+  s_72d3a1e44de313::t_ce09b14af726df 228
+  s_72d3a1e44de313::t_ace1822886acf6 190
+  s_72d3a1e44de313::t_6987a33792780e 189,194,196,198-201,203
+  s_72d3a1e44de313::t_267c5eab518b64 1-188,191-193,195,197,202,204-205,207,209-217,219-220,222-227,229
+web/src/Pages.ts
+  s_72d3a1e44de313::t_fd971983372c36 189
+  s_72d3a1e44de313::t_d0947b61fddd4c 149
+  s_72d3a1e44de313::t_dcf44482edbddc 14
+  s_72d3a1e44de313::t_0a2ef17338fda9 438-503
+Recall.test.ts
+  s_72d3a1e44de313::t_eb36d324c6accb 1-87,89-108
+  s_72d3a1e44de313::t_7af441a1ce91f9 88
+prompt.txt
+  s_72d3a1e44de313::t_851c52e15504a9 27-29
+Tools.ts
+  s_72d3a1e44de313::t_5d8ed8c2b921cc 242-243
+web/src/main.ts
+  s_72d3a1e44de313::t_317d68b9fbcab6 457-462
+  s_72d3a1e44de313::t_cc56d6be26b54d 1042-1045
+  s_72d3a1e44de313::t_c82ba3e24272f5 1066-1069,1071-1075
+  s_72d3a1e44de313::t_1d5f2e11bc78b1 1035,1041
+  s_72d3a1e44de313::t_16d0faf265a556 1319-1326
+  s_72d3a1e44de313::t_2ed44330565b1d 1440-1450
+  s_72d3a1e44de313::t_3c56ffa4d34f69 303
+  s_72d3a1e44de313::t_6307b44bd8a414 1065,1070,1076-1094
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c265eb62f6d1d808463a4679e1db51642081824b",
+  "prompts": {},
+  "sessions": {
+    "s_579b54b3888f76": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff281488-fc0b-40e2-b608-dde1a14ba115",
+        "model": "unknown"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_72d3a1e44de313": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2a4d1272-b980-4254-be8a-6c45581b7b32",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
