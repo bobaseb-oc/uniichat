@@ -214,8 +214,8 @@ test("files: agents' files, a file's lines, git's views, diffs marked, commits o
   expect(empty).toContain(act({ $: "Look", what: { kind: "git", repo: "@home", op: "status" } }));
   View.view_hear(v, { $: "looked", id: "x", kind: "file", path: "/w/Owl/src/a.ts", text: "const a = <b>;\nexport { a };" });
   const file = Pages.files_html(v).join("");
-  expect(file).toContain('<span class="ln">2</span>export { a };');
-  expect(file).toContain("const a = &lt;b&gt;;");
+  expect(file).toContain('<span class="ln">2</span><span class="k">export</span> { a };');
+  expect(file).toContain(" a = &lt;b&gt;;");
   expect(file).toContain(act({ $: "Look", what: { kind: "git", repo: "/w/Owl/src/a.ts", op: "log" } }));
   View.view_hear(v, { $: "looked", id: "y", kind: "git", path: "/r", op: "log", text: "abc1234 (HEAD) first\ndef5678 second" });
   const log = Pages.files_html(v).join("");
@@ -290,4 +290,36 @@ test("every page is linked from the sidebar and Home's Apps, with Files' and Tim
   expect(side).toContain('<a href="#timesheet">Timesheet<span class="n">2</span></a>');
   expect(home).toContain("2 drafts to review");
   expect(home).toContain("1 agent's files");
+});
+
+// the files pane draws a file as its kind asks (user's ask, 2026-11-13):
+// code colored (Hl.ts), Markdown rendered, HTML previewed in a sandboxed
+// frame (no scripts, no Legion origin); Source shows either's lines; a new
+// file shown is drawn rendered again
+test("files: code colored, Markdown rendered, HTML in a sandboxed frame, Source toggles", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  View.view_hear(v, { $: "looked", id: "a", kind: "file", path: "/r/a.ts", text: "const a = 1;" });
+  expect(Pages.files_html(v).join("")).toContain('<span class="ln">1</span><span class="k">const</span> a = <span class="n">1</span>;');
+  View.view_hear(v, { $: "looked", id: "m", kind: "file", path: "/r/README.md", text: "# Hi <x>\n\n- one" });
+  const md = Pages.files_html(v).join("");
+  expect(md).toContain("<h2>Hi &lt;x&gt;</h2>");
+  expect(md).toContain("<li>one</li>");
+  expect(md).toContain(act({ $: "Source", on: true }));
+  expect(View.view_act(v, { $: "Source", on: true })).toEqual([]);
+  const src = Pages.files_html(v).join("");
+  expect(src).toContain('<span class="ln">1</span># Hi &lt;x&gt;');
+  expect(src).toContain(act({ $: "Source", on: false }));
+  View.view_hear(v, { $: "looked", id: "h", kind: "file", path: "/r/report.html", text: '<p onclick="x()">a & b</p><script>steal()</script>' });
+  const html = Pages.files_html(v).join("");
+  expect(html).toContain('<iframe class="fprev" sandbox="" srcdoc="&lt;p onclick=&quot;x()&quot;&gt;a &amp; b&lt;/p&gt;&lt;script&gt;steal()&lt;/script&gt;"></iframe>');
+  expect(html).not.toContain("<script>");
+  expect(html).not.toContain("allow-same-origin");
+  View.view_act(v, { $: "Source", on: true });
+  expect(Pages.files_html(v).join("")).toContain('<span class="ln">1</span>&lt;p onclick');
+  // plain text: lines only, no Source button
+  View.view_hear(v, { $: "looked", id: "t", kind: "file", path: "/r/notes.txt", text: "if x" });
+  const txt = Pages.files_html(v).join("");
+  expect(txt).toContain('<span class="ln">1</span>if x');
+  expect(txt).not.toContain('"Source"');
 });

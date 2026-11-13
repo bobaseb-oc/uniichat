@@ -165,6 +165,7 @@ export type View = State & {
   themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
   summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
   looked    : Looked | null; // what a device showed last (the files pane, K4)
+  source    : boolean; // the file shown drawn as its lines, not rendered (Markdown, HTML)
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -300,6 +301,7 @@ export type Act =
   | { $: "Themes" }                             // the digest summarized by theme
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
   | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
+  | { $: "Source"; on: boolean }                 // the file shown drawn as its lines, or rendered
   | { $: "Bang"; command: string; dir: string }  // a command run in a folder (the Files page's box)
   | { $: "Timesheet"; op: "submit" | "drop"; ns: number[] } // timesheet drafts submitted to Harvest, or dropped (K5)
 
@@ -445,6 +447,7 @@ export function view_new(): View {
     themes    : null,
     summaries : new Map(),
     looked    : null,
+    source    : false,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -475,6 +478,7 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "looked": {
       v.looked = msg;
+      v.source = false;
       return [];
     }
     case "look":
@@ -683,6 +687,10 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Source": {
+      v.source = act.on;
+      return [];
     }
     case "Bang": {
       const command = act.command.trim();

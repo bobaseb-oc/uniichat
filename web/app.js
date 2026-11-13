@@ -1494,6 +1494,7 @@ function view_new() {
     themes: null,
     summaries: new Map,
     looked: null,
+    source: false,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1523,6 +1524,7 @@ function view_hear(v, msg) {
     }
     case "looked": {
       v.looked = msg;
+      v.source = false;
       return [];
     }
     case "look":
@@ -1721,6 +1723,10 @@ function view_act(v, act) {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Source": {
+      v.source = act.on;
+      return [];
     }
     case "Bang": {
       const command = act.command.trim();
@@ -2814,6 +2820,128 @@ function up_next(v, now) {
   });
 }
 
+// Hl.ts
+var words = (s) => new Set(s.split(" "));
+var C_LIKE = { line: ["//"], block: [["/*", "*/"]] };
+var JS = {
+  ...C_LIKE,
+  quotes: ["`", '"', "'"],
+  long: ["`"],
+  words: words("as async await break case catch class const continue default delete do else enum export extends false finally for from function if implements import in instanceof interface let new null of private protected public readonly return static super switch this throw true try type typeof undefined var void while yield namespace declare keyof satisfies")
+};
+var PY = {
+  line: ["#"],
+  block: [],
+  quotes: ['"""', "'''", '"', "'"],
+  long: ['"""', "'''"],
+  words: words("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case self")
+};
+var SH = {
+  line: ["#"],
+  word: true,
+  block: [],
+  quotes: ['"', "'"],
+  long: ['"', "'"],
+  words: words("if then else elif fi for while until do done case esac in function return local export readonly set unset shift exit echo printf cd source trap")
+};
+var JSON_ = { line: [], block: [], quotes: ['"'], long: [], words: words("true false null") };
+var YAML = { line: ["#"], word: true, block: [], quotes: ['"', "'"], long: [], words: words("true false null yes no on off") };
+var TOML = { line: ["#"], block: [], quotes: ['"""', "'''", '"', "'"], long: ['"""', "'''"], words: words("true false") };
+var SQL = {
+  line: ["--"],
+  block: [["/*", "*/"]],
+  quotes: ["'", '"'],
+  long: ["'"],
+  fold: true,
+  words: words("select from where and or not in is null as join left right inner outer full cross on group by order having limit offset union all distinct insert into values update set delete create table view index drop alter add with case when then else end exists between like asc desc true false primary key references default")
+};
+var CSS2 = { line: [], block: [["/*", "*/"]], quotes: ['"', "'"], long: [], words: words("important inherit initial none auto") };
+var LANGS = {
+  ts: JS,
+  tsx: JS,
+  js: JS,
+  jsx: JS,
+  mjs: JS,
+  cjs: JS,
+  javascript: JS,
+  typescript: JS,
+  py: PY,
+  python: PY,
+  sh: SH,
+  bash: SH,
+  zsh: SH,
+  shell: SH,
+  json: JSON_,
+  jsonl: JSON_,
+  yaml: YAML,
+  yml: YAML,
+  toml: TOML,
+  sql: SQL,
+  css: CSS2
+};
+function hl_lang(name) {
+  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  return Object.hasOwn(LANGS, ext) ? LANGS[ext] : null;
+}
+var ESC2 = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+var esc2 = (s) => s.replace(/[&<>"]/g, (c) => ESC2[c]);
+var WORD = /[A-Za-z_$][\w$]*/y;
+var NUM = /\d[\w.]*/y;
+function hl_lines(text, lang) {
+  const out = [""];
+  const put = (cls, s) => s.split(`
+`).forEach((part, k) => {
+    if (k > 0) {
+      out.push("");
+    }
+    out[out.length - 1] += part === "" || cls === "" ? esc2(part) : `<span class="${cls}">${esc2(part)}</span>`;
+  });
+  const starts = (at, s) => text.startsWith(s, at);
+  const inword = (at) => at > 0 && /[\w$]/.test(text[at - 1]);
+  let i = 0;
+  let plain = 0;
+  const take = (cls, end) => {
+    put("", text.slice(plain, i));
+    put(cls, text.slice(i, end));
+    i = plain = end;
+  };
+  while (i < text.length) {
+    const block = lang.block.find(([open2]) => starts(i, open2));
+    const line = lang.line.find((s) => starts(i, s) && !(lang.word && i > 0 && !/\s/.test(text[i - 1])));
+    const quote = lang.quotes.find((q) => starts(i, q));
+    if (block !== undefined) {
+      const end = text.indexOf(block[1], i + block[0].length);
+      take("c", end < 0 ? text.length : end + block[1].length);
+    } else if (line !== undefined) {
+      const end = text.indexOf(`
+`, i);
+      take("c", end < 0 ? text.length : end);
+    } else if (quote !== undefined) {
+      const escapes = !(lang === SH && quote === "'");
+      let j = i + quote.length;
+      while (j < text.length && !starts(j, quote) && (lang.long.includes(quote) || text[j] !== `
+`)) {
+        j += escapes && text[j] === "\\" ? 2 : 1;
+      }
+      take("s", Math.min(text.length, starts(j, quote) ? j + quote.length : j));
+    } else if (!inword(i) && (NUM.lastIndex = i, NUM.test(text))) {
+      take("n", NUM.lastIndex);
+    } else if (!inword(i) && (WORD.lastIndex = i, WORD.test(text))) {
+      const end = WORD.lastIndex;
+      const w = text.slice(i, end);
+      if (lang.words.has(lang.fold ? w.toLowerCase() : w)) {
+        take("k", end);
+      } else {
+        i = end;
+      }
+    } else {
+      i += 1;
+    }
+  }
+  put("", text.slice(plain));
+  return out;
+}
+
 // web/src/Pages.ts
 var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
 function act_html2(act) {
@@ -3019,21 +3147,36 @@ function files_html(v) {
   const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
   const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
 }
-function shown_html(looked) {
+function file_html2(path, text, source) {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  const kind = ["md", "markdown"].includes(ext) ? "md" : ["html", "htm"].includes(ext) ? "html" : null;
+  const toggle = kind === null ? "" : `<button class="pbtn"${act_html2({ $: "Source", on: !source })}>${source ? kind === "md" ? "Rendered" : "Preview" : "Source"}</button>`;
+  if (kind === "md" && !source) {
+    return `${toggle}<div class="msg fmd">${md_parse(text).map(block_html).join("")}</div>`;
+  }
+  if (kind === "html" && !source) {
+    return `${toggle}<iframe class="fprev" sandbox="" srcdoc="${esc(text)}"></iframe>`;
+  }
+  const lang = hl_lang(path);
+  const lines = lang === null ? text.replace(/\n$/, "").split(`
+`).map(esc) : hl_lines(text.replace(/\n$/, ""), lang);
+  return `${toggle}<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${l}`).join(`
+`)}</pre>`;
+}
+function shown_html(looked, source) {
   if (looked === null) {
     return `<p class="meta">Pick a file, or a git view.</p>`;
   }
   if (looked.error !== undefined) {
     return `<p class="meta">${esc(looked.error)}</p>`;
   }
+  if (looked.kind === "file") {
+    return file_html2(looked.path ?? "", looked.text ?? "", source);
+  }
   const lines = (looked.text ?? "").replace(/\n$/, "").split(`
 `);
-  if (looked.kind === "file") {
-    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join(`
-`)}</pre>`;
-  }
   const repo = looked.path ?? "@home";
   const line = (l) => {
     const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
@@ -3433,7 +3576,7 @@ async function mic() {
   rec.onstop = () => {
     stream.getTracks().forEach((track) => track.stop());
     P.rec = null;
-    words(new Blob(parts, { type: rec.mimeType }));
+    words2(new Blob(parts, { type: rec.mimeType }));
   };
   rec.start();
   P.rec = rec;
@@ -3474,7 +3617,7 @@ function meter(stream, rec) {
   };
   requestAnimationFrame(frame);
 }
-function words(audio) {
+function words2(audio) {
   const act = { $: "voice", type: audio.type, body: () => audio };
   link_send(v, act, heard);
   draw(false);

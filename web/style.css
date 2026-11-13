@@ -24,6 +24,8 @@
   --add    : #1a7f37; /* a diff's line added */
   --del    : #cf222e; /* a diff's line dropped */
   --accent : #6d3fd8; /* the name Legion in a message */
+  --hl-s   : #0a3069; /* a file's strings (Hl.ts) */
+  --hl-n   : #953800; /* a file's numbers */
   --red    : #b42318; /* deleting the account */
   --veil   : rgb(0 0 0 / .3); /* the page behind a box over it */
   --shadow : 0 1px 2px rgba(0, 0, 0, .05), 0 6px 20px rgba(0, 0, 0, .05);
@@ -43,6 +45,8 @@
     --add    : #55b874;
     --del    : #f8857c;
     --accent : #ad94ff;
+    --hl-s   : #a5d6ff;
+    --hl-n   : #ffa657;
     --red    : var(--del);
     --veil   : rgb(0 0 0 / .5);
     --shadow : 0 1px 2px rgb(0 0 0 / .4), 0 8px 28px rgb(0 0 0 / .45);
@@ -697,6 +701,12 @@ pre.code .ln { display: inline-block; width: 4ch; margin-right: 1.5ch; text-alig
 pre.code .add { color: #2da44e; }
 pre.code .del { color: #cf222e; }
 pre.code .hunk { color: var(--accent); }
+pre.code .k { color: var(--accent); }
+pre.code .s { color: var(--hl-s); }
+pre.code .n { color: var(--hl-n); }
+pre.code .c { color: var(--soft); font-style: italic; }
+.fmd { max-height: calc(100vh - 240px); overflow: auto; padding: 4px 10px; }
+iframe.fprev { display: block; width: 100%; height: calc(100vh - 240px); border: 1px solid var(--frame); border-radius: 8px; background: #fff; }
 pre.code .sha { font: inherit; color: var(--accent); padding: 0; text-decoration: underline; }
 #log :not(pre) > code { cursor: pointer; }
 @media (max-width: 900px) { .tcols { grid-template-columns: 1fr; } .tlist { border-right: 0; } }

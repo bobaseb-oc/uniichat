@@ -13,6 +13,7 @@ import * as Routines from "../../Routines.ts";
 import type * as View from "../../View.ts";
 import { block_html, esc } from "./Html.ts";
 import { md_parse } from "../../Md.ts";
+import { hl_lang, hl_lines } from "../../Hl.ts";
 
 // where File issue goes: Legion's own repo, GitHub's own page (nothing is
 // posted from here)
@@ -304,20 +305,39 @@ export function files_html(v: View.View): string[] {
   const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
   const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked)}</div></div>`];
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
 }
 
-function shown_html(looked: View.Looked | null): string {
+// a file drawn as its kind asks: Markdown rendered (Html.block_html
+// escapes it), HTML in a frame sandboxed with nothing allowed (no
+// scripts, an origin of its own: it can't reach Legion's session; the
+// page's CSP still applies), code colored (Hl.ts); Source: its lines
+function file_html(path: string, text: string, source: boolean): string {
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  const kind = ["md", "markdown"].includes(ext) ? "md" : ["html", "htm"].includes(ext) ? "html" : null;
+  const toggle = kind === null ? "" : `<button class="pbtn"${act_html({ $: "Source", on: !source })}>${source ? (kind === "md" ? "Rendered" : "Preview") : "Source"}</button>`;
+  if (kind === "md" && !source) {
+    return `${toggle}<div class="msg fmd">${md_parse(text).map(block_html).join("")}</div>`;
+  }
+  if (kind === "html" && !source) {
+    return `${toggle}<iframe class="fprev" sandbox="" srcdoc="${esc(text)}"></iframe>`;
+  }
+  const lang = hl_lang(path);
+  const lines = lang === null ? text.replace(/\n$/, "").split("\n").map(esc) : hl_lines(text.replace(/\n$/, ""), lang);
+  return `${toggle}<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${l}`).join("\n")}</pre>`;
+}
+
+function shown_html(looked: View.Looked | null, source: boolean): string {
   if (looked === null) {
     return `<p class="meta">Pick a file, or a git view.</p>`;
   }
   if (looked.error !== undefined) {
     return `<p class="meta">${esc(looked.error)}</p>`;
   }
-  const lines = (looked.text ?? "").replace(/\n$/, "").split("\n");
   if (looked.kind === "file") {
-    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join("\n")}</pre>`;
+    return file_html(looked.path ?? "", looked.text ?? "", source);
   }
+  const lines = (looked.text ?? "").replace(/\n$/, "").split("\n");
   const repo = looked.path ?? "@home";
   const line = (l: string) => {
     const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
