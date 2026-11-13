@@ -344,62 +344,75 @@ async function device_clean(space: string, run: Exec): Promise<Inbox.Clean[]> {
   return rows.filter((r) => r.changes > 0 || r.merged);
 }
 
-// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) H1:
-// whether the server holds this install's key (Proof.check); a test's fake
-export type Prove = () => Promise<boolean>;
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): how
+// a device or terminal reaches the server on this computer: never over
+// TCP (any process may take 127.0.0.1:<port> first, and relay the real
+// server to get a session), only over its unix socket, <dir>/server.sock
+// (Server.ts Main.unix: this user's, 0600, in a 0700 dir, so only this
+// user's processes can be the server). url: the server's address, its
+// host the Host header (Server.ts Main.ours). No socket: a call fails and
+// is tried again, never sent over TCP
+export type Wire = { url: string; sock: string };
 
-export const UNPROVEN = "server not proven (none up, or not this install's): not connecting, trying again";
+// Bun reads a ':' in a ws+unix:// path as its end; macOS's socket paths
+// are at most 104 bytes, the last a NUL
+const SOCK_PATH = /^\/[^:]{1,102}$/;
+const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
 
-// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) H1:
-// the link to the server at url (auth: the session's header; query: this
-// device), its session sent only to a proven server (prove): before the
-// first socket, before every one after a loss, before each post. Any
-// process may take 127.0.0.1:8788 first; unproven, no socket opens and
-// nothing is sent, it tries again (View.RETRY), said once in log. Only
-// then does lost() hear of a loss (signed out?): it asks with the session
-export function device_link(v: View.View, url: string, auth: () => Record<string, string>, query: string, prove: Prove, log: (line: string) => void, hear: (msg: View.Server) => void, lost: (up: boolean) => Promise<boolean>): void {
-  let proven = false;
+export const NO_SOCKET = "no server socket (none up): not connecting, trying again";
+
+// the wire to the server at url (loopback only) whose dir is dir; a path
+// Bun can't open as given is refused, not opened elsewhere
+export function device_wire(url: string, dir: string): Wire {
+  const sock = dir.replace(/\/$/, "") + "/server.sock";
+  if (!SOCK_PATH.test(sock)) {
+    throw new Error(sock + ": not a socket path this build opens (absolute, no ':', under 104 bytes)");
+  }
+  if (!LOOPBACK.includes(new URL(url).hostname)) {
+    throw new Error(url + ": not a server on this computer");
+  }
+  return { url: url.replace(/\/$/, ""), sock };
+}
+
+// a request to the server, over its socket only; a redirect is refused
+// (it would leave the socket)
+export function device_fetch(w: Wire, path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(w.url + path, { ...init, unix: w.sock, redirect: "error" } as RequestInit);
+}
+
+// a WebSocket to the server's path, over its socket only
+function device_socket(w: Wire, path: string, headers: Record<string, string>): WebSocket {
+  return new WebSocket("ws+unix://" + w.sock + ":" + path, { headers: { ...headers, host: new URL(w.url).host } } as any);
+}
+
+// RED ZONE U1: the link to the server (auth: the session's header; query:
+// this device), over its socket only (device_socket, device_fetch). No
+// socket: none opens, it tries again (View.RETRY), said once in log; only
+// with one does lost() hear of a loss (signed out?)
+export function device_link(v: View.View, w: Wire, auth: () => Record<string, string>, query: string, log: (line: string) => void, hear: (msg: View.Server) => void, lost: (up: boolean) => Promise<boolean>): void {
   let said = false;
-  const check = async () => {
-    proven = await prove().catch(() => false);
-    if (!proven && !said) {
-      log(UNPROVEN);
-    }
-    said = !proven;
-    return proven;
-  };
   const link: View.Link = {
-    // a proof opens one socket only; none: one closed at once (a loss)
-    open : (q) => {
-      const ok = proven;
-      proven = false;
-      return ok ? new WebSocket(url.replace(/^http/, "ws") + "/ws" + q + query, { headers: auth() } as any) : device_unopened();
-    },
-    post : async (path, body) => {
-      if (!await prove().catch(() => false)) {
-        throw new Error(UNPROVEN);
-      }
-      return fetch(url + path, { method: "POST", headers: auth(), body });
-    },
+    open : (q) => device_socket(w, "/ws" + q + query, auth()),
+    post : (path, body) => device_fetch(w, path, { method: "POST", headers: auth(), body }),
     hear,
-    lost : async (up) => (await check() ? lost(up) : true),
+    lost : async (up) => {
+      const none = !fs.existsSync(w.sock);
+      if (none && !said) {
+        log(NO_SOCKET);
+      }
+      said = none;
+      return none || lost(up);
+    },
   };
-  void check().then(() => View.link_open(v, link));
+  View.link_open(v, link);
 }
 
-// a socket never opened, that closes at once (as a lost one)
-function device_unopened(): WebSocket {
-  const ws: any = { send: () => {}, close: () => {}, onmessage: null, onclose: null };
-  setTimeout(() => ws.onclose?.({ code: 1006 }), 0);
-  return ws;
-}
-
-// `legion device`: connects to the server at url as this device (auth: its
+// `legion device`: connects to the server (w) as this device (auth: its
 // session's header; query: its name, work dir, whether it does computer
-// use), once proven (device_link), and runs its jobs, with no screen;
-// what goes wrong, to log. A lost socket opens again, unless lost() says
-// not (signed out)
-export function device_open(url: string, auth: Record<string, string>, query: string, rules: Rules, prove: Prove, log: (line: string) => void, lost: (up: boolean) => Promise<boolean> = async () => true): View.View {
+// use), over its socket only (device_link), and runs its jobs, with no
+// screen; what goes wrong, to log. A lost socket opens again, unless
+// lost() says not (signed out)
+export function device_open(w: Wire, auth: Record<string, string>, query: string, rules: Rules, log: (line: string) => void, lost: (up: boolean) => Promise<boolean> = async () => true): View.View {
   const v = View.view_new();
   const jobs = new Map<string, Run>();
   const send = (msg: View.Client) => View.link_send(v, msg, (a) => a.error !== undefined && log("refused: " + a.error));
@@ -413,7 +426,7 @@ export function device_open(url: string, auth: Record<string, string>, query: st
     }
     heard(msg);
   };
-  device_link(v, url, () => auth, query, prove, log, hear, lost);
+  device_link(v, w, () => auth, query, log, hear, lost);
   const report = () => send(device_status(rules, Date.now()));
   report();
   setInterval(report, STATUS_EVERY).unref();

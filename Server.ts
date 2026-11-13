@@ -49,7 +49,6 @@ import { Pick } from "./Pick.ts";
 import * as Inbox from "./Inbox.ts";
 import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
-import { Proof } from "./Proof.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
 import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Look, type Looked, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
@@ -177,6 +176,9 @@ type Limit = { rate: number; most: number; keys: Map<string, { n: number; at: nu
 // =========
 
 const LOCK       = config.DIR + "/lock";
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// unix socket devices and terminals reach this server on (Main.unix)
+const SOCK       = config.DIR + "/server.sock";
 // where worker k's successor reaches it, HAND + k (Main.listen); how
 // often one that gave its chats looks whether its last requests ended
 const HAND       = config.DIR + "/hand";
@@ -2131,10 +2133,6 @@ export namespace Main {
   export const BUFFER = 2 * FRAME;
   export const BODY   = 2 ** 32;
 
-  // the install's key, a device's proof this is its server (Proof.ts;
-  // read once, at start)
-  export let key: Buffer | null = null;
-
   // the headers every answer goes with, and an HTML one's policy: its
   // scripts and styles the site's own (a page's style attributes too),
   // images and recordings its own or made in the page, no frame of it
@@ -2177,6 +2175,41 @@ export namespace Main {
         fs.rmSync(LOCK, { force: true });
       }
     }
+  }
+
+  // RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+  // devices' socket at path made ready to listen on. Any process may take
+  // 127.0.0.1:<port>, so devices and terminals send their session only
+  // here: its dir is this user's, 0700, so only this user's processes bind
+  // or open what's in it. A socket of this user nothing answers on (a
+  // crash left it) is removed; anything else there (a file, a link,
+  // another's, one that answers) is refused: the server ends (Main.lock:
+  // one server per dir, so nothing else should hold it)
+  export async function unix(path: string): Promise<void> {
+    const dir = path.slice(0, path.lastIndexOf("/"));
+    const uid = process.getuid?.();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    const d = fs.statSync(dir);
+    if (!d.isDirectory() || d.uid !== uid || (d.mode & 0o077) !== 0) {
+      throw new Error(dir + ": must be a directory of this user, mode 0700");
+    }
+    const st = fs.lstatSync(path, { throwIfNoEntry: false });
+    if (st === undefined) {
+      return;
+    }
+    if (!st.isSocket() || st.uid !== uid) {
+      throw new Error(path + ": not a socket of this user: remove it");
+    }
+    const live = await new Promise<boolean>((done) => {
+      const sock = net.connect(path);
+      sock.on("connect", () => (sock.destroy(), done(true)));
+      sock.on("error", () => done(false));
+    });
+    if (live) {
+      throw new Error(path + ": another process answers on it");
+    }
+    fs.rmSync(path);
   }
 
   // a site's file
@@ -2321,12 +2354,6 @@ export namespace Main {
     if (!Main.ours(req, p)) {
       return new Response("not this site", { status: 403 });
     }
-    // RED ZONE (security review H1, DRAFT awaiting the user's sign-off):
-    // a device's nonce answered (Proof.ts): it reveals nothing of the key
-    if (p === "/api/proof") {
-      const answer = Main.key === null ? null : Proof.answer(Main.key, new URL(req.url).searchParams.get("n") ?? "");
-      return answer === null ? new Response("not a nonce", { status: 400 }) : new Response(answer, { headers: { "content-type": "text/plain" } });
-    }
     try {
       const user = Cloud.who(cloud, req);
       if (user !== null && Main.shard(user.id) !== Main.index) {
@@ -2441,7 +2468,13 @@ export namespace Main {
     const hand = HAND + Main.index;
     Mcp.sweep(config.DIR + "/children." + Main.index + ".pids");
     Main.port = port;
-    Main.key = Proof.key(config.DIR);
+    // RED ZONE (security review U1, DRAFT awaiting the user's sign-off):
+    // alone (no supervisor: no handover, Main.lock holds the dir), the
+    // devices' socket is made ready first, or the server ends
+    const alone = process.env.UNII_WORKER === undefined;
+    if (alone) {
+      await Main.unix(SOCK);
+    }
     Chat.cloud = Cloud.open(change, signed, post);
     Main.back = await Main.dial(hand);
     if (Main.back === null) {
@@ -2454,10 +2487,11 @@ export namespace Main {
     process.on("message", Main.heard);
     process.on("disconnect", () => process.exit(0));
     process.on("unhandledRejection", Main.unowned);
-    Main.server = Bun.serve<Sock["data"]>({
-      port               : port,
-      hostname           : "127.0.0.1",
-      reusePort          : true,
+    // the TCP port's handlers (the browser, the iOS app) and the devices'
+    // socket's, the same; alone, the port is held by this process only
+    // (no SO_REUSEPORT: none other binds it beside this one), workers share
+    // theirs with their successor (a handover)
+    const serves = {
       idleTimeout        : 0,
       maxRequestBodySize : Main.BODY,
       fetch              : Main.reply,
@@ -2502,7 +2536,12 @@ export namespace Main {
           });
         },
       },
-    });
+    };
+    Main.server = Bun.serve<Sock["data"]>({ ...serves, port, hostname: "127.0.0.1", reusePort: !alone });
+    if (alone) {
+      Bun.serve<Sock["data"]>({ ...serves, unix: SOCK });
+      fs.chmodSync(SOCK, 0o600);
+    }
     setInterval(() => {
       for (const chat of Chat.chats.values()) {
         chat.socks.forEach((sock) => sock.send(TICK));
@@ -2513,6 +2552,9 @@ export namespace Main {
     }
     process.on("exit", () => {
       fs.rmSync(Main.addr, { force: true });
+      if (alone) {
+        fs.rmSync(SOCK, { force: true });
+      }
       Mcp.end();
       for (const chat of Chat.chats.values()) {
         Chat.stop(chat, null);

@@ -4,24 +4,32 @@
 // terminal's jobs too) against a fake server: it signs in by its Bearer
 // and names itself; a job runs once and its output goes back; a computer
 // job is refused where computer use is off; an output too large is
-// refused by its size; a job the server drops is stopped.
+// refused by its size; a job the server drops is stopped. RED ZONE
+// (security review U1, DRAFT awaiting the user's sign-off): the fake
+// server listens on a unix socket in a 0700 dir, as Server.ts does: the
+// device reaches it only there, never over TCP.
 
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as Device from "./Device.ts";
-import { Proof } from "./Proof.ts";
 import * as View from "./View.ts";
 
 type Sock = { send: (s: string) => void };
 const got: any[] = [];
 let sock: Sock | null = null;
-let hello: { auth: string | null; query: string } | null = null;
+let hello: { auth: string | null; query: string; host: string | null } | null = null;
+// a fresh 0700 dir, as the server's (Server.ts Main.private)
+const dir0700 = () => {
+  const d = fs.mkdtempSync(os.tmpdir() + "/legion-dev-");
+  fs.chmodSync(d, 0o700);
+  return d;
+};
+const DIR = dir0700();
 const server = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
+  unix: DIR + "/server.sock",
   fetch(req, srv) {
-    hello = { auth: req.headers.get("authorization"), query: new URL(req.url).search };
+    hello = { auth: req.headers.get("authorization"), query: new URL(req.url).search, host: req.headers.get("host") };
     return srv.upgrade(req) ? undefined : new Response("no", { status: 400 });
   },
   websocket: {
@@ -55,13 +63,14 @@ const run = async (job: any, work: string, signal: AbortSignal, _away?: AbortSig
   return { text: "ran " + job.input, fail: false };
 };
 
-const v = Device.device_open("http://127.0.0.1:" + server.port, { authorization: "Bearer tok" }, "&device=box", { work: "~/w", home: "/h", computer: false, run }, async () => true, () => {});
+const v = Device.device_open(Device.device_wire("http://127.0.0.1:8788", DIR), { authorization: "Bearer tok" }, "&device=box", { work: "~/w", home: "/h", computer: false, run }, () => {});
 const outs = () => got.filter((m) => m.$ === "out");
 
 test("a device signs in by its Bearer and names itself", async () => {
   expect(await until(() => v.up)).toBe(true);
   expect(hello?.auth).toBe("Bearer tok");
   expect(hello?.query).toContain("&device=box");
+  expect(hello?.host).toBe("127.0.0.1:8788");
 });
 
 test("a job runs once, its output answered, in the device's work dir and home repo", async () => {
@@ -102,31 +111,33 @@ test("a job the server no longer lists is stopped", async () => {
   expect(runs.find((r) => r.job.input === "slow")!.signal.aborted).toBe(true);
 });
 
-// RED ZONE (security review H1): a process that took the server's port
-// first gets nothing: the device proves the server (Proof.ts) before its
-// first socket and every one after a loss, and sends its session only
-// to one that holds the install's key; unproven, it says so and waits
-test("a device sends its session only to a server that proves itself, at every connect", async () => {
-  const key = Proof.key(fs.mkdtempSync(os.tmpdir() + "/legion-proof-"));
-  const auths: string[] = [];
-  let honest = false;
-  let proofs = 0;
-  let peer: { close: () => void } | null = null;
-  const srv = Bun.serve({
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): any
+// process may take 127.0.0.1:<port>, so a device never speaks TCP to its
+// server: its session goes over <dir>/server.sock only. A squatter on the
+// port (one relaying the real server's answers, the old proof's hole)
+// gets nothing; no socket: it says so and tries again, never over TCP;
+// the server restarted, it connects again
+test("a device sends its session only over the server's unix socket: never to the TCP port, again after a restart", async () => {
+  const squat: string[] = [];
+  const squatter = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     fetch(req, s) {
-      const u = new URL(req.url);
-      if (u.pathname === "/api/proof") {
-        proofs++;
-        return new Response(honest ? Proof.answer(key, u.searchParams.get("n") ?? "") ?? "" : "f".repeat(64));
-      }
-      auths.push(String(req.headers.get("authorization")));
-      return s.upgrade(req) ? undefined : new Response("no", { status: 400 });
+      squat.push(req.method + " " + new URL(req.url).pathname + " " + String(req.headers.get("authorization")));
+      return s.upgrade(req) ? undefined : new Response("ok");
+    },
+    websocket: { open: (ws) => ws.send(JSON.stringify({ $: "view", parts: [], turn: 0 })), message: () => {} },
+  });
+  const dir = dir0700();
+  const auths: string[] = [];
+  const real = () => Bun.serve({
+    unix: dir + "/server.sock",
+    fetch(req, s) {
+      auths.push(req.method + " " + new URL(req.url).pathname + " " + String(req.headers.get("authorization")));
+      return s.upgrade(req) ? undefined : Response.json({ ok: true });
     },
     websocket: {
       open(ws) {
-        peer = ws;
         ws.send(JSON.stringify({ $: "view", parts: [], turn: 0 }));
       },
       message(ws, data) {
@@ -134,39 +145,61 @@ test("a device sends its session only to a server that proves itself, at every c
       },
     },
   });
+  let srv: ReturnType<typeof real> | null = null;
   try {
-    const url = "http://127.0.0.1:" + srv.port;
+    const wire = Device.device_wire("http://127.0.0.1:" + squatter.port, dir);
     const logs: string[] = [];
-    const d = Device.device_open(url, { authorization: "Bearer sec" }, "&device=p", { work: "~/w", computer: false, run, spaces: [] }, () => Proof.check(url, key), (l) => logs.push(l));
+    const d = Device.device_open(wire, { authorization: "Bearer sec" }, "&device=p", { work: "~/w", computer: false, run, spaces: [] }, (l) => logs.push(l));
     await Bun.sleep(1500);
-    expect(auths).toEqual([]);
-    expect(proofs).toBeGreaterThanOrEqual(2);
-    expect(logs.join("\n")).toContain("not proven");
     expect(d.up).toBe(false);
-    // the real server: connects, its session sent
-    honest = true;
+    expect(logs.join("\n")).toContain(Device.NO_SOCKET);
+    expect(logs.filter((l) => l === Device.NO_SOCKET)).toHaveLength(1);
+    // the real server up: its socket gets the session, the port nothing
+    srv = real();
     expect(await until(() => d.up)).toBe(true);
-    expect(auths).toContain("Bearer sec");
-    // lost, and the port taken: never sent again
-    honest = false;
-    auths.length = 0;
-    peer!.close();
-    await Bun.sleep(1500);
-    expect(auths).toEqual([]);
-    expect(d.up).toBe(false);
-    // moved (View.MOVE: opened again at once, no loss heard): a proof
-    // opens one socket only, so the port taken since gets nothing
-    honest = true;
-    expect(await until(() => d.up)).toBe(true);
-    honest = false;
-    auths.length = 0;
-    (peer as any).close(View.MOVE);
-    await Bun.sleep(1500);
-    expect(auths).toEqual([]);
-  } finally {
+    expect(auths.some((a) => a.startsWith("GET /ws Bearer sec"))).toBe(true);
+    // a post goes over the socket too
+    expect((await Device.device_fetch(wire, "/api/act", { method: "POST", headers: { authorization: "Bearer sec" }, body: "{}" })).ok).toBe(true);
+    expect(auths).toContain("POST /api/act Bearer sec");
+    // restarted: down, then up again on the socket
     srv.stop(true);
+    fs.rmSync(dir + "/server.sock", { force: true });
+    expect(await until(() => !d.up)).toBe(true);
+    auths.length = 0;
+    srv = real();
+    expect(await until(() => d.up)).toBe(true);
+    expect(auths.some((a) => a.startsWith("GET /ws Bearer sec"))).toBe(true);
+    expect(squat).toEqual([]);
+  } finally {
+    srv?.stop(true);
+    squatter.stop(true);
   }
-}, 15_000);
+}, 20_000);
+
+// RED ZONE U1: a socket path Bun can't open as is (a ':' is read as its
+// end; past macOS's 104 bytes) is refused, not opened elsewhere; with no
+// socket a fetch fails, never falling back to TCP
+test("device_wire refuses a socket path with ':' or too long; device_fetch with no socket fails", async () => {
+  expect(() => Device.device_wire("http://127.0.0.1:8788", "/tmp/a:b")).toThrow();
+  expect(() => Device.device_wire("http://127.0.0.1:8788", "/tmp/" + "x".repeat(100))).toThrow();
+  expect(() => Device.device_wire("http://example.com:8788", "/tmp/ok")).toThrow();
+  const squat: string[] = [];
+  const squatter = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (squat.push(String(req.headers.get("authorization"))), new Response("ok")) });
+  try {
+    const wire = Device.device_wire("http://127.0.0.1:" + squatter.port, dir0700());
+    expect(await Device.device_fetch(wire, "/api/me", { headers: { authorization: "Bearer sec" } }).then(() => "answered", () => "failed")).toBe("failed");
+    // a redirect off the socket (to the port) is refused, not followed
+    const away = Bun.serve({ unix: wire.sock, fetch: () => new Response(null, { status: 307, headers: { location: wire.url + "/api/me" } }) });
+    try {
+      expect(await Device.device_fetch(wire, "/api/me", { headers: { authorization: "Bearer sec" } }).then(() => "answered", () => "failed")).toBe("failed");
+    } finally {
+      away.stop(true);
+    }
+    expect(squat).toEqual([]);
+  } finally {
+    squatter.stop(true);
+  }
+});
 
 // a device's report for the web's status line (Device.device_status): the
 // folder Unii works in (its home repo, else <work>/main), its branch

@@ -29,3 +29,17 @@ test("the terminal is started with no secret in its environment", () => {
   expect(names).toContain("UNII_IMPORT_DIRS");
   expect(SECRETS.filter((k) => names.includes(k))).toEqual([]);
 });
+
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// launcher asks whether the server is up over its unix socket, so a
+// process squatting the TCP port is not taken for it
+test("the launcher sees the server up over its socket, not the TCP port", () => {
+  const bin = fs.mkdtempSync(os.tmpdir() + "/legion-bin-");
+  const said = bin + "/curl.args";
+  fs.writeFileSync(bin + "/curl", "#!/bin/sh\necho \"$@\" >>" + JSON.stringify(said) + "\n");
+  fs.chmodSync(bin + "/curl", 0o755);
+  const dir = fs.mkdtempSync(os.tmpdir() + "/legion-dir-");
+  const out = Bun.spawnSync(["/bin/bash", import.meta.dir + "/local/legion", "start"], { env: { PATH: bin + ":/usr/bin:/bin", HOME: os.homedir(), UNII_DIR: dir } });
+  expect(out.exitCode).toBe(0);
+  expect(fs.readFileSync(said, "utf8")).toContain("--unix-socket " + dir + "/server.sock");
+});

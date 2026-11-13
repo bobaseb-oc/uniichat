@@ -3,13 +3,12 @@
 // `bun test Secure.test.ts`: the security review's (SC) guards on the
 // site's HTTP, against `./Server.ts <port>` on a fresh dir, signed in as
 // a browser is (its emailed link, printed with no mail key, then the
-// button's POST): the device's proof, Origin and Host, the headers HTML
+// button's POST): the devices' unix socket, Origin and Host, the headers HTML
 // goes with, what an error tells, the bodies read before sign-in.
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { createHmac } from "node:crypto";
 
 const PORT = 9591;
 const SITE = "http://127.0.0.1:" + PORT;
@@ -50,17 +49,31 @@ afterAll(async () => {
   fs.rmSync(DIR, { recursive: true, force: true });
 });
 
-// RED ZONE (security review H1, DRAFT awaiting the user's sign-off): the
-// server answers a device's nonce with HMAC-SHA256 of the install's key
-test("/api/proof answers a nonce with the key's HMAC; a malformed one, 400", async () => {
-  const key = Buffer.from(fs.readFileSync(DIR + "/server-key", "utf8").trim(), "hex");
-  const n = "ab".repeat(32);
-  const res = await fetch(SITE + "/api/proof?n=" + n);
-  expect(res.status).toBe(200);
-  expect(await res.text()).toBe(createHmac("sha256", key).update(n).digest("hex"));
-  for (const bad of ["", "xyz", n + "0", n.toUpperCase()]) {
-    expect((await fetch(SITE + "/api/proof?n=" + bad)).status).toBe(400);
-  }
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// server also listens on <dir>/server.sock, a socket of this user, 0600,
+// in its 0700 dir, so only this user's processes reach it (devices and
+// terminals go there only); its answers are the TCP port's, Host checks
+// too. The old proof is gone: nothing answers /api/proof, no key is made
+test("the server's unix socket: 0600 in a 0700 dir, this user's, the same handlers; no /api/proof", async () => {
+  const sock = DIR + "/server.sock";
+  const st = fs.lstatSync(sock);
+  expect(st.isSocket()).toBe(true);
+  expect(st.uid).toBe(process.getuid!());
+  expect(st.mode & 0o777).toBe(0o600);
+  expect(fs.statSync(DIR).mode & 0o777).toBe(0o700);
+  const hello = await fetch(SITE + "/api/hello", { unix: sock } as RequestInit);
+  expect(hello.status).toBe(200);
+  expect(await hello.json()).toMatchObject({ bills: false });
+  expect((await fetch("http://evil.example/api/hello", { unix: sock } as RequestInit)).status).toBe(403);
+  expect((await fetch(SITE + "/api/logout", { method: "POST", headers: { origin: "http://evil.example" }, unix: sock } as RequestInit)).status).toBe(403);
+  expect((await fetch(SITE + "/api/proof?n=" + "ab".repeat(32))).status).not.toBe(200);
+  expect(fs.existsSync(DIR + "/server-key")).toBe(false);
+});
+
+// RED ZONE U1: alone, the server holds its port by itself (no
+// SO_REUSEPORT), so no other process shares it to take some connections
+test("alone, no other process can bind the server's port beside it", () => {
+  expect(() => Bun.serve({ port: PORT, hostname: "127.0.0.1", reusePort: true, fetch: () => new Response("squat") })).toThrow();
 });
 
 // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a

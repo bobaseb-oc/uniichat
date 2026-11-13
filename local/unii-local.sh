@@ -170,8 +170,11 @@ skills_make() {
   bun "$ROOT/local/skills.ts" "$DIR/skills.md" >&2 || echo "legion: no skills index" >&2
 }
 
+# RED ZONE (security review U1, DRAFT awaiting the user's sign-off): up
+# means answering on its unix socket (only this user's processes can bind
+# it), so a process squatting the TCP port is not taken for the server
 server_up() {
-  curl -fsS --max-time 2 -o /dev/null "$URL/" 2>/dev/null
+  curl -fsS --max-time 2 -o /dev/null --unix-socket "$DIR/server.sock" "$URL/" 2>/dev/null
 }
 
 server_start() {

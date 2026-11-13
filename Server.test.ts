@@ -46,6 +46,68 @@ test("with workers, Server.ts routes to them", async () => {
   expect(await res.text()).toBe("");
 });
 
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// devices' socket, <dir>/server.sock. `./Server.ts <port>` on dir as it
+// is: whether it ended (its code, what it said) or answers on the socket
+async function server_sock(port: number, dir: string): Promise<{ code: number | null; err: string; answers: boolean }> {
+  const site = "http://127.0.0.1:" + port;
+  const proc = Bun.spawn([process.execPath, import.meta.dir + "/Server.ts", String(port)], {
+    env    : { ...process.env, UNII_DIR: dir, UNII_SITE: site },
+    stdout : "ignore",
+    stderr : "pipe",
+  });
+  let answers = false;
+  for (let k = 0; k < 100 && proc.exitCode === null && !answers; k++) {
+    const res = await fetch(site + "/api/hello", { unix: dir + "/server.sock" } as RequestInit).catch(() => null);
+    answers = res?.ok === true && "hello" in (await res.json().catch(() => ({})));
+    await Bun.sleep(50);
+  }
+  proc.kill();
+  const code = await proc.exited;
+  return { code: answers ? null : code, err: await new Response(proc.stderr).text(), answers };
+}
+
+test("the server takes a stale socket of this user (nothing answers), its dir made 0700", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-sock-");
+  const sock = dir + "/server.sock";
+  // a socket a killed process left
+  const left = Bun.spawn([process.execPath, "-e", `Bun.listen({ unix: ${JSON.stringify(sock)}, socket: { data() {} } }); setInterval(() => {}, 1000)`]);
+  for (let k = 0; k < 100 && !fs.existsSync(sock); k++) await Bun.sleep(20);
+  left.kill("SIGKILL");
+  await left.exited;
+  expect(fs.lstatSync(sock).isSocket()).toBe(true);
+  fs.chmodSync(dir, 0o755);
+  const out = await server_sock(9491, dir);
+  expect(out.answers).toBe(true);
+  expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+}, 15_000);
+
+test("the server refuses a server.sock that is not a socket, or one something answers on", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-sock-");
+  const sock = dir + "/server.sock";
+  fs.writeFileSync(sock, "not a socket");
+  const file = await server_sock(9492, dir);
+  expect(file.answers).toBe(false);
+  expect(file.code).not.toBe(0);
+  expect(file.err).toContain("server.sock");
+  expect(fs.readFileSync(sock, "utf8")).toBe("not a socket");
+  fs.rmSync(sock);
+  fs.symlinkSync(dir + "/elsewhere", sock);
+  const link = await server_sock(9493, dir);
+  expect(link.answers).toBe(false);
+  expect(fs.lstatSync(sock).isSymbolicLink()).toBe(true);
+  fs.rmSync(sock);
+  const live = Bun.serve({ unix: sock, fetch: () => new Response("another") });
+  try {
+    const held = await server_sock(9494, dir);
+    expect(held.answers).toBe(false);
+    expect(held.err).toContain("server.sock");
+    expect(await (await fetch("http://x/", { unix: sock } as RequestInit)).text()).toBe("another");
+  } finally {
+    live.stop(true);
+  }
+}, 30_000);
+
 // a server says whether it bills (Billing.ts): this one doesn't, so it
 // serves no prices or terms
 test("a free server bills nothing: it says so, and shows no prices or terms", async () => {
