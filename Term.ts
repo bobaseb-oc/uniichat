@@ -29,6 +29,7 @@ import { Machine } from "./Machine.ts";
 import * as Notify from "./Notify.ts";
 import * as Paint from "./Paint.ts";
 import { type Move, Pick } from "./Pick.ts";
+import { Proof } from "./Proof.ts";
 import * as Screen from "./Screen.ts";
 import * as View from "./View.ts";
 
@@ -80,7 +81,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.143";
+const VERSION = "1.0.144";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -98,6 +99,10 @@ const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
 const OURS   = "http://127.0.0.1:8788";
 const SERVER = (ARGS.find((a) => WEB.test(a)) ?? process.env.UNII_URL ?? OURS).replace(/\/$/, "");
 const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
+// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) H1:
+// where the install's key is (Proof.ts): the server's own dir, as
+// Config.DIR reads it ($UNII_DIR, default ~/.unii)
+const KEYS   = (process.env.UNII_DIR ?? "~/.unii").replace(/^~(?=\/|$)/, os.homedir());
 
 // this build talks to a server on this computer only (upstream's may be
 // any, by default the hosted one): a job it is sent runs here
@@ -292,14 +297,9 @@ function term_device(): string {
   return "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
 }
 
+// (RED ZONE H1: only to a proven server, Device.device_link)
 function term_connect(t: Term): void {
-  const dev = term_device();
-  View.link_open(t.v, {
-    open : (query) => new WebSocket(t.url.replace(/^http/, "ws") + "/ws" + query + dev, { headers: term_auth() } as any),
-    post : (path, body) => fetch(t.url + path, { method: "POST", headers: term_auth(), body }),
-    hear : (msg) => term_hear(t, msg),
-    lost : (up) => term_lost(t, up),
-  });
+  Device.device_link(t.v, t.url, term_auth, term_device(), term_prove(t.url), (line) => term_note(t, "Legion: " + line + "."), (msg) => term_hear(t, msg), (up) => term_lost(t, up));
 }
 
 // a socket lost (up: it had opened): the footer says offline; one that
@@ -887,8 +887,9 @@ async function term_logout(t: Term): Promise<void> {
 }
 
 // a GET of the server; failing, a note says it could not do `what`
+// (RED ZONE H1: only from a proven server, term_prove)
 async function term_get(t: Term, path: string, what: string): Promise<Response | null> {
-  const res = await fetch(t.url + path, { headers: term_auth() }).catch(() => null);
+  const res = await term_prove(t.url)() ? await fetch(t.url + path, { headers: term_auth() }).catch(() => null) : null;
   if (res === null || !res.ok) {
     term_note(t, "Could not " + what + ": " + (res === null ? "no connection" : "HTTP " + res.status) + ".");
     return null;
@@ -896,8 +897,12 @@ async function term_get(t: Term, path: string, what: string): Promise<Response |
   return res;
 }
 
-// a JSON POST to the server (View.post)
-function term_post(t: Term, path: string, body: object): Promise<any> {
+// a JSON POST to the server (View.post), only to a proven one (RED ZONE
+// H1, term_prove)
+async function term_post(t: Term, path: string, body: object): Promise<any> {
+  if (!await term_prove(t.url)()) {
+    return { error: "The server is not proven (not this install's?): nothing sent.", ok: false, status: 0 };
+  }
   return View.post(t.url + path, body, term_auth());
 }
 
@@ -1189,6 +1194,11 @@ function term_bg(t: Term): void {
 // A server that says nothing of itself (/api/hello) bills, as one of
 // before it did
 async function login_run(url: string): Promise<void> {
+  // RED ZONE H1: the new session's key, and the link it opens, from a
+  // proven server only
+  if (!await term_prove(url)()) {
+    login_fail("no proven server at " + url + " (none up, or not this install's): start it with legion");
+  }
   const hello = await fetch(url + "/api/hello").then((res) => res.json()).catch(() => ({}));
   const { bills = true, github = true } = hello;
   if (bills) {
@@ -1279,18 +1289,37 @@ function term_auth(): Record<string, string> {
   return { authorization: "Bearer " + fs.readFileSync(TOKEN, "utf8").trim() };
 }
 
+// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) H1:
+// whether the server at url holds the install's key (Proof.ts), asked
+// anew at each call; no key, an error, no server: not (fail closed)
+function term_prove(url: string): Device.Prove {
+  return async () => {
+    try {
+      return await Proof.check(url, Proof.key(KEYS));
+    } catch {
+      return false;
+    }
+  };
+}
+
 // whether this terminal is signed in: it holds a session the server
-// doesn't refuse (one it can't reach may: the chat waits for it)
+// doesn't refuse (one it can't reach may: the chat waits for it). The
+// session goes only to a proven server (RED ZONE H1); an unproven one
+// can't tell, as one not reached (the link waits for a proven one)
 async function term_signed(url: string): Promise<boolean> {
   if (!fs.existsSync(TOKEN)) {
     return false;
+  }
+  if (!await term_prove(url)()) {
+    return true;
   }
   const res = await fetch(url + "/api/me", { headers: term_auth() }).catch(() => null);
   return res === null || res.status !== 401;
 }
 
 // `legion device`: this computer runs the server's jobs with no screen
-// (Device.ts), signed in as this terminal is; signed out, it stops
+// (Device.ts), signed in as this terminal is, to a proven server only
+// (RED ZONE H1, Device.device_link); signed out, it stops
 async function device_run(url: string): Promise<void> {
   if (!await term_signed(url)) {
     login_fail("sign in first: legion login");
@@ -1302,13 +1331,16 @@ async function device_run(url: string): Promise<void> {
     console.error("legion device: offline, trying again");
     return true;
   };
-  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("legion device: " + line), lost);
+  Device.device_open(url, term_auth(), term_device(), RULES, term_prove(url), (line) => console.error("legion device: " + line), lost);
   console.log("legion device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
 }
 
 // `legion web`: a one-use link (a minute) that signs a browser in as this
 // terminal, printed and opened (`open` may be refused, e.g. in a sandbox)
 async function web_run(url: string): Promise<void> {
+  if (!await term_prove(url)()) {
+    login_fail("no proven server at " + url + " (none up, or not this install's): start it with legion");
+  }
   if (!await term_signed(url)) {
     await login_run(url);
   }

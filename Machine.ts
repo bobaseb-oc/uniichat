@@ -20,7 +20,7 @@ import { CAP, clip, clip_end } from "./Clip.ts";
 import { Computer } from "./Computer.ts";
 import { Google } from "./Google.ts";
 import { Harvest } from "./Harvest.ts";
-import { Hooks, type Source } from "./Hooks.ts";
+import { Hooks, type Call, type Source } from "./Hooks.ts";
 
 // Types
 // =====
@@ -51,6 +51,27 @@ const SHELL = process.env.SHELL ?? "/bin/sh";
 const RUN = crypto.randomUUID();
 const UID = String(process.getuid?.() ?? "");
 const PS  = process.platform === "darwin" ? ["ps", "-wwE", "-U", UID, "-o", "pid=,command="] : ["ps", "-wwe", "-u", UID, "-o", "pid=,args=", "e"];
+
+// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) M2:
+// what of this unii's environment a job gets: these
+// names only, never a secret (LiteLLM's key, the vendors', a token); a
+// claude worker the gateway's address too (its key is Claude Code's own,
+// by its apiKeyHelper, never this environment's)
+export const ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LC_[A-Z_]+|TERM|TMPDIR|TZ|SSH_AUTH_SOCK|UNII_RUN)$/;
+const CLAUDE_ENV = /^ANTHROPIC_BASE_URL$/;
+
+// M4 (security review): a file that may hold a secret, by its name (a key,
+// credentials, a token, .env, a service account's JSON) or where it is
+// (~/.ssh, ~/.aws, ~/.gnupg, a repo's .git/config...): read, grep and
+// glob refuse it (Machine.secret), and Device's files pane
+export const SECRET = /^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|\.netrc|\.npmrc|\.pypirc|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|server-key|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$/i;
+const SECRET_AT = /(^|\/)(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains)(\/|$)|\/\.git\/config$/;
+
+// RED ZONE (security review SB, DRAFT awaiting the user's sign-off) M3:
+// a settings file that gates the hooks (Hooks.ts):
+// any .claude/settings*.json (a project's too); write and edit refuse
+// these and all of ~/.claude (Machine.gating)
+const GATING = /(^|\/)\.claude\/settings[^/]*\.json$/;
 
 // the shells started here, kept until their process groups are empty, so
 // end() kills a backgrounded job whose shell already exited
@@ -150,6 +171,10 @@ export namespace Machine {
     try {
       fs.mkdirSync(cwd, { recursive: true });
       const calls = Hooks.calls(job, cwd);
+      const why   = calls.map(Machine.guard).find((w) => w !== null);
+      if (why) {
+        return { text: why, fail: true };
+      }
       if (calls.length === 0) {
         return await tool(job, cwd, file, signal, away);
       }
@@ -167,6 +192,52 @@ export namespace Machine {
     } catch (err: any) {
       return { text: String(err?.message ?? err), fail: true };
     }
+  }
+
+  // why a call is refused before any hook (security review M3, M4): a
+  // write or edit of what gates the hooks; a read, grep or glob of a
+  // secret's path. null: on to the hooks
+  export function guard(c: Call): string | null {
+    const p = String(c.input.file_path ?? c.input.path ?? "");
+    if ((c.tool === "Write" || c.tool === "Edit") && Machine.gating(p)) {
+      return "Refused: " + p + " gates Claude Code's hooks (its settings, ~/.claude): the user changes it, not an agent.";
+    }
+    if ((c.tool === "Read" || c.tool === "Grep" || c.tool === "Glob") && Machine.secret(p)) {
+      return "Refused: " + p + " may hold a secret: not read.";
+    }
+    return null;
+  }
+
+  // a path's real path: its symlinks followed as far as it exists
+  export function real(p: string): string {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      const up = path.dirname(p);
+      return up === p ? p : path.join(Machine.real(up), path.basename(p));
+    }
+  }
+
+  // whether a file may hold a secret (SECRET, SECRET_AT), by its path or
+  // its real one
+  export function secret(p: string): boolean {
+    const at = path.resolve(p);
+    return [at, Machine.real(at)].some((q) => SECRET.test(path.basename(q)) || SECRET_AT.test(q));
+  }
+
+  // whether a file gates the hooks (GATING, ~/.claude), by its path or its
+  // real one
+  export function gating(p: string): boolean {
+    const at = path.resolve(p);
+    const homes = [os.homedir() + "/.claude", Machine.real(os.homedir() + "/.claude")];
+    return [at, Machine.real(at)].some((q) => GATING.test(q) || homes.some((h) => q === h || q.startsWith(h + "/")));
+  }
+
+  // this unii's environment for a job (ENV; also: a worker's more), marked
+  // UNII_RUN
+  function job_env(also?: RegExp): Record<string, string> {
+    const kept = Object.entries(process.env).filter(([k, v]) => v !== undefined && (ENV.test(k) || also?.test(k) === true));
+    return { ...Object.fromEntries(kept) as Record<string, string>, UNII_RUN: RUN };
   }
 
   // runs a job's tool, ungated
@@ -220,7 +291,7 @@ export namespace Machine {
   // children); its stream-json events read into transcript lines, its
   // result last (Machine.claude_out)
   export async function claude(cwd: string, task: string, signal: AbortSignal): Promise<Out> {
-    const proc = Bun.spawn(["claude", "-p", task, ...CLAUDE], { cwd, env: { ...process.env, UNII_RUN: RUN }, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    const proc = Bun.spawn(["claude", "-p", task, ...CLAUDE], { cwd, env: job_env(CLAUDE_ENV), stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
     SHELLS.add(proc);
     const kill = () => Machine.kill(-proc.pid);
     signal.addEventListener("abort", kill, { once: true });
@@ -305,7 +376,7 @@ export namespace Machine {
     const start = performance.now();
     const proc = Bun.spawn([SHELL, "-c", "exec 2>&1\n" + command], {
       cwd      : cwd,
-      env      : { ...process.env, UNII_RUN: RUN },
+      env      : job_env(),
       stdin    : "ignore",
       stdout   : "pipe",
       stderr   : "ignore",
@@ -517,8 +588,11 @@ export namespace Machine {
     if (!dir && mode !== "files") {
       args.push("--with-filename");
     }
+    // a line's file told apart from its text (M4: a secret's left out)
+    args.push("--field-match-separator", "\x01", "--field-context-separator", "\x02");
     args.push("-e", pattern, "--", dir ? "." : path.basename(target));
-    const proc = Bun.spawn(args, { cwd: dir ? target : path.dirname(target), stdout: "pipe", stderr: "pipe" });
+    const base = dir ? target : path.dirname(target);
+    const proc = Bun.spawn(args, { cwd: base, stdout: "pipe", stderr: "pipe" });
     const stop = () => proc.kill();
     signal.addEventListener("abort", stop, { once: true });
     const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
@@ -526,7 +600,9 @@ export namespace Machine {
     if (code > 1) {
       return err.trim() || "ripgrep failed (exit " + code + ").";
     }
-    return out.split("\n").filter((l: string) => l !== "").map((l: string) => l.replace(/^\.\//, ""));
+    const file = (l: string) => (mode === "count" ? l.slice(0, l.lastIndexOf(":")) : l.split(/[\x01\x02]/)[0]);
+    return out.split("\n").filter((l: string) => l !== "" && (l === "--" || !Machine.secret(path.join(base, file(l)))))
+      .map((l: string) => l.replace(/^\.\//, "").replace(/\x01/g, ":").replace(/\x02/g, "-"));
   }
 
   // the same search, walking the files: hidden ones, node_modules and
@@ -542,7 +618,7 @@ export namespace Machine {
     const base = dir ? target : path.dirname(target);
     const named = input.glob === undefined ? null : new Bun.Glob(String(input.glob));
     const files = (dir ? [...new Bun.Glob("**/*").scanSync({ cwd: target, onlyFiles: true, dot: false })] : [path.basename(target)])
-      .filter((f) => !f.split("/").includes("node_modules") && (named === null || named.match(path.basename(f)) || named.match(f)))
+      .filter((f) => !f.split("/").includes("node_modules") && (named === null || named.match(path.basename(f)) || named.match(f)) && !Machine.secret(path.join(base, f)))
       .sort();
     const out: string[] = [];
     for (const f of files) {
