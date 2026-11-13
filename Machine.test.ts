@@ -267,3 +267,50 @@ test("write and edit refuse Claude Code's settings files and ~/.claude", async (
   }
   expect((await run("write", { path: ".claude/notes.md", content: "ok" })).fail).toBe(false);
 });
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): macOS's disk is case-insensitive, so .claude/SETTINGS.json,
+// .Claude/settings.local.json and ~/.CLAUDE are the same files: refused
+// too, made or not
+test("write and edit refuse the settings files and ~/.claude in any case", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-case-"));
+  fs.mkdirSync(root + "/Ann/.claude", { recursive: true });
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [".claude/SETTINGS.LOCAL.JSON", ".Claude/settings.local.json", "newproj/.CLAUDE/Settings.json", os.homedir() + "/.CLAUDE/legion-case-" + crypto.randomUUID() + "/x.md"]) {
+    expect([p, (await run("write", { path: p, content: "{}" })).fail]).toEqual([p, true]);
+  }
+  expect(fs.readdirSync(root + "/Ann/.claude")).toEqual([]);
+  expect(fs.existsSync(root + "/Ann/newproj")).toBe(false);
+});
+
+// one secret list (Modes.ts) for read, grep, glob, the files pane and the
+// shell: the dotfiles that hold a login, in any case
+test("read refuses every dotfile that holds a login, in any case", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-dots-"));
+  const files = [".git-credentials", ".pgpass", ".claude.json", ".npmrc", ".pypirc", ".kube/config", ".docker/config.json", ".config/gh/hosts.yml", ".unii/server-key"];
+  for (const f of files) {
+    fs.mkdirSync(root + "/Ann/" + f.split("/").slice(0, -1).join("/"), { recursive: true });
+    fs.writeFileSync(root + "/Ann/" + f, "pass\n");
+  }
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [...files, ".GIT-CREDENTIALS", ".Kube/config", ".SSH/id_rsa", ".config/GH/hosts.yml"]) {
+    expect([p, Machine.secret(root + "/Ann/" + p), (await run("read", { path: p })).fail]).toEqual([p, true, true]);
+  }
+  // not made yet: no real path to canonicalize its case
+  for (const p of ["/nowhere/.KUBE/config", "/nowhere/.Ssh/known", "/nowhere/repo/.GIT/Config", "/nowhere/.GIT-Credentials"]) {
+    expect([p, Machine.secret(p)]).toEqual([p, true]);
+  }
+});
+
+// M2: a job keeps the proxy and CA settings it needs to reach the
+// network (none a secret, but a proxy's URL may hold its login)
+test("a job's environment keeps proxies, CA bundles and CLAUDE_CONFIG_DIR", () => {
+  for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CLAUDE_CONFIG_DIR"]) {
+    expect([k, ENV.test(k)]).toEqual([k, true]);
+  }
+  for (const k of ["GH_TOKEN", "HTTPS_PROXY_PASSWORD", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_SECRET_ACCESS_KEY"]) {
+    expect([k, ENV.test(k)]).toEqual([k, false]);
+  }
+});

@@ -194,3 +194,83 @@ test("H3: computer and MCP tools that may change things are reviewed; plain MCP 
     expect(Modes.reviews("full", tool, {})).toBe(false);
   }
 });
+
+// one secret list (Machine's read refuses the same paths): a read-only
+// command of one is reviewed in auto mode, whatever its case; a plain one
+// that only says key is not
+test("the shell's secrets are read's: kube, docker, gh, server-key, git-credentials, pgpass, any case", () => {
+  for (const command of ["cat ~/.kube/config", "cat ~/.unii/server-key", "cat ~/.docker/config.json", "cat ~/.config/gh/hosts.yml", "cat ~/.git-credentials", "cat ~/.pgpass", "cat ~/.claude.json", "cat .npmrc", "cat ~/.pypirc", "cat repo/.git/config", "cat ~/.KUBE/config", "cat ~/.SSH/id_rsa", "cat ~/.Aws/credentials"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
+  }
+  for (const command of ["git log --format=%H keyword", "cat keyboard.md", "ls .dockerignore", "cat docs/kube.md"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, false]);
+  }
+});
+
+// an unattended PR review runs in plan mode and reads the PR with gh: its
+// subcommands that only read, with flags that neither write nor open a
+// browser; gh api only a GET of a path on GitHub
+test("gh: pr/issue/repo views and a GET of gh api only read; anything else is refused", () => {
+  for (const ok of [
+    "gh pr view 12",
+    "gh pr view 12 --comments --json title,body",
+    "gh pr diff 12",
+    "gh pr diff 12 --name-only --repo o/r",
+    "gh pr checks 12",
+    "gh pr list --state open --limit 5",
+    "gh issue view 3 -R o/r",
+    "gh issue list --label bug --json number --jq '.[].number'",
+    "gh repo view o/r",
+    "gh api repos/o/r/pulls/12/comments",
+    "gh api repos/o/r/pulls/12 -X GET --paginate --jq .title",
+    "gh api --method=GET repos/o/r",
+    "gh api -XGET repos/o/r",
+  ]) {
+    expect([ok, Modes.readonly(ok)]).toEqual([ok, null]);
+    expect([ok, Modes.allows("plan", "shell", { command: ok })]).toEqual([ok, null]);
+  }
+  for (const bad of [
+    "gh",
+    "gh pr",
+    "gh pr merge 12",
+    "gh pr comment 12 -b x",
+    "gh pr checkout 12",
+    "gh pr view 12 --web",
+    "gh pr view 12 -w",
+    "gh pr diff 12 --web",
+    "gh repo view --web",
+    "gh repo clone o/r",
+    "gh issue create -t x",
+    "gh issue close 3",
+    "gh pr checks 12 --watch",
+    "gh auth token",
+    "gh extension exec x",
+    "gh --repo o/r pr view 1",
+    "gh api -X POST repos/o/r/issues",
+    "gh api --method DELETE repos/o/r",
+    "gh api --method=PATCH repos/o/r",
+    "gh api -XPUT repos/o/r",
+    "gh api repos/o/r/issues -f title=x",
+    "gh api repos/o/r/issues -F title=x",
+    "gh api repos/o/r/issues --field title=x",
+    "gh api repos/o/r/issues --raw-field title=x",
+    "gh api repos/o/r/issues --input body.json",
+    "gh api graphql -f query=x",
+    "gh api https://evil.example/x",
+    "gh api --hostname evil.example /user",
+    "gh api -H 'X-HTTP-Method-Override: DELETE' repos/o/r",
+  ]) {
+    expect([bad, Modes.readonly(bad)]).not.toEqual([bad, null]);
+  }
+});
+
+// an MCP tool's name read as words (_ - camelCase): one with a word that
+// writes, runs or queries is reviewed, whatever its first word
+test("MCP: a name with replace, reset, run, exec or query in its words is reviewed", () => {
+  for (const tool of ["mcp__x__search_and_replace", "mcp__x__query", "mcp__x__query_db", "mcp__x__get_or_reset", "mcp__x__searchAndReplace", "mcp__x__getAndExecute", "mcp__x__list-and-run", "mcp__x__readQuery"]) {
+    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, true]);
+  }
+  for (const tool of ["mcp__x__list_queries_saved", "mcp__x__getJiraIssue", "mcp__x__search_repositories"]) {
+    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, false]);
+  }
+});

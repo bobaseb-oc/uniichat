@@ -175,3 +175,29 @@ test.skipIf(!fs.existsSync(GUARD))("the installed OnCorps guard refuses a critic
   expect(bad.deny).toContain("OnCorps guard");
   expect((await Hooks.pre(src, "Bash", { command: "ls" }, DIR, "A", live())).deny).toBeNull();
 });
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): Claude Code reads the user's settings from $CLAUDE_CONFIG_DIR
+// when it is set (else ~/.claude): so does Hooks.sources, and write and
+// edit refuse all of it, by its path or real one, in any case
+test("the user's settings come from $CLAUDE_CONFIG_DIR, and write and edit refuse it", async () => {
+  const was = process.env.CLAUDE_CONFIG_DIR;
+  const conf = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-conf-"));
+  fs.symlinkSync(conf, DIR + "/conflink");
+  const repo = fs.mkdtempSync(DIR + "/cproj-");
+  try {
+    process.env.CLAUDE_CONFIG_DIR = DIR + "/conflink";
+    expect(Hooks.sources(repo).filter((s) => s.project !== true && !s.managed).map((s) => s.file)).toEqual([DIR + "/conflink/settings.json"]);
+    for (const p of [conf + "/settings.json", conf.toUpperCase() + "/hooks/x.sh", DIR + "/conflink/agents/x.md", os.homedir() + "/.claude/x.md"]) {
+      expect([p, Machine.gating(p)]).toEqual([p, true]);
+    }
+    const run = await Machine.run({ name: "write", input: { path: conf + "/Settings.json", content: "{}" }, cwd: "C" }, DIR, live(), undefined, undefined, []);
+    expect(run.fail).toBe(true);
+    expect(fs.readdirSync(conf)).toEqual([]);
+    expect(Machine.gating(repo + "/notes.md")).toBe(false);
+    process.env.CLAUDE_CONFIG_DIR = "";
+    expect(Hooks.sources(repo).filter((s) => s.project !== true && !s.managed).map((s) => s.file)).toEqual([os.homedir() + "/.claude/settings.json"]);
+  } finally {
+    was === undefined ? delete process.env.CLAUDE_CONFIG_DIR : (process.env.CLAUDE_CONFIG_DIR = was);
+  }
+});

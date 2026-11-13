@@ -75,10 +75,19 @@ export namespace Hooks {
     return [
       { file: MANAGED + "/managed-settings.json", managed: true },
       ...drops,
-      { file: os.homedir() + "/.claude/settings.json", managed: false },
+      { file: Hooks.home() + "/settings.json", managed: false },
       { file: project + "/.claude/settings.json", managed: false, project: true },
       { file: project + "/.claude/settings.local.json", managed: false, project: true },
     ];
+  }
+
+  // RED ZONE (security review follow-up, DRAFT awaiting the user's
+  // sign-off): the user's Claude Code dir, as Claude Code finds it:
+  // $CLAUDE_CONFIG_DIR when set, else ~/.claude (Machine.gating refuses
+  // writes to both)
+  export function home(): string {
+    const dir = process.env.CLAUDE_CONFIG_DIR;
+    return dir ? path.resolve(dir) : os.homedir() + "/.claude";
   }
 
   // the project of a dir: the nearest one up holding .git, else the dir

@@ -21,6 +21,7 @@ import { Computer } from "./Computer.ts";
 import { Google } from "./Google.ts";
 import { Harvest } from "./Harvest.ts";
 import { Hooks, type Call, type Source } from "./Hooks.ts";
+import { SECRET, SECRET_AT } from "./Modes.ts";
 
 // Types
 // =====
@@ -56,21 +57,18 @@ const PS  = process.platform === "darwin" ? ["ps", "-wwE", "-U", UID, "-o", "pid
 // what of this unii's environment a job gets: these
 // names only, never a secret (LiteLLM's key, the vendors', a token); a
 // claude worker the gateway's address too (its key is Claude Code's own,
-// by its apiKeyHelper, never this environment's)
-export const ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LC_[A-Z_]+|TERM|TMPDIR|TZ|SSH_AUTH_SOCK|UNII_RUN)$/;
+// by its apiKeyHelper, never this environment's); the proxies and CA
+// bundles to reach the network, and Claude Code's config dir (a proxy's
+// URL may hold its login: kept, as the job needs it to get out)
+export const ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LC_[A-Z_]+|TERM|TMPDIR|TZ|SSH_AUTH_SOCK|UNII_RUN|(HTTPS?|NO|ALL)_PROXY|(https?|no|all)_proxy|NODE_EXTRA_CA_CERTS|SSL_CERT_(FILE|DIR)|REQUESTS_CA_BUNDLE|CLAUDE_CONFIG_DIR)$/;
 const CLAUDE_ENV = /^ANTHROPIC_BASE_URL$/;
-
-// M4 (security review): a file that may hold a secret, by its name (a key,
-// credentials, a token, .env, a service account's JSON) or where it is
-// (~/.ssh, ~/.aws, ~/.gnupg, a repo's .git/config...): read, grep and
-// glob refuse it (Machine.secret), and Device's files pane
-export const SECRET = /^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|\.netrc|\.npmrc|\.pypirc|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|server-key|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$/i;
-const SECRET_AT = /(^|\/)(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains)(\/|$)|\/\.git\/config$/;
 
 // RED ZONE (security review SB, DRAFT awaiting the user's sign-off) M3:
 // a settings file that gates the hooks (Hooks.ts):
 // any .claude/settings*.json (a project's too); write and edit refuse
-// these and all of ~/.claude (Machine.gating)
+// these and all of ~/.claude (Machine.gating), in any case (paths are
+// lowercased first): macOS's disk is case-insensitive, so
+// .Claude/SETTINGS.json is the same file
 const GATING = /(^|\/)\.claude\/settings[^/]*\.json$/;
 
 // the shells started here, kept until their process groups are empty, so
@@ -218,19 +216,19 @@ export namespace Machine {
     }
   }
 
-  // whether a file may hold a secret (SECRET, SECRET_AT), by its path or
+  // whether a file may hold a secret (Modes.ts SECRET, SECRET_AT), by its path or
   // its real one
   export function secret(p: string): boolean {
     const at = path.resolve(p);
     return [at, Machine.real(at)].some((q) => SECRET.test(path.basename(q)) || SECRET_AT.test(q));
   }
 
-  // whether a file gates the hooks (GATING, ~/.claude), by its path or its
-  // real one
+  // whether a file gates the hooks (GATING, ~/.claude, $CLAUDE_CONFIG_DIR:
+  // Hooks.home), by its path or its real one, in any case
   export function gating(p: string): boolean {
     const at = path.resolve(p);
-    const homes = [os.homedir() + "/.claude", Machine.real(os.homedir() + "/.claude")];
-    return [at, Machine.real(at)].some((q) => GATING.test(q) || homes.some((h) => q === h || q.startsWith(h + "/")));
+    const homes = [os.homedir() + "/.claude", Hooks.home()].flatMap((h) => [h, Machine.real(h)]).map((h) => h.toLowerCase());
+    return [at, Machine.real(at)].map((q) => q.toLowerCase()).some((q) => GATING.test(q) || homes.some((h) => q === h || q.startsWith(h + "/")));
   }
 
   // this unii's environment for a job (ENV; also: a worker's more), marked

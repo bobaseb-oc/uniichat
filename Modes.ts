@@ -41,12 +41,26 @@ const READS = ["read", "glob", "grep", "google", "harvest"];
 const REVIEWED = ["shell", "write", "edit", "computer"];
 
 // an MCP tool auto mode lets by unreviewed: its name (after its server's)
-// plainly only reads, and says nothing of a change (nor is cut with a hash)
-const MCP_READS = /^(get|list|search|read|find|query|lookup|describe|view|show)([_A-Z-]|$)/;
+// plainly only reads, and says nothing of a change (nor is cut with a
+// hash), nor has a word (_ - camelCase) that writes, runs or queries
+const MCP_READS = /^(get|list|search|read|find|lookup|describe|view|show)([_A-Z-]|$)/;
 const MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
+const MCP_WORDS = new Set(["replace", "reset", "run", "exec", "execute", "query"]);
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): the one list of where a secret may be, in any case (macOS's
+// disk is case-insensitive). A file's name (a key, credentials, a token,
+// .env, a login's dotfile, a service account's JSON), a dir it is in
+// (~/.ssh, ~/.aws, ~/.kube...) or a repo's .git/config: Machine's read,
+// grep and glob refuse them (Machine.secret), so does Device's files pane
+const DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json|server-key`;
+const DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
+export const SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
+export const SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
 
 // a read-only command that may read secrets: still reviewed in auto mode
-const SECRETS = /printenv|environ|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+// (the list above, in the line or its words; not a bare key: too common)
+const SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\bset\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
 
 // commands that only read, whatever their arguments
 // (not env, which runs its arguments; nor tree -o, uniq's output file,
@@ -59,6 +73,13 @@ const GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls
 // git branch/tag flags that write: long ones, and short ones' letters
 const GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
 const GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
+
+// gh's subcommands that only read (an unattended PR review reads its PR
+// with them), the flags they may take (none opens a browser or waits),
+// and gh api's: a GET of a path on GitHub, no field (that makes it a POST)
+const GH: Record<string, string[]> = { pr: ["view", "diff", "checks", "list"], issue: ["view", "list"], repo: ["view"] };
+const GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m"]);
+const GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
 
 // find's actions that write or run
 const FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
@@ -101,7 +122,8 @@ export namespace Modes {
     }
     if (tool.startsWith("mcp__")) {
       const own = tool.split("__").slice(2).join("__");
-      return !MCP_READS.test(own) || MCP_WRITES.test(own);
+      const words = own.split(/[_-]|(?<=[a-z0-9])(?=[A-Z])/).map((w) => w.toLowerCase());
+      return !MCP_READS.test(own) || MCP_WRITES.test(own) || words.some((w) => MCP_WORDS.has(w));
     }
     if (!REVIEWED.includes(tool)) {
       return false;
@@ -238,6 +260,26 @@ export namespace Modes {
     return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
   }
 
+  // why a gh command is not read-only (GH, GH_FLAGS, GH_API); null: it is
+  function gh(args: string[]): string | null {
+    const [group = "", sub = "", ...rest] = args;
+    if (group === "api") {
+      for (let k = 1; k < args.length; k++) {
+        const a = args[k]!;
+        const method = a === "-X" || a === "--method" ? args[++k] : /^(-X|--method=)(.*)$/.exec(a)?.[2];
+        if (method !== undefined ? method.toUpperCase() !== "GET" : a.startsWith("-") ? !GH_API.has(a.split("=")[0]!) : a.includes("://")) {
+          return "gh api other than a GET of a path on GitHub (" + a + ")";
+        }
+      }
+      return null;
+    }
+    if (!GH[group]?.includes(sub)) {
+      return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
+    }
+    const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]!));
+    return bad === undefined ? null : "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+  }
+
   // why one command is not read-only; null: it is
   function check(words: string[]): string | null {
     const [cmd, ...args] = words as [string, ...string[]];
@@ -289,6 +331,9 @@ export namespace Modes {
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
+      }
+      case "gh": {
+        return gh(args);
       }
       default: {
         return cmd + " is not on plan mode's read-only list";
