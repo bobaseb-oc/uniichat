@@ -54,6 +54,18 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ESC[c]!);
 const WORD = /[A-Za-z_$][\w$]*/y;
 const NUM = /\d[\w.]*/y;
 
+// where a string opened at i by quote ends: past its closing quote, else
+// at its line's end (a quote not in long) or the text's; a backslash
+// escapes the next character, but not in shell's '…'
+function quote_end(text: string, i: number, quote: string, lang: Lang): number {
+  const escapes = !(lang === SH && quote === "'");
+  let j = i + quote.length;
+  while (j < text.length && !text.startsWith(quote, j) && (lang.long.includes(quote) || text[j] !== "\n")) {
+    j += escapes && text[j] === "\\" ? 2 : 1;
+  }
+  return Math.min(text.length, text.startsWith(quote, j) ? j + quote.length : j);
+}
+
 // the text's lines, colored and escaped
 export function hl_lines(text: string, lang: Lang): string[] {
   const out: string[] = [""];
@@ -83,13 +95,7 @@ export function hl_lines(text: string, lang: Lang): string[] {
       const end = text.indexOf("\n", i);
       take("c", end < 0 ? text.length : end);
     } else if (quote !== undefined) {
-      // a backslash escapes the next character, but not in shell's '…'
-      const escapes = !(lang === SH && quote === "'");
-      let j = i + quote.length;
-      while (j < text.length && !starts(j, quote) && (lang.long.includes(quote) || text[j] !== "\n")) {
-        j += escapes && text[j] === "\\" ? 2 : 1;
-      }
-      take("s", Math.min(text.length, starts(j, quote) ? j + quote.length : j));
+      take("s", quote_end(text, i, quote, lang));
     } else if (!inword(i) && (NUM.lastIndex = i, NUM.test(text))) {
       take("n", NUM.lastIndex);
     } else if (!inword(i) && (WORD.lastIndex = i, WORD.test(text))) {

@@ -2887,6 +2887,15 @@ var ESC2 = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 var esc2 = (s) => s.replace(/[&<>"]/g, (c) => ESC2[c]);
 var WORD = /[A-Za-z_$][\w$]*/y;
 var NUM = /\d[\w.]*/y;
+function quote_end(text, i, quote, lang) {
+  const escapes = !(lang === SH && quote === "'");
+  let j = i + quote.length;
+  while (j < text.length && !text.startsWith(quote, j) && (lang.long.includes(quote) || text[j] !== `
+`)) {
+    j += escapes && text[j] === "\\" ? 2 : 1;
+  }
+  return Math.min(text.length, text.startsWith(quote, j) ? j + quote.length : j);
+}
 function hl_lines(text, lang) {
   const out = [""];
   const put = (cls, s) => s.split(`
@@ -2917,13 +2926,7 @@ function hl_lines(text, lang) {
 `, i);
       take("c", end < 0 ? text.length : end);
     } else if (quote !== undefined) {
-      const escapes = !(lang === SH && quote === "'");
-      let j = i + quote.length;
-      while (j < text.length && !starts(j, quote) && (lang.long.includes(quote) || text[j] !== `
-`)) {
-        j += escapes && text[j] === "\\" ? 2 : 1;
-      }
-      take("s", Math.min(text.length, starts(j, quote) ? j + quote.length : j));
+      take("s", quote_end(text, i, quote, lang));
     } else if (!inword(i) && (NUM.lastIndex = i, NUM.test(text))) {
       take("n", NUM.lastIndex);
     } else if (!inword(i) && (WORD.lastIndex = i, WORD.test(text))) {
