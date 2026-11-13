@@ -118,7 +118,10 @@ export type Wire<S> = {
 // a request's most output tokens: the models' own cap (less, if a paid
 // one's credit pays for less: Bill)
 const MAX   = 128000;
-export const TRIES = 8;
+export const TRIES = 12;
+// the longest wait between tries, s (Claude Code's is about as long): a
+// flapping service is caught soon after it is back (user's report 2026-11-13)
+const WAIT = 30;
 
 // what a call the vendor never answered says
 const BUSY  = "the AI service is busy or unavailable right now";
@@ -277,8 +280,10 @@ export namespace Agent {
           asking = true;
         }
         const after = Number(res?.headers.get("retry-after") ?? "");
-        const wait = after > 0 ? after : 2 ** k;
-        run.on({ $: "Entry", kind: "mind", text: "The AI service is busy: asking again in " + wait + " s." });
+        const wait = Agent.backoff(k, after > 0 ? after : null);
+        if (Agent.tells(k)) {
+          run.on({ $: "Entry", kind: "mind", text: "The AI service is busy: asking again in " + wait + " s." });
+        }
         await Machine.nap(wait * 1000, signal);
       }
       return Agent.fail("stopped", []);
@@ -435,6 +440,17 @@ export namespace Agent {
       return Agent.fail("The AI gateway's spending limit is reached, so asking again will not help: ask its admin to raise it. (" + why.slice(0, 300) + ")", [], "fail");
     }
     return Agent.fail(why, [], Agent.passing(res) ? "busy" : "down");
+  }
+
+  // the wait before try k + 1, s: the service's retry-after, else 2^k,
+  // never over WAIT
+  export function backoff(k: number, after: number | null): number {
+    return Math.min(WAIT, after ?? 2 ** k);
+  }
+
+  // whether the user hears of try k's wait: not the first two (most pass)
+  export function tells(k: number): boolean {
+    return k >= 3;
   }
 
   export function passing(res: Response): boolean {

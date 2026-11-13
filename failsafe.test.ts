@@ -212,12 +212,12 @@ test("a request leads single flight only as it is sent", () => fast(async () => 
 }));
 
 test("a rate limit's retries say BUSY; the vendor's words go to the log", () => fast(async () => {
-  limited = 2;
+  limited = 3; // the first two retries are quiet (retry.test.ts); the third says BUSY
   const minds: string[] = [];
   const on = (ev: any) => ev.kind === "mind" && minds.push(ev.text);
   const turn = await AskAI.ask({ ...SHARE, blocks: [{ text: "hi", mark: true }] }, on).done;
   expect(turn.ok).toBe(true);
-  expect(minds).toEqual(["The AI service is busy: asking again in 1 s.", "The AI service is busy: asking again in 1 s."]);
+  expect(minds).toEqual(["The AI service is busy: asking again in 1 s."]);
   expect(logged).toEqual([SHARE.model + ": HTTP 429: " + LIMIT + ": its requests ask again", SHARE.model + ": none asks again"]);
 }));
 
