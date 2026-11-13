@@ -403,6 +403,26 @@ test("auto mode's reviewer sees the user's last 3 messages and refuses only clea
   }
 });
 
+// the files an agent touches (read, write, edit, glob/grep under a path),
+// newest first, none twice, at most FILES: the files pane lists them (K4)
+test("touched: an agent's files, newest first, once each, capped, in the crew", () => {
+  const tools = Tools.serve({ dir: "/nowhere" } as any, { change: () => {}, pick: () => null } as any);
+  const a = { name: "Owl", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set(a.name, a);
+  expect(Tools.crew(tools)[0].files).toBeUndefined();
+  Tools.touched(a, "read", { device: "mac", path: "src/a.ts" });
+  Tools.touched(a, "shell", { command: "cat x.ts" });
+  Tools.touched(a, "edit", { edits: [{ path: "src/b.ts" }, { path: "src/a.ts" }, { path: 7 }] });
+  Tools.touched(a, "grep", { pattern: "x" });
+  Tools.touched(a, "glob", { pattern: "*.ts", path: "lib" });
+  expect(Tools.crew(tools)[0].files).toEqual(["lib", "src/a.ts", "src/b.ts"]);
+  for (let k = 0; k < 60; k++) {
+    Tools.touched(a, "write", { path: "f" + k + ".md" });
+  }
+  expect(a.files).toHaveLength(40);
+  expect(a.files[0]).toBe("f59.md");
+});
+
 // an agent's cost so far, an estimate at list price (Price.ts) from each
 // of its requests' usage (Ask.used), in the crew as USD; a model with no
 // price adds nothing, never throws

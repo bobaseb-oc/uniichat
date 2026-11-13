@@ -326,6 +326,45 @@ test("a device's inbox is checked, kept and told every view; a view's fetch asks
   expect(out).toEqual({ web: true, ok: {}, bad: true, fetch: {}, kept, sent: [{ $: "inbox", inbox: kept }, { $: "fetch" }] });
 });
 
+// the files pane and git tab (K4): a view's look, checked, goes to the
+// devices with its act's id; a device's answer (only a device's, once per
+// id, shape checked) goes to the views; no device up: it says so
+const LOOK = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const sent = [];
+chat.socks.add({ send: (s) => sent.push(JSON.parse(s)), data: { watch: new Set() } });
+const none = await Chat.act(chat, "l0", { $: "look", what: { kind: "file", path: "a.ts" } }, "");
+chat.tools.devices.set("mac", { terms: new Set(["t1"]) });
+const bad = [
+  await Chat.act(chat, "l1", { $: "look", what: { kind: "rm", path: "a" } }, ""),
+  await Chat.act(chat, "l2", { $: "look", what: { kind: "file", path: "x".repeat(2000) } }, ""),
+  await Chat.act(chat, "l3", { $: "look", what: { kind: "git", repo: "/r", op: "log", rev: 5 } }, ""),
+].map((a) => "error" in a);
+const ok = await Chat.act(chat, "l4", { $: "look", what: { kind: "git", repo: "/r", op: "log", extra: 1 } }, "");
+const forged = await Chat.act(chat, "l5", { $: "looked", id: "l4", kind: "git", text: "fake" }, "");
+const shown = await Chat.act(chat, "l6", { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }, "mac");
+const twice = await Chat.act(chat, "l7", { $: "looked", id: "l4", kind: "git", text: "again" }, "mac");
+const unasked = await Chat.act(chat, "l8", { $: "looked", id: "zz", kind: "file", text: "x" }, "mac");
+console.log(JSON.stringify({ none: none.error ?? null, bad, ok, forged: "error" in forged, shown, twice: "error" in twice, unasked: "error" in unasked, sent: sent.filter((m) => m.$ === "look" || m.$ === "looked") }));
+process.exit(0);
+`;
+
+test("a view's look goes to the devices; a device's answer, once, to the views", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/look.ts", LOOK);
+  const proc = Bun.spawn([process.execPath, dir + "/look.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.none).toMatch(/legion device/);
+  expect(out).toMatchObject({
+    bad: [true, true, true], ok: {}, forged: true, shown: {}, twice: true, unasked: true,
+    sent: [{ $: "look", id: "l4", what: { kind: "git", repo: "/r", op: "log" } }, { $: "looked", id: "l4", kind: "git", path: "/r", op: "log", text: "abc first" }],
+  });
+});
+
 // PRs of the inbox reviewed or fixed (the cockpit's Review / Fix): a native
 // Legion worker each, labelled by its PR and repo, started by the user (its
 // report takes no turn); with claude, a manager told to run a Claude Code

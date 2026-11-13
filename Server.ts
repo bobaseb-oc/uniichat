@@ -49,7 +49,7 @@ import * as Inbox from "./Inbox.ts";
 import * as Routines from "./Routines.ts";
 import { Price } from "./Price.ts";
 import { MASTER, SEARCHES, Tools, type Agent, type Live, type Moved as Kit } from "./Tools.ts";
-import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Part, type Server as Out, type Wait } from "./View.ts";
+import { email_ask, FRAME, IMAGES, live_push, MOVE, PING, QUIT, SUMMARIES, TICK, TURN, WIRE, type Answer, type DeviceStatus, type Look, type Looked, type Part, type Server as Out, type Wait } from "./View.ts";
 import * as config from "./Config.ts";
 import hello_md from "./hello.md" with { type: "text" };
 import app_js from "./web/app.js" with { type: "file" };
@@ -133,6 +133,7 @@ type Chat = {
   rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
   tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
+  looks?: Set<string>; // the looks asked of the devices, not yet answered (Chat.look)
 };
 
 // a chat as it moves to another process (Chat.move): its user (an id:
@@ -1386,6 +1387,12 @@ export namespace Chat {
       case "transcript": {
         return Chat.transcript(chat, device, msg);
       }
+      case "look": {
+        return Chat.look(chat, id, msg.what);
+      }
+      case "looked": {
+        return Chat.looked(chat, device, msg);
+      }
       case "fetch": {
         if (Tools.opened(chat.tools).length === 0) {
           return { error: "No device is up to read the inbox: open a terminal (legion), or run legion device (legion device --install keeps one running)." };
@@ -1552,6 +1559,48 @@ export namespace Chat {
 
   // a device's inbox (Device.device_inbox), only a device's, checked
   // (Inbox.inbox_check: what a view is shown); kept, told every view
+  // the files pane and git tab (K4): a view's look, its shape checked, to
+  // the devices (each checks it against its own roots: Device.device_look)
+  // under the act's id; at most LOOKS waiting (the oldest let go)
+  export function look(chat: Chat, id: string, raw: any): Answer {
+    const str = (x: unknown) => typeof x === "string" && x.length > 0 && x.length <= LOOK_TEXT;
+    const what: Look | null =
+      raw?.kind === "file" && str(raw.path) && (raw.agent === undefined || str(raw.agent)) ? { kind: "file", path: raw.path, ...(raw.agent === undefined ? {} : { agent: raw.agent }) }
+      : raw?.kind === "git" && str(raw.repo) && str(raw.op) && (raw.rev === undefined || str(raw.rev)) ? { kind: "git", repo: raw.repo, op: raw.op, ...(raw.rev === undefined ? {} : { rev: raw.rev }) }
+      : null;
+    if (what === null) {
+      return { error: "Ask to see a file (path) or a repo's git (repo, op)." };
+    }
+    if (Tools.opened(chat.tools).length === 0) {
+      return { error: "No device is up to show it: open a terminal (legion), or run legion device." };
+    }
+    const looks = (chat.looks ??= new Set());
+    if (looks.size >= LOOKS) {
+      looks.delete(looks.values().next().value!);
+    }
+    looks.add(id);
+    Chat.all(chat, { $: "look", id, what });
+    return {};
+  }
+
+  // a device's answer to a look asked, once, its fields cut, to the views
+  export function looked(chat: Chat, device: string, msg: any): Answer {
+    const id = String(msg?.id ?? "");
+    if (device === "" || !chat.looks?.delete(id)) {
+      return { error: "No look " + id.slice(0, 40) + " waits for a device's answer." };
+    }
+    const s = (x: unknown, most: number) => (typeof x === "string" ? x.slice(0, most) : undefined);
+    const out: Looked = { $: "looked", id, kind: msg.kind === "git" ? "git" : "file" };
+    for (const [k, most] of [["path", LOOK_TEXT], ["op", 20], ["text", LOOK_SHOWN], ["error", 300]] as const) {
+      const v = s(msg[k], most);
+      if (v !== undefined) {
+        out[k] = v;
+      }
+    }
+    Chat.all(chat, out);
+    return {};
+  }
+
   export function inboxed(chat: Chat, device: string, raw: unknown): Answer {
     const inbox = device === "" ? "Only a device reports its inbox." : Inbox.inbox_check(raw);
     if (typeof inbox === "string") {
@@ -1623,7 +1672,12 @@ export namespace Chat {
 
   const SUMMARY = "Summarize this meeting transcript for its attendee: one sentence on what the meeting settled, then short sections (a heading each) of bullets with the decisions and the context behind them, then a 'Next steps' section of bullets with each owner's name in parentheses first. Plain Markdown, under 400 words. Only what the transcript says.";
   const SUMMARY_TEXT = 6000;
-  const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
+  // the files pane's looks (Chat.look): waiting at most, a path's length at
+// most, what a device's answer may show at most (Device.LOOK_BYTES)
+const LOOKS = 50;
+const LOOK_TEXT = 1000;
+const LOOK_SHOWN = 512 * 1024;
+const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
 
   export async function transcript(chat: Chat, device: string, msg: any): Promise<Answer> {
     const id = typeof msg.id === "string" ? msg.id : "";

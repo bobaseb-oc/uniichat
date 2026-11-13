@@ -425,6 +425,16 @@ function click(ev: MouseEvent): void {
     P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
     paint();
   }
+  // a path named in the chat (inline code) opens in the files pane (K4),
+  // from the agent in focus's own dir
+  const code = (ev.target as HTMLElement).closest<HTMLElement>("#log code");
+  const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : View.view_path(code.textContent ?? "");
+  if (named !== null) {
+    const agent = v.page?.name ?? null;
+    act({ $: "Look", what: { kind: "file", path: named, ...(agent === null ? {} : { agent }) } });
+    location.hash = "#files";
+    return;
+  }
   const el = (ev.target as HTMLElement).closest<HTMLElement>("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
   if (el === null || (sel !== null && !sel.isCollapsed && el.contains(sel.focusNode))) {
@@ -1206,7 +1216,7 @@ function crew_keys(ev: KeyboardEvent): void {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" } as Record<string, string>)[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files" } as Record<string, string>)[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -1240,6 +1250,10 @@ function page_bars(mode: View.Mode): boolean {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180e3).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), Pages.transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "files") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.files_html(v));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

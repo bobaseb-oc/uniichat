@@ -1217,7 +1217,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var PAGES = ["home", "inbox", "routines", "digest", "transcripts"];
+var PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1279,6 +1279,7 @@ function view_new() {
     inbox: null,
     themes: null,
     summaries: new Map,
+    looked: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1304,6 +1305,13 @@ function view_hear(v, msg) {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "looked": {
+      v.looked = msg;
+      return [];
+    }
+    case "look": {
       return [];
     }
     case "summary": {
@@ -1494,6 +1502,9 @@ function view_act(v, act) {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Look": {
+      return [{ $: "look", what: act.what }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1743,8 +1754,17 @@ function view_questions(v) {
 function view_notes(v) {
   return [...v.questions ?? []].filter((q) => q.fyi === true).sort((a, b) => a.id - b.id);
 }
+var PATH_EXT = /\.(ts|tsx|js|jsx|mjs|py|md|json|jsonl|sh|css|html|yml|yaml|toml|sql|go|rs|txt|ipynb|cfg|ini|lock|csv)$/i;
+function view_path(text) {
+  const p = text.trim().replace(/(:\d+){1,2}$/, "");
+  if (p.length === 0 || p.length > 500 || /\s|:\/\/|^-/.test(p)) {
+    return null;
+  }
+  const pathy = /^(~|\.{1,2})?\/?[\w.@+-]+(\/[\w.@+-]+)+\/?$/.test(p) || /^[\w.@+-]+$/.test(p);
+  return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
+}
 function view_route(hash) {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }
@@ -2533,6 +2553,7 @@ var PAGE_ITEMS = [
   { label: "Routines", hint: "page · g r", go: { href: "#routines" } },
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
   { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
+  { label: "Files", hint: "page · g f", go: { href: "#files" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
@@ -2743,6 +2764,43 @@ function transcripts_html(v, sel, reading) {
     body = `<h3>${esc(doc.title)}</h3><p class="meta">${esc(day(doc.at))}</p><div class="acts">${open2}</div>${what}`;
   }
   return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
+}
+function files_html(v) {
+  const looked = v.looked;
+  const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
+  const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
+    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
+    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+  }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
+  const repo = looked?.path ?? "@home";
+  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${shown_html(looked)}</div></div>`];
+}
+function shown_html(looked) {
+  if (looked === null) {
+    return `<p class="meta">Pick a file, or a git view.</p>`;
+  }
+  if (looked.error !== undefined) {
+    return `<p class="meta">${esc(looked.error)}</p>`;
+  }
+  const lines = (looked.text ?? "").replace(/\n$/, "").split(`
+`);
+  if (looked.kind === "file") {
+    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join(`
+`)}</pre>`;
+  }
+  const repo = looked.path ?? "@home";
+  const line = (l) => {
+    const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
+    if (sha !== undefined) {
+      return `<button class="sha"${act_html2({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc(sha)}</button>${esc(l.slice(sha.length))}`;
+    }
+    const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
+    return cls === "" ? esc(l) : `<span class="${cls}">${esc(l)}</span>`;
+  };
+  return `<pre class="code git">${lines.map(line).join(`
+`)}</pre>`;
 }
 
 // web/src/main.ts
@@ -3049,6 +3107,14 @@ function click(ev) {
   if (qs !== null) {
     P.qhide = qs.dataset.qs !== undefined ? !P.qhide : false;
     paint();
+  }
+  const code = ev.target.closest("#log code");
+  const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : view_path(code.textContent ?? "");
+  if (named !== null) {
+    const agent = v.page?.name ?? null;
+    act({ $: "Look", what: { kind: "file", path: named, ...agent === null ? {} : { agent } } });
+    location.hash = "#files";
+    return;
   }
   const el = ev.target.closest("[data-act], [data-copy], [data-go], [data-usd]");
   const sel = getSelection();
@@ -3674,7 +3740,7 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -3698,6 +3764,10 @@ function page_bars(mode) {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180000).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "files") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), files_html(v));
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

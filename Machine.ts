@@ -193,7 +193,7 @@ export namespace Machine {
         return await Computer.act(input, signal);
       }
       case "google": {
-        return { text: await Google.tool(await Google.token(Google.store()), input, new Date()) };
+        return { text: await Google.tool(await Google.token(Google.store()), input, new Date()), fail: false };
       }
       case "claude": {
         const dir = input.dir ? tilde(String(input.dir)) : cwd;

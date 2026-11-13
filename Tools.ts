@@ -82,6 +82,7 @@ export type Agent = {
   title?  : string;  // its goal, as the person sees it (Tools.label)
   repos?  : string[]; // the repos its work touches (Tools.label)
   todo?   : Todo[];  // its checklist, as it set it last (Tools.todo)
+  files?  : string[]; // the files it touched, newest first (Tools.touched; the files pane)
   abort?  : AbortController; // a Claude Code worker's job's stop
 };
 
@@ -96,6 +97,7 @@ export type Role = { $: "sub"; tier: Tier; effort: string | null; model: string 
 // an agent's label (Tools.labels): its goal, the repos its work touches
 export type Label = { title?: string; repos?: string[] };
 const TITLE = 80;
+const FILES = 40; // the files an agent touched, kept at most (Tools.touched)
 const AUTO_TITLE = 60; // a title made from a task (Tools.titled), at most
 const REPOS = 8;
 
@@ -666,6 +668,10 @@ export namespace Tools {
         return { text: why, fail: true };
       }
     }
+    const caller = tools.agents.get(who);
+    if (caller !== undefined) {
+      Tools.touched(caller, name, args);
+    }
     if (name.startsWith("mcp__")) {
       return Mcp.call(MCP, name, args, signal);
     }
@@ -920,7 +926,7 @@ export namespace Tools {
       const model = pick === null ? "claude-code" : typeof pick === "string" ? role.$ === "sub" && role.model !== null ? role.model : "?" : pick.model;
       const status = Tools.status(tools, a);
       const tier = role.$ === "hands" ? "computer" : role.$ === "cli" ? "claude" : role.tier;
-      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }), ...(a.todo === undefined ? {} : { todo: a.todo }), ...(a.spent === undefined ? {} : { spent: a.spent }) };
+      const label = { ...(a.title === undefined ? {} : { title: a.title }), ...(a.repos === undefined ? {} : { repos: a.repos }), ...(a.todo === undefined ? {} : { todo: a.todo }), ...(a.spent === undefined ? {} : { spent: a.spent }), ...(a.files === undefined ? {} : { files: a.files }) };
       return { name: a.name, parent: a.parent, tier, model, status, since: a.since ?? 0, ...label };
     });
   }
@@ -1227,6 +1233,19 @@ export namespace Tools {
     }
     const cut = first.length <= AUTO_TITLE ? first : first.slice(0, first.lastIndexOf(" ", AUTO_TITLE) > 0 ? first.lastIndexOf(" ", AUTO_TITLE) : AUTO_TITLE) + "…";
     return cut[0]!.toUpperCase() + cut.slice(1);
+  }
+
+  // the files an agent's call touches (read, write, edit; glob and grep
+  // under a path), first in its list, once each, at most FILES
+  export function touched(agent: Agent, name: string, args: any): void {
+    const paths = name === "edit" ? (Array.isArray(args?.edits) ? args.edits.map((e: any) => e?.path) : [])
+      : ["read", "write", "glob", "grep"].includes(name) ? [args?.path] : [];
+    const given = paths.filter((p: unknown): p is string => typeof p === "string" && p !== "" && p.length <= 1000);
+    if (given.length === 0) {
+      return;
+    }
+    const now = [...new Set([...given].reverse())];
+    agent.files = [...now, ...(agent.files ?? []).filter((f) => !now.includes(f))].slice(0, FILES);
   }
 
   // a label given a title from its task if it has none

@@ -260,3 +260,54 @@ test("device_reads reads the inbox at once and on fetch, a transcript on read", 
   await Bun.sleep(30);
   expect(sent.filter((m) => m.$ === "transcript")).toEqual([{ $: "transcript", id: "doc1", text: "said in doc1" }]);
 });
+
+// the files pane and git tab (K4, Terax-like, read-only): a device shows a
+// file or a repo's git only under its roots (its work dir, home repo,
+// spaces), symlinks followed first; never a secret's file, a binary or one
+// past LOOK_BYTES; git by fixed commands, a revision checked
+test("device_look: files and git under the device's roots only, read-only", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-look-"));
+  const work = top + "/work", repo = top + "/repo", out = top + "/out";
+  fs.mkdirSync(work + "/Owl", { recursive: true });
+  fs.mkdirSync(out);
+  Bun.spawnSync(["git", "init", "-q", "-b", "trunk", repo]);
+  fs.writeFileSync(repo + "/a.ts", "export const a = 1;\n");
+  fs.writeFileSync(repo + "/.env", "KEY=x");
+  fs.writeFileSync(repo + "/big.txt", "x".repeat(Device.LOOK_BYTES + 1));
+  fs.writeFileSync(repo + "/bin.dat", Buffer.from([1, 0, 2]));
+  fs.writeFileSync(out + "/other.txt", "outside");
+  fs.symlinkSync(out + "/other.txt", repo + "/link.txt");
+  fs.symlinkSync(repo + "/.env", repo + "/cfg.txt");   // an innocent name, a secret behind it
+  fs.symlinkSync(repo + "/a.ts", repo + "/.env.local"); // a secret's name, whatever is behind it
+  fs.writeFileSync(work + "/Owl/notes.md", "# hi");
+  const git = (...a: string[]) => Bun.spawnSync(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+  git("add", "a.ts");
+  git("commit", "-q", "-m", "first");
+  const rules = { work, computer: false, spaces: [repo] };
+  const look = (what: any) => Device.device_look(rules, "r1", what) as Promise<any>;
+  expect(await look({ kind: "file", path: repo + "/a.ts" })).toEqual({ $: "looked", id: "r1", kind: "file", path: repo + "/a.ts", text: "export const a = 1;\n" });
+  // an agent's relative path, from its own dir under the work dir
+  expect((await look({ kind: "file", path: "notes.md", agent: "Owl" })).text).toBe("# hi");
+  for (const [path, why] of [[out + "/other.txt", "not under"], [repo + "/link.txt", "not under"], [repo + "/../out/other.txt", "not under"], [repo + "/.env", "secret"], [repo + "/big.txt", "too big"], [repo + "/bin.dat", "binary"], [repo + "/none.ts", "No file"]]) {
+    const r = await look({ kind: "file", path });
+    expect([path, r.text, String(r.error)]).toEqual([path, undefined, expect.stringContaining(why!)]);
+  }
+  expect((await look({ kind: "file", path: "x", agent: "../../etc" })).error).toBe("Not an agent's name.");
+  expect((await look({ kind: "file", path: repo + "/cfg.txt" })).error).toContain("secret");
+  expect((await look({ kind: "file", path: repo + "/.env.local" })).error).toContain("secret");
+  // git: status, log, a commit, the working tree's diff; a bad rev refused
+  fs.writeFileSync(repo + "/a.ts", "export const a = 2;\n");
+  expect((await look({ kind: "git", repo, op: "status" })).text).toContain("a.ts");
+  const log = (await look({ kind: "git", repo, op: "log" })).text as string;
+  expect(log).toContain("first");
+  const sha = log.trim().split(/\s/)[0]!;
+  expect((await look({ kind: "git", repo, op: "show", rev: sha })).text).toContain("export const a = 1;");
+  expect((await look({ kind: "git", repo, op: "diff" })).text).toContain("+export const a = 2;");
+  expect((await look({ kind: "git", repo, op: "show", rev: "--output=/tmp/x" })).error).toContain("revision");
+  expect((await look({ kind: "git", repo, op: "push" })).error).toContain("No git view");
+  expect((await look({ kind: "git", repo, op: "constructor" })).error).toContain("No git view");
+  expect((await look({ kind: "git", repo: out, op: "log" })).error).toContain("not under");
+  // a file's own repo; the home repo by @home
+  expect((await look({ kind: "git", repo: repo + "/a.ts", op: "log" })).path).toBe(repo);
+  expect((await Device.device_look({ ...rules, home: repo }, "r2", { kind: "git", repo: "@home", op: "log" }) as any).text).toContain("first");
+});

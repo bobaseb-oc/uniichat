@@ -197,3 +197,36 @@ test("Up next and Transcripts", async () => {
   expect(done).not.toContain(act({ $: "Transcript", id: "doc_1" }));
   expect(View.view_route("#transcripts")).toEqual({ mode: "transcripts", name: null });
 });
+
+// the files pane and git tab (K4): each agent's touched files, a Look each;
+// a file shown with its lines numbered, escaped; git's views of its repo;
+// a diff's lines marked; a log's commits each a Look; a device's refusal said
+test("files: agents' files, a file's lines, git's views, diffs marked, commits opened", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  View.view_hear(v, { $: "state", ...v, crew: [{ name: "Owl", parent: "main", tier: "worker", model: "m", status: "working", since: 0, title: "Fix <login>", files: ["src/a.ts"] }, { name: "Elk", parent: "main", tier: "worker", model: "m", status: "done", since: 0 }] } as any);
+  expect(View.view_route("#files")).toEqual({ mode: "files", name: null });
+  expect(View.view_act(v, { $: "Look", what: { kind: "file", path: "a.ts" } })).toEqual([{ $: "look", what: { kind: "file", path: "a.ts" } }]);
+  const empty = Pages.files_html(v).join("");
+  expect(empty).toContain("Fix &lt;login&gt;");
+  expect(empty).toContain(act({ $: "Look", what: { kind: "file", path: "src/a.ts", agent: "Owl" } }));
+  expect(empty).not.toContain("Elk");
+  expect(empty).toContain(act({ $: "Look", what: { kind: "git", repo: "@home", op: "status" } }));
+  View.view_hear(v, { $: "looked", id: "x", kind: "file", path: "/w/Owl/src/a.ts", text: "const a = <b>;\nexport { a };" });
+  const file = Pages.files_html(v).join("");
+  expect(file).toContain('<span class="ln">2</span>export { a };');
+  expect(file).toContain("const a = &lt;b&gt;;");
+  expect(file).toContain(act({ $: "Look", what: { kind: "git", repo: "/w/Owl/src/a.ts", op: "log" } }));
+  View.view_hear(v, { $: "looked", id: "y", kind: "git", path: "/r", op: "log", text: "abc1234 (HEAD) first\ndef5678 second" });
+  const log = Pages.files_html(v).join("");
+  expect(log).toContain(act({ $: "Look", what: { kind: "git", repo: "/r", op: "show", rev: "abc1234" } }));
+  View.view_hear(v, { $: "looked", id: "s", kind: "git", path: "/r", op: "status", text: "## trunk <x>\n M a.ts" });
+  expect(Pages.files_html(v).join("")).toContain("## trunk &lt;x&gt;");
+  View.view_hear(v, { $: "looked", id: "z", kind: "git", path: "/r", op: "diff", text: "@@ -1 +1 @@\n-old\n+new" });
+  const diff = Pages.files_html(v).join("");
+  expect(diff).toContain('<span class="del">-old</span>');
+  expect(diff).toContain('<span class="add">+new</span>');
+  expect(diff).toContain('<span class="hunk">@@ -1 +1 @@</span>');
+  View.view_hear(v, { $: "looked", id: "w", kind: "file", error: ".env may hold a secret: not shown." });
+  expect(Pages.files_html(v).join("")).toContain(".env may hold a secret");
+});

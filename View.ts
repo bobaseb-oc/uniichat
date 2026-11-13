@@ -84,7 +84,7 @@ export type State = {
 // an agent of the chat, at work or done (till dismissed): who started it
 // ("main": Unii), what it is, its model, how it is, since when its run
 // began (ms since 1970)
-export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number }; // spent: est. USD (Tools.spent)
+export type Crew = { name: string; parent: string; tier: "manager" | "worker" | "computer" | "claude"; model: string; status: Status; since: number; title?: string; repos?: string[]; todo?: Todo[]; spent?: number; files?: string[] }; // spent: est. USD (Tools.spent); files: touched, newest first (Tools.touched)
 // a call waiting for the user's yes (Tools.ask_user): its number, who
 // calls, its tool, what it does
 export type Waiting = { id: number; who: string; tool: string; what: string };
@@ -126,7 +126,7 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 export type Mode = "chat" | "crew" | Deck;
 // the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
 // (not "Page": an agent's page is)
-export const PAGES = ["home", "inbox", "routines", "digest", "transcripts"] as const;
+export const PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files"] as const;
 export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
@@ -157,6 +157,7 @@ export type View = State & {
   inbox : Inbox | null; // the cockpit's inbox, as a device last read it (Inbox.ts)
   themes : Record<string, string[]> | null; // the digest's themes by author (Chat.themes)
   summaries : Map<string, Summary>; // meeting transcripts' summaries, by Doc id
+  looked    : Looked | null; // what a device showed last (the files pane, K4)
   notes : string[];
   tab   : string;
   out   : Post[];
@@ -187,7 +188,14 @@ export type Server =
   | { $: "fetch" }                        // to devices: read the inbox now
   | { $: "themes"; themes: { key: string; by: Record<string, string[]> } } // the digest's themes (Chat.themes)
   | { $: "read"; id: string }             // to devices: read that transcript Doc (Device.device_transcript)
-  | { $: "summary"; id: string; summary: Summary }; // a transcript's summary (Chat.transcript)
+  | { $: "summary"; id: string; summary: Summary } // a transcript's summary (Chat.transcript)
+  | { $: "look"; id: string; what: Look }  // to devices: show a file or a repo's git (Device.device_look)
+  | Looked;                                 // to views: what a device showed
+
+// the files pane and git tab (K4): what a view asks a device to show, and
+// what it showed (or why not)
+export type Look = { kind: "file"; path: string; agent?: string } | { kind: "git"; repo: string; op: string; rev?: string };
+export type Looked = { $: "looked"; id: string; kind: "file" | "git"; path?: string; op?: string; text?: string; error?: string };
 
 // a message a person sends: its text, its images
 export type Sent = { text: string; images?: Blob[] };
@@ -227,6 +235,8 @@ export type Client =
   | { $: "review"; prs: string[]; how: "review" | "fix"; claude: boolean } // inbox PRs (their links), an agent each
   | { $: "themes" } // the digest's merged PRs summarized by theme
   | { $: "transcript"; id: string; text?: string; error?: string } // a view: that transcript summarized; a device: its text, or why not
+  | { $: "look"; what: Look } // a view: show a file or a repo's git (a device shows it)
+  | Looked // a device: what it showed
   | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
   | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
   | { $: "routine"; op: "drop" | "run"; n: number } // routine n dropped, or run now
@@ -278,6 +288,7 @@ export type Act =
   | ({ $: "Routine" } & RoutineOp)              // a routine added, on or off, dropped, run now (Routines.ts)
   | { $: "Themes" }                             // the digest summarized by theme
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
+  | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
 
 // what a page draws, top to bottom
 export type Row =
@@ -420,6 +431,7 @@ export function view_new(): View {
     inbox     : null,
     themes    : null,
     summaries : new Map(),
+    looked    : null,
     notes     : [],
     tab       : crypto.randomUUID(),
     out       : [],
@@ -446,6 +458,13 @@ export function view_hear(v: View, msg: Server): Client[] {
     }
     case "themes": {
       v.themes = msg.themes.by;
+      return [];
+    }
+    case "looked": {
+      v.looked = msg;
+      return [];
+    }
+    case "look": {
       return [];
     }
     case "summary": {
@@ -646,6 +665,9 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Themes": {
       return [{ $: "themes" }];
+    }
+    case "Look": {
+      return [{ $: "look", what: act.what }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1126,9 +1148,21 @@ export function view_drop(v: View, arg: string): Act | string {
   return q === undefined ? "No open question " + arg.trim() + ": /questions lists them." : { $: "Drop", q: q.id };
 }
 
+// a path named in the chat (an inline code's text), its :line dropped, for
+// the files pane (K4); null: not a path
+const PATH_EXT = /\.(ts|tsx|js|jsx|mjs|py|md|json|jsonl|sh|css|html|yml|yaml|toml|sql|go|rs|txt|ipynb|cfg|ini|lock|csv)$/i;
+export function view_path(text: string): string | null {
+  const p = text.trim().replace(/(:\d+){1,2}$/, "");
+  if (p.length === 0 || p.length > 500 || /\s|:\/\/|^-/.test(p)) {
+    return null;
+  }
+  const pathy = /^(~|\.{1,2})?\/?[\w.@+-]+(\/[\w.@+-]+)+\/?$/.test(p) || /^[\w.@+-]+$/.test(p);
+  return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
+}
+
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }

@@ -345,6 +345,110 @@ export function device_open(url: string, auth: Record<string, string>, query: st
   return v;
 }
 
+// The files pane and git tab (K4, Terax-like, read-only)
+// ======================================================
+// What a view asks to see: a file (an agent's relative path from its own
+// dir), or a repo's git by one of GIT_VIEWS' fixed commands. Shown only
+// under the device's roots (its work dir, home repo, spaces), each path's
+// symlinks followed first; never a secret's file (SECRET), a binary or a
+// file past LOOK_BYTES; git's answer cut at LOOK_BYTES.
+
+export type Look = View.Look;
+export const LOOK_BYTES = 512 * 1024;
+const SECRET = /^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|\.netrc|\.npmrc|\.pypirc|credentials.*|\.credentials.*|secrets?(\..*)?)$/i;
+const GIT_VIEWS: Record<string, (rev: string | null) => string[]> = {
+  status  : () => ["status", "--porcelain=v1", "--branch"],
+  branches: () => ["branch", "--all", "-vv", "--no-color"],
+  log     : () => ["log", "--oneline", "--decorate", "--no-color", "-80"],
+  diff    : () => ["diff", "--no-color", "--no-ext-diff", "HEAD"],
+  show    : (rev) => ["show", "--no-color", "--no-ext-diff", "--stat", "--patch", rev ?? "HEAD"],
+};
+const REV = /^([0-9a-f]{4,40}|HEAD(~\d{1,3})?)$/;
+
+// the roots a device shows under, real paths
+function look_roots(rules: Rules): string[] {
+  const all = [rules.work, rules.home, ...device_spaces(rules, Date.now()).spaces.map((s) => s.path)];
+  return [...new Set(all.filter((p): p is string => typeof p === "string" && p !== "").map((p) => {
+    try {
+      return fs.realpathSync(home(p));
+    } catch {
+      return "";
+    }
+  }).filter((p) => p !== ""))];
+}
+
+// a path's real path if under a root; else why not
+function look_under(rules: Rules, p: string): string | { why: string } {
+  let real: string;
+  try {
+    real = fs.realpathSync(p);
+  } catch {
+    return { why: "No file " + p + " here." };
+  }
+  const roots = look_roots(rules);
+  return roots.some((r) => real === r || real.startsWith(r + path.sep)) ? real : { why: p + " is not under this device's work dir, home repo or spaces." };
+}
+
+export async function device_look(rules: Rules, id: string, what: Look): Promise<View.Client> {
+  const fail = (error: string): View.Client => ({ $: "looked", id, kind: what?.kind === "git" ? "git" : "file", error: error.slice(0, 300) });
+  try {
+    if (what?.kind === "file") {
+      const agent = what.agent === undefined ? null : String(what.agent);
+      if (agent !== null && !/^[\w-]{1,64}$/.test(agent)) {
+        return fail("Not an agent's name.");
+      }
+      const given = String(what.path ?? "");
+      const at = path.resolve(agent === null ? home(rules.home ?? rules.work) : path.join(home(rules.work), agent), home(given));
+      if (SECRET.test(path.basename(at))) {
+        return fail(path.basename(at) + " may hold a secret: not shown.");
+      }
+      const real = look_under(rules, at);
+      if (typeof real !== "string") {
+        return fail(real.why);
+      }
+      if (SECRET.test(path.basename(real))) {
+        return fail(path.basename(real) + " may hold a secret: not shown.");
+      }
+      const st = fs.statSync(real);
+      if (!st.isFile()) {
+        return fail("No file " + given + " here (a directory?).");
+      }
+      if (st.size > LOOK_BYTES) {
+        return fail(given + " is too big to show (" + st.size + " bytes).");
+      }
+      const data = fs.readFileSync(real);
+      if (data.includes(0)) {
+        return fail(given + " is a binary file.");
+      }
+      return { $: "looked", id, kind: "file", path: at, text: data.toString("utf8") };
+    }
+    if (what?.kind === "git") {
+      const view = GIT_VIEWS[String(what.op)];
+      if (view === undefined || !Object.hasOwn(GIT_VIEWS, String(what.op))) {
+        return fail("No git view " + String(what.op).slice(0, 20) + ": " + Object.keys(GIT_VIEWS).join(", ") + ".");
+      }
+      const rev = what.rev === undefined ? null : String(what.rev);
+      if (rev !== null && !REV.test(rev)) {
+        return fail("Not a revision: a commit's hash, HEAD or HEAD~n.");
+      }
+      const repo = String(what.repo ?? "");
+      const real = look_under(rules, repo === "@home" ? home(rules.home ?? path.join(rules.work, "main")) : home(repo));
+      if (typeof real !== "string") {
+        return fail(real.why);
+      }
+      const dir = fs.statSync(real).isDirectory() ? real : path.dirname(real);
+      const r = await exec(["git", "-C", dir, "--no-pager", "-c", "core.fsmonitor=false", ...view(rev)]);
+      if (r.code !== 0) {
+        return fail("git: " + r.out.trim());
+      }
+      return { $: "looked", id, kind: "git", path: dir, op: String(what.op), text: r.out.slice(0, LOOK_BYTES) };
+    }
+    return fail("Ask for a file or a repo's git.");
+  } catch (err: any) {
+    return fail(String(err?.message ?? err));
+  }
+}
+
 // the reads a device does for the cockpit, the terminal's and legion
 // device's alike: the inbox now, every `every` ms (0: never again) and on
 // the server's "fetch"; a transcript's text on its "read". Returns what
@@ -361,6 +465,9 @@ export function device_reads(rules: Rules, send: (msg: View.Client) => void, run
     }
     if (msg.$ === "read") {
       void device_transcript(msg.id, g).then(send);
+    }
+    if (msg.$ === "look") {
+      void device_look(rules, msg.id, msg.what).then(send);
     }
   };
 }

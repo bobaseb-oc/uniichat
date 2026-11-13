@@ -267,3 +267,43 @@ export function transcripts_html(v: View.View, sel: string | null, reading: Set<
   }
   return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }
+
+// the files pane and git tab (K4, Terax-like, read-only): each agent's
+// touched files (Tools.touched), a Look each; git's views of the shown
+// file's repo (else the home repo); what a device showed last: a file's
+// lines numbered, a diff's lines marked, a log's commits each opened
+export function files_html(v: View.View): string[] {
+  const looked = v.looked;
+  const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
+  const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
+    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
+    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+  }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
+  const repo = looked?.path ?? "@home";
+  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span><span class="fgit">Git: ${git}</span></div>`;
+  return [head, `<div class="tcols"><div class="tlist">${agents}</div><div class="tbody">${where}${shown_html(looked)}</div></div>`];
+}
+
+function shown_html(looked: View.Looked | null): string {
+  if (looked === null) {
+    return `<p class="meta">Pick a file, or a git view.</p>`;
+  }
+  if (looked.error !== undefined) {
+    return `<p class="meta">${esc(looked.error)}</p>`;
+  }
+  const lines = (looked.text ?? "").replace(/\n$/, "").split("\n");
+  if (looked.kind === "file") {
+    return `<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${esc(l)}`).join("\n")}</pre>`;
+  }
+  const repo = looked.path ?? "@home";
+  const line = (l: string) => {
+    const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
+    if (sha !== undefined) {
+      return `<button class="sha"${act_html({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc(sha)}</button>${esc(l.slice(sha.length))}`;
+    }
+    const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
+    return cls === "" ? esc(l) : `<span class="${cls}">${esc(l)}</span>`;
+  };
+  return `<pre class="code git">${lines.map(line).join("\n")}</pre>`;
+}

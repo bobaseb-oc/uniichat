@@ -5,6 +5,18 @@
 import { expect, test } from "bun:test";
 import * as View from "./View.ts";
 
+// a path an agent names in the chat (inline code) opens in the files pane
+// (K4): a relative or absolute path, or a file with a known extension, a
+// :line dropped; prose, URLs, commands and flags are not paths
+test("view_path: paths named in the chat, not prose, URLs or commands", () => {
+  for (const [text, path] of [["src/a.ts", "src/a.ts"], ["./Tools.ts:120", "./Tools.ts"], ["/Volumes/dev/x/README.md", "/Volumes/dev/x/README.md"], ["Server.ts", "Server.ts"], ["~/.unii/config.json", "~/.unii/config.json"], ["web/src/main.ts:12:3", "web/src/main.ts"]]) {
+    expect([text, View.view_path(text)]).toEqual([text, path]);
+  }
+  for (const text of ["hello world", "https://x.com/a/b", "git status", "--force", "a/b c/d", "v1.2", "x".repeat(600) + ".ts", "../../etc/passwd zz"]) {
+    expect([text, View.view_path(text)]).toEqual([text, null]);
+  }
+});
+
 const tail = (v: View.View) => View.view_tail(v).map((row) => (row.$ === "Cap" ? row.text : row.$));
 
 // a turn waiting on its model names the model the server says: the
