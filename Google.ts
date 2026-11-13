@@ -17,16 +17,21 @@
 //   chat.spaces.readonly, chat.messages.readonly. Nothing is written.
 //   A grant from before K3 keeps working for calendar and Drive; Gmail
 //   and Chat answer 403, which says to sign in again.
-// - Keys: the client and the grant in the Keychain only (Auth.keychain,
-//   services "legion-google-client", "legion-google-grant"), never a file,
+// - Keys: the client and the grant in the Keychain only, never a file,
 //   an argument, the environment, a log, an error, the server or a model.
-//   Residual risk (RED ZONE, security review SD H5, DRAFT awaiting the
-//   user's sign-off): Bun.secrets trusts bun, the program that made the
-//   items, so any `bun -e` an agent's shell job runs as the user can read
-//   the grant unasked (read-only Calendar, Drive, Gmail and Chat). Not
-//   kept as Harvest's token is (Auth.asking, a prompt each read): the
-//   inbox loop reads it every few minutes. Sign out (legion
-//   google-logout) when it isn't needed.
+//   RED ZONE (security review U2, DRAFT awaiting the user's sign-off;
+//   was SD H5's residual risk): the grant's refresh token with no
+//   application trusted (Google.guarded, Auth.asking: service
+//   "legion-google-guarded-grant"), so every read shows a macOS prompt.
+//   Each process (`legion device`, a terminal) reads it once, when it
+//   first needs Google (one prompt), and holds it in memory; access
+//   tokens are only ever in memory. An agent's shell job is another
+//   process: its `bun -e` or `security` gets the prompt, which the user
+//   denies (one at another time than a start is something else reading:
+//   Deny; never Always Allow, which would trust `security` for good). The
+//   client (Auth.keychain, "legion-google-client") is not secret (Google's
+//   desktop clients) and gives nothing without the refresh token. A grant
+//   Bun.secrets kept before ("legion-google-grant") is moved at first use.
 // - Refresh: 2 minutes before expiry, once however many ask; any failure
 //   throws (fail closed: the device reports nothing from Google).
 // - Logout revokes the grant at Google, then deletes it; a revoke that
@@ -110,6 +115,9 @@ const SPACE = /^spaces\/[\w-]{1,100}$/;
 
 let refreshing: Promise<string> | null = null;
 
+// the process's store (Google.store)
+let kept: Store | null = null;
+
 // Google
 // ======
 
@@ -118,8 +126,104 @@ export namespace Google {
   export type Event = import("./Google.ts").Event;
   export type Doc = import("./Google.ts").Doc;
 
+  // RED ZONE (security review U2, DRAFT awaiting the user's sign-off):
+  // the process's store, one for all who ask (so the grant is read once);
+  // built without reading anything
   export function store(): Store {
-    return Auth.keychain("legion-google");
+    return (kept ??= Google.guarded(Auth.security, Auth.keychain("legion-google")));
+  }
+
+  // RED ZONE (security review U2, DRAFT awaiting the user's sign-off):
+  // the grant's refresh token where every read asks the user (Auth.asking,
+  // service "legion-google-guarded-grant": its own, never Bun.secrets'
+  // item), base64url (a refresh token has "/"). It is read once (one
+  // prompt), then held in this process's memory with the access tokens,
+  // which are never kept; written again (delete, add: no read, no prompt)
+  // only when the refresh token changes. A refused read is held: no prompt
+  // again until the process restarts. The client, not secret (Google's
+  // desktop clients), stays where it was (old: Auth.keychain), useless
+  // without the refresh token. A grant Bun.secrets kept before (any bun
+  // reads it) is moved at its first read, read back (a prompt), then
+  // deleted; if it can't be, nothing is deleted and that is said. Logout
+  // deletes both.
+  export function guarded(run: Auth.Run, old: Store): Store {
+    const asked = Auth.asking("legion-google-guarded", run);
+    let held: Grant | null = null;
+    let reading: Promise<Grant | null> | null = null;
+    let refused: unknown = null;
+    const keep = async (refresh: string) => asked.set(GRANT, Buffer.from(refresh).toString("base64url"));
+    const moved = async (): Promise<Grant | null> => {
+      const raw = await old.get(GRANT).catch(() => null);
+      if (raw === null) {
+        return null;
+      }
+      let was: Grant | null = null;
+      try {
+        was = JSON.parse(raw);
+      } catch {}
+      if (!was?.refresh_token) {
+        await old.delete(GRANT).catch(() => false);
+        return null;
+      }
+      try {
+        await keep(was.refresh_token);
+        if ((await asked.get(GRANT)) !== Buffer.from(was.refresh_token).toString("base64url")) {
+          throw new Error("not read back");
+        }
+      } catch (err: any) {
+        throw new Error("the Google grant kept by Bun could not be moved to the Keychain (" + String(err?.message ?? err) + "); nothing deleted: legion google-login again.");
+      }
+      await old.delete(GRANT).catch(() => false);
+      return { access_token: "", refresh_token: was.refresh_token, expires_at: 0 };
+    };
+    const load = async (): Promise<Grant | null> => {
+      if (refused !== null) {
+        throw refused;
+      }
+      try {
+        const raw = await asked.get(GRANT);
+        return raw === null ? moved() : { access_token: "", refresh_token: Buffer.from(raw, "base64url").toString("utf8"), expires_at: 0 };
+      } catch (err) {
+        refused = err;
+        throw err;
+      }
+    };
+    return {
+      get: async (name) => {
+        if (name !== GRANT) {
+          return old.get(name);
+        }
+        if (held === null) {
+          reading ??= load().finally(() => (reading = null));
+          held ??= await reading;
+        }
+        return held === null ? null : JSON.stringify(held);
+      },
+      set: async (name, value) => {
+        if (name !== GRANT) {
+          return old.set(name, value);
+        }
+        const g: Grant = JSON.parse(value);
+        if (!g.refresh_token) {
+          throw new Error("Google gave no refresh token: kept nowhere; sign in again.");
+        }
+        if (g.refresh_token !== held?.refresh_token) {
+          await keep(g.refresh_token);
+          await old.delete(GRANT).catch(() => false);
+        }
+        held = g;
+        refused = null;
+      },
+      delete: async (name) => {
+        if (name !== GRANT) {
+          return old.delete(name);
+        }
+        held = null;
+        refused = null;
+        const was = await old.delete(name).catch(() => false);
+        return (await asked.delete(name)) || was;
+      },
+    };
   }
 
   // a client file Google Cloud gives (its "installed" part), checked

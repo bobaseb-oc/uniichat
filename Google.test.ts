@@ -154,6 +154,144 @@ test("logout: a revoke Google refuses, or can't be reached, is said; deleted all
   expect(store.all.size).toBe(0);
 });
 
+// RED ZONE (security review U2, DRAFT awaiting the user's sign-off): the
+// grant's refresh token where every read asks the user (Auth.asking), read
+// once per process and held in its memory; access tokens in memory only.
+// Fakes for both stores: no real Keychain is touched.
+function keychain_fake() {
+  const items = new Map<string, string>();
+  const calls: { args: string[]; input?: string }[] = [];
+  let refuse = false;
+  let add = 0;
+  const run = async (args: string[], input?: string) => {
+    calls.push({ args, input });
+    const service = args[0] === "-i" ? input!.match(/ -s (\S+)/)![1] : args[args.indexOf("-s") + 1];
+    if (args[0] === "-i") {
+      if (add !== 0) {
+        return { code: add, out: "" };
+      }
+      items.set(service, input!.match(/ -w (\S+)/)![1]);
+      return { code: 0, out: "" };
+    }
+    if (args[0] === "find-generic-password") {
+      if (refuse) {
+        return { code: 128, out: "" };
+      }
+      return items.has(service) ? { code: 0, out: items.get(service) + "\n" } : { code: 44, out: "" };
+    }
+    return { code: items.delete(service) ? 0 : 44, out: "" };
+  };
+  return { items, calls, run, refuse: (b: boolean) => (refuse = b), add: (code: number) => (add = code) };
+}
+const RT = "1//0g-synthetic_refresh.0";
+const finds = (k: { calls: { args: string[] }[] }) => k.calls.filter((c) => c.args[0] === "find-generic-password").length;
+const adds = (k: { calls: { args: string[] }[] }) => k.calls.filter((c) => c.args[0] === "-i").length;
+
+test("the guarded grant: only the refresh token kept, where each read asks; no read before a write; never an argument; the client stays", async () => {
+  const k = keychain_fake();
+  const old = memory();
+  old.all.set("grant", "stale");
+  const store = Google.guarded(k.run, old);
+  await store.set("client", JSON.stringify(CLIENT));
+  expect(old.all.get("client")).toBe(JSON.stringify(CLIENT));
+  expect(k.calls.length).toBe(0);
+  await store.set("grant", JSON.stringify({ access_token: "at-synthetic", refresh_token: RT, expires_at: Date.now() + 3600e3 }));
+  expect(finds(k)).toBe(0);
+  expect(k.calls.at(-1)).toEqual({ args: ["-i"], input: 'add-generic-password -s legion-google-guarded-grant -a oauth -T "" -w ' + Buffer.from(RT).toString("base64url") + "\n" });
+  expect(k.calls.every((c) => !c.args.join(" ").includes("synthetic") && !(c.input ?? "").includes("at-synthetic"))).toBe(true);
+  // a service of its own: never the Bun.secrets item's ("legion-google-grant")
+  expect(k.items.has("legion-google-grant")).toBe(false);
+  expect(old.all.has("grant")).toBe(false);
+  // held: read back from memory, no prompt
+  expect(JSON.parse((await store.get("grant"))!)).toMatchObject({ access_token: "at-synthetic", refresh_token: RT });
+  expect(finds(k)).toBe(0);
+  // no refresh token: kept nowhere
+  const k2 = keychain_fake();
+  await expect(Google.guarded(k2.run, memory()).set("grant", JSON.stringify({ access_token: "a", expires_at: 1 }))).rejects.toThrow("no refresh token");
+  expect(k2.items.size).toBe(0);
+});
+
+test("the guarded grant: read once per process however many ask; a refresh in memory only; written again only when the refresh token changes", async () => {
+  const k = keychain_fake();
+  k.items.set("legion-google-guarded-grant", Buffer.from("rt1").toString("base64url"));
+  const old = memory();
+  old.all.set("client", JSON.stringify(CLIENT));
+  const store = Google.guarded(k.run, old);
+  const before = sent.filter((s) => s.form.grant_type === "refresh_token").length;
+  expect(await Promise.all([Google.token(store, O), Google.token(store, O), store.get("grant")]).then((r) => r.slice(0, 2))).toEqual(["at2", "at2"]);
+  expect(await Google.token(store, O)).toBe("at2");
+  expect(finds(k)).toBe(1);
+  expect(adds(k)).toBe(0);
+  expect(sent.filter((s) => s.form.grant_type === "refresh_token").length - before).toBe(1);
+  expect(sent.findLast((s) => s.form.grant_type === "refresh_token")!.form.refresh_token).toBe("rt1");
+  await store.set("grant", JSON.stringify({ access_token: "at3", refresh_token: "rt9", expires_at: Date.now() + 3600e3 }));
+  expect(adds(k)).toBe(1);
+  expect(k.items.get("legion-google-guarded-grant")).toBe(Buffer.from("rt9").toString("base64url"));
+  // signed out: both deleted, nothing held (the next read asks the Keychain)
+  expect(await store.delete("grant")).toBe(true);
+  expect(k.items.size).toBe(0);
+  expect(await store.get("grant")).toBeNull();
+  expect(finds(k)).toBe(2);
+});
+
+test("the guarded grant: a refused read is held (no prompt again until restarted); the process's store is one", async () => {
+  const k = keychain_fake();
+  k.items.set("legion-google-guarded-grant", Buffer.from("rt1").toString("base64url"));
+  k.refuse(true);
+  const store = Google.guarded(k.run, memory());
+  await expect(store.get("grant")).rejects.toThrow("the Keychain refused");
+  await expect(store.get("grant")).rejects.toThrow("the Keychain refused");
+  expect(finds(k)).toBe(1);
+  // built without a read: no Keychain touched here
+  expect(Google.store()).toBe(Google.store());
+});
+
+test("the old Bun.secrets grant: moved at first use, confirmed, then deleted; kept where it was if it can't be", async () => {
+  const k = keychain_fake();
+  const old = memory();
+  old.all.set("grant", JSON.stringify({ access_token: "at-old", refresh_token: RT, expires_at: 0 }));
+  const store = Google.guarded(k.run, old);
+  expect(JSON.parse((await store.get("grant"))!)).toMatchObject({ refresh_token: RT });
+  expect(k.items.get("legion-google-guarded-grant")).toBe(Buffer.from(RT).toString("base64url"));
+  expect(old.all.has("grant")).toBe(false);
+  // confirmed by reading it back (the one prompt) before the old is deleted
+  expect(k.calls.map((c) => c.args[0])).toEqual(["find-generic-password", "delete-generic-password", "-i", "find-generic-password"]);
+  await store.get("grant");
+  expect(finds(k)).toBe(2);
+  // the copy refused: nothing deleted, that is said
+  const k2 = keychain_fake();
+  k2.add(1);
+  const stuck = memory();
+  stuck.all.set("grant", JSON.stringify({ access_token: "at-old", refresh_token: RT, expires_at: 0 }));
+  await expect(Google.guarded(k2.run, stuck).get("grant")).rejects.toThrow("nothing deleted");
+  expect(stuck.all.has("grant")).toBe(true);
+  // the copy not read back: nothing deleted
+  const k3 = keychain_fake();
+  const kept = memory();
+  kept.all.set("grant", JSON.stringify({ access_token: "at-old", refresh_token: RT, expires_at: 0 }));
+  const run3 = async (args: string[], input?: string) => (args[0] === "find-generic-password" && k3.calls.length > 0 ? { code: 128, out: "" } : k3.run(args, input));
+  await expect(Google.guarded(run3, kept).get("grant")).rejects.toThrow("nothing deleted");
+  expect(kept.all.has("grant")).toBe(true);
+  // an old grant with no refresh token: nothing to move, deleted
+  const k4 = keychain_fake();
+  const bare = memory();
+  bare.all.set("grant", JSON.stringify({ access_token: "at-old", expires_at: 0 }));
+  expect(await Google.guarded(k4.run, bare).get("grant")).toBeNull();
+  expect(bare.all.has("grant")).toBe(false);
+});
+
+test("logout through the guarded store: revoked, then both items and the client deleted", async () => {
+  const k = keychain_fake();
+  k.items.set("legion-google-guarded-grant", Buffer.from("rt1").toString("base64url"));
+  const old = memory();
+  old.all.set("client", JSON.stringify(CLIENT));
+  old.all.set("grant", "left-over");
+  expect(await Google.logout(Google.guarded(k.run, old), O)).toEqual({ had: true, revoked: true });
+  expect(sent.at(-1)).toMatchObject({ path: "/revoke", form: { token: "rt1" } });
+  expect(k.items.size).toBe(0);
+  expect(old.all.size).toBe(0);
+});
+
 test("reads: events without attendees' addresses, Meet links only; transcript Docs with Docs links only; a text cut, a bad id refused", async () => {
   const events = await Google.events("at1", new Date(2026, 10, 12), O);
   expect(events).toEqual([{ id: "e1", title: "Weekly", start: "2026-11-12T13:30:00Z", end: "2026-11-12T14:00:00Z", meet: "https://meet.google.com/abc", people: 2 }]);

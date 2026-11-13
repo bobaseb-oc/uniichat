@@ -8,6 +8,11 @@
 // and can be deleted after. The browser opens at Google's consent; the
 // grant never goes to a file or this terminal. Logout revokes it at Google
 // and deletes it. Devices read with it from their next inbox read.
+// RED ZONE (security review U2, DRAFT awaiting the user's sign-off): the
+// grant is kept where every read asks (Google.guarded): expect one macOS
+// prompt each time `legion device` or a terminal starts (and one at
+// logout); allow it (Allow, never Always Allow). A prompt at any other
+// time is something else reading it: Deny.
 
 import * as fs from "node:fs";
 import { Google, type Client } from "../Google.ts";
@@ -39,6 +44,7 @@ try {
     },
   });
   console.log("legion: signed in to Google (calendar, Drive, Gmail and Chat, read-only)." + (file !== undefined ? " The client is in the Keychain: you may delete " + file + "." : ""));
+  console.log("legion: the Keychain will ask once each time legion device or a terminal starts: Allow (never Always Allow). A prompt at any other time is something else reading your Google grant: Deny.");
 } catch (err: any) {
   console.error("legion: " + String(err?.message ?? err).split("\n")[0]);
   process.exit(1);
