@@ -554,12 +554,12 @@ headless Chrome; every act tested on the server; mutants caught; suite stays at 
 
 Intent: four separate, reviewable changes, in this order (one commit set each):
 
-- [ ] K1 Refresh works. Today the button only reaches a running `legion device`; the terminal `legion` never reads the inbox, and the page says nothing when no device answers.
+- [x] K1 Refresh works (bd10f8c; Server/Device tests, launchd plist checked with plutil and a stub launchctl; Term wiring has no test). Today the button only reaches a running `legion device`; the terminal `legion` never reads the inbox, and the page says nothing when no device answers.
   - Server answers Fetch with an error note ("no device reads the inbox: run legion device") when no device socket is up; the page shows "reading..." until the inbox arrives or 60 s pass.
   - The terminal `legion` reads the inbox too (it is a device already: same Device.device_inbox, same 5 min timer).
   - Optional: `legion device --install` writes a launchd agent so reads keep going with no window open (decision D2).
   - verify: Server test (Fetch with no device returns the note), e2e (button shows reading..., then updated time).
-- [ ] K2 Auto mode more lenient (RED ZONE: permission engine; draft, user signs off).
+- [x] K2 Auto mode more lenient (RED ZONE: permission engine; DRAFT committed, awaiting the user's sign-off). Proof: Modes/Tools tests 20/20, 6/6 mutants killed (work-tasks/mut-k2.sh). Secret-reading commands (env, .env, .ssh, token...) are still reviewed even when read-only.
   - Read-only shell (Modes.readonly says null) skips the reviewer, as Claude Code does.
   - The reviewer sees the last 3 user messages, not only the latest one (a "yes, go" carries no context).
   - The prompt changes from "refuse if any of 6 things" to "refuse only clear harm": deletes beyond the task, off-machine sends (push/deploy/publish/send), secrets/.env, system changes, piped-from-internet code. Dropped: "goes beyond what the user asked", "outside the repo". Installing from a lockfile is allowed.
@@ -571,6 +571,7 @@ Intent: four separate, reviewable changes, in this order (one commit set each):
   - Agent tools (native, read-only, run on the device): google_mail_search, google_mail_read, google_chat_read, google_calendar, google_doc_read. Tool output is marked untrusted (an email can carry instructions); in auto mode, a tool call right after reading mail still goes to the reviewer.
   - Console setup the user does: enable the APIs (done), add scopes on the consent screen, configure the Chat app (the Chat API needs one even for user reads).
   - verify: fake-Google tests (as Google.test.ts), scope check fails closed, tool output tagged untrusted.
+- [ ] K5 Harvest timesheets (RED ZONE: billable hours written to Harvest). Token in the Keychain (legion harvest-login), read tools for agents, a routine that drafts entries from calendar, PRs, Jira and commits; submission per decision D5.
 - [ ] K4 Files pane (Terax-style), read-only first.
   - Paths come from the agent's own tool calls (read, edit, write, grep hits), plus paths it names in its messages that exist under its work dir or a space.
   - The web view gets a Files pane: a tree of those paths for the watched agent, and a viewer (syntax-highlighted, line anchors; diff for edited files). A path in a message turns into a link that opens it.

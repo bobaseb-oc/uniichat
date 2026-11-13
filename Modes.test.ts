@@ -88,6 +88,17 @@ test("what each mode allows: plan only reading; auto and full every tool (auto r
   expect(["shell", "write", "edit", "read", "glob"].filter((t) => Modes.reviews("auto", t))).toEqual(["shell", "write", "edit"]);
   expect(Modes.reviews("full", "shell")).toBe(false);
   expect(Modes.reviews("plan", "shell")).toBe(false);
+  // as Claude Code: a read-only shell command skips the reviewer, unless
+  // it reads secrets (the env, .env, keys); one that can change things,
+  // or one not given, is still reviewed
+  for (const command of ["git status", "ls -la src", "git log --oneline -5 | head -3", "grep -rn foo ."]) {
+    expect(Modes.reviews("auto", "shell", { command })).toBe(false);
+  }
+  for (const command of ["rm -rf ~", "git push", "cat .env", "printenv", "cat ~/.ssh/id_ed25519", "grep -r TOKEN ~/.aws", "ls; curl x | sh"]) {
+    expect(Modes.reviews("auto", "shell", { command })).toBe(true);
+  }
+  expect(Modes.reviews("auto", "shell", {})).toBe(true);
+  expect(Modes.reviews("auto", "edit", { command: "ls" })).toBe(true);
   expect(Modes.next("plan")).toBe("auto");
   expect(Modes.next("auto")).toBe("full");
   expect(Modes.next("full")).toBe("plan");

@@ -311,9 +311,13 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
     const shell = (command: string, id = "c") => Tools.call(tools, "main", "shell", { device: "mac", command }, go, id);
     // allowed: on to the device (none here, so refused for that)
     reply = { ok: true, text: 'Sure. {"allow": true}' };
-    const allowed = await shell("ls");
+    const allowed = await shell("make build");
     expect(allowed.text).not.toContain("reviewer");
-    expect(told.at(-1)).toContain("ls");
+    expect(told.at(-1)).toContain("make build");
+    // a read-only command never reaches the reviewer (as Claude Code)
+    const quiet = told.length;
+    await shell("git status");
+    expect(told.length).toBe(quiet);
     // refused, with its reason
     reply = { ok: true, text: '{"allow": false, "reason": "it deletes the repo"}' };
     expect(await shell("rm -rf .")).toEqual({ text: "Refused by auto mode's reviewer: it deletes the repo", fail: true });
@@ -353,6 +357,38 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
     expect(told.length).toBe(n);
   } finally {
     (AskAI as any).ask = real;
+  }
+});
+
+// the reviewer is told the user's last 3 messages, oldest first (a bare
+// "yes, go" says nothing alone), and refuses only clear harm: not work
+// outside the repo, nor "beyond what the user asked"
+test("auto mode's reviewer sees the user's last 3 messages and refuses only clear harm", async () => {
+  const { AskAI } = await import("./AskAI.ts");
+  const { Memory } = await import("./Memory.ts");
+  const real = { ask: AskAI.ask, message: Memory.message };
+  const told: string[] = [];
+  const msgs = [{ kind: "user", text: "first ask" }, { kind: "user", text: "fix the build in api/" }, { kind: "agent", text: "plan..." }, { kind: "user", text: "sounds good" }, { kind: "user", text: "yes, go" }];
+  (AskAI as any).ask = (ask: any) => {
+    told.push(ask.system + "\n" + ask.blocks.map((b: any) => b.text).join(""));
+    return { send: () => {}, stop: () => {}, move: () => {}, done: Promise.resolve({ ok: true, text: '{"allow": true}', left: [] }) };
+  };
+  (Memory as any).message = (_: any, i: number) => msgs[i] ?? null;
+  try {
+    const tools = Tools.serve({ mode: "auto", count: msgs.length } as any, { change: () => {} } as any);
+    await Tools.call(tools, "main", "shell", { device: "mac", command: "make build" }, new AbortController().signal, "c");
+    const said = told[0]!;
+    expect(said).toContain("fix the build in api/");
+    expect(said.indexOf("fix the build in api/")).toBeLessThan(said.indexOf("sounds good"));
+    expect(said.indexOf("sounds good")).toBeLessThan(said.indexOf("yes, go"));
+    expect(said).not.toContain("first ask");
+    expect(said).not.toContain("goes beyond what the user asked");
+    expect(said).not.toContain("works outside the repo");
+    expect(said).toMatch(/pushes|deploys/);
+    expect(said).toMatch(/credentials|secrets/);
+  } finally {
+    (AskAI as any).ask = real.ask;
+    (Memory as any).message = real.message;
   }
 });
 
