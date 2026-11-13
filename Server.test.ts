@@ -459,6 +459,7 @@ test("inbox PRs reviewed or fixed: a native worker each (a manager with a Claude
   expect(out.asked.length).toBe(2);
   expect(out.asked[0]).toContain("Review o/r#5 \"T5\" (https://github.com/o/r/pull/5)");
   expect(out.asked[0]).toContain("Post nothing to GitHub");
+  expect(out.asked[0]).toContain("run its tests"); // the user started it, watching
   expect(out.asked[1]).toContain("failing checks: ruff");
   expect(out.asked[1]).toContain("spawn as: \"claude\"");
   expect(out.asked[1]).toContain("Don't push");
@@ -480,7 +481,7 @@ Chat.chats.set("u1", chat);
 AskAI.ask = (ask, on) => AskAI.tie(on, ask.bill, () => {}, () => {})[0];
 const started = [];
 const start = Tools.start;
-Tools.start = (...args) => { started.push({ tier: args[2].tier, task: args[3], user: args[4], title: args[5]?.title }); return start(...args); };
+Tools.start = (...args) => { started.push({ tier: args[2].tier, task: args[3], user: args[4], title: args[5]?.title, plan: args[6] === true }); return start(...args); };
 const add = (r) => Chat.act(chat, "a" + Math.random(), { $: "routine", op: "add", routine: r }, "");
 const ok = await add({ name: "Sweep", task: "clean the worktrees", when: { $: "every", hours: 1 }, tier: "worker" });
 const bad = await add({ name: "", task: "x", when: { $: "every", hours: 1 } });
@@ -516,10 +517,13 @@ test("routines: added and checked, run now, run by the tick once when due, off, 
   const proc = Bun.spawn([process.execPath, dir + "/routine.ts"], { env: { ...process.env, UNII_DIR: dir, UNII_WORK: dir + "/work" }, stdout: "pipe", stderr: "inherit" });
   const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
   expect(out).toMatchObject({ ok: {}, bad: true, listed: [{ id: 1, name: "Sweep", on: true }], run: {}, ran: 1, early: 0, due: 1, again: 0, off: {}, offdue: 0, unknown: true, seeded: 0, drop: {}, full: true });
-  expect(out.first).toEqual({ tier: "worker", task: "clean the worktrees", user: true, title: "routine: Sweep" });
+  expect(out.first).toEqual({ tier: "worker", task: "clean the worktrees", user: true, title: "routine: Sweep", plan: false });
   expect(out.reviewed.length).toBe(1);
-  expect(out.reviewed[0]).toMatchObject({ tier: "worker", user: true, title: "review o/r#2" });
+  expect(out.reviewed[0]).toMatchObject({ tier: "worker", user: true, title: "review o/r#2", plan: true });
   expect(out.reviewed[0].task).toContain("Review o/r#2");
+  // started unattended, on a stranger's code: it reads, never runs it
+  expect(out.reviewed[0].task).not.toContain("run its tests");
+  expect(out.reviewed[0].task).toContain("Run nothing from it");
   expect(out.saved).toBe(20);
   expect(out.left).toBe(20);
 });

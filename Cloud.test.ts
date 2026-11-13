@@ -77,16 +77,128 @@ test("terminal sign-in needs the code the terminal shows", async () => {
   expect(signed()).toBeNull();
   await Cloud.confirm(cloud, post(code));
   expect(signed()).not.toBeNull();
+  // a terminal's session: it lasts TERM, not a cookie's AGE
+  expect(cloud.db.query("select term from sessions where hash = ?").get(session)).toEqual({ term: 1 });
 });
 
-// An emailed link signs in each time it is opened until it expires: a
-// mail app's preview opening it first must not use it up.
-test("an emailed link survives its preview", async () => {
+// An emailed link's GET only shows a page with a button: a mail app's
+// preview (or a scanner) opening it signs no one in and uses nothing up.
+// The button's POST signs in, once: the ticket goes with it.
+test("an emailed link survives its preview; its POST signs in once", async () => {
   const cloud = cloud_new();
   const t = Cloud.ticket(cloud, { who: "p@x.com", session: null }, 60000);
-  const open = async () => (await Cloud.http(cloud, new Request("http://127.0.0.1/auth?t=" + t)))?.headers.get("set-cookie") ?? "";
-  expect(await open()).toContain("=");
-  expect(await open()).toContain("=");
+  const open = async () => (await Cloud.http(cloud, new Request("http://127.0.0.1/auth?t=" + t)))!;
+  const sessions = () => cloud.db.query("select count(*) n from sessions").get();
+  const before = sessions();
+  const post = () => Cloud.http(cloud, new Request("http://127.0.0.1/auth", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ t }).toString() }));
+  for (let k = 0; k < 2; k++) {
+    const page = await open();
+    expect(page.headers.get("set-cookie") ?? "").toBe("");
+    const html = await page.text();
+    expect(html).toContain('method="post" action="/auth"');
+    expect(html).toContain('value="' + t + '"');
+  }
+  expect(sessions()).toEqual(before);
+  const first = await post();
+  expect(first?.status).toBe(302);
+  expect(first?.headers.get("set-cookie") ?? "").toMatch(/^unii=[^;]+/);
+  const again = await post();
+  expect(again?.headers.get("set-cookie") ?? "").toBe("");
+  expect(again?.headers.get("location")).toContain("expired=1");
+  expect((await open()).headers.get("location")).toContain("expired=1");
+});
+
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off):
+// a session ends AGE after it was made (a terminal's, TERM), or IDLE
+// unused; rows made before the columns were start their age at the
+// migration; /api/logout-all (a POST) ends every session of the user
+test("sessions expire by age and idleness; old rows migrate; logout-all ends them all", async () => {
+  // the dir Config read (the first test file's, in one process)
+  for (const end of ["", "-wal", "-shm"]) {
+    fs.rmSync(config.DIR + "/cloud.db" + end, { force: true });
+  }
+  fs.mkdirSync(config.DIR, { recursive: true });
+  const { Database } = await import("bun:sqlite");
+  const old = new Database(config.DIR + "/cloud.db", { create: true });
+  old.exec("create table sessions (hash text primary key, id text not null, name text not null)");
+  old.query("insert into sessions values (?, ?, ?)").run(Cloud.hash("oldtoken"), "u0", "old@x.com");
+  old.close();
+  const cloud = Cloud.open(() => {}, () => {}, async () => null);
+  const as = (token: string) => Cloud.who(cloud, new Request("http://127.0.0.1/", { headers: { cookie: "unii=" + token } }));
+  const bearer = (token: string) => Cloud.who(cloud, new Request("http://127.0.0.1/", { headers: { authorization: "Bearer " + token } }));
+  expect(as("oldtoken")).toEqual({ id: "u0", name: "old@x.com" });
+  const day = 864e5;
+  const age = (token: string, days: number) => cloud.db.query("update sessions set made = made - ?, seen = ? where hash = ?").run(days * day, Date.now(), Cloud.hash(token));
+  const idle = (token: string, days: number) => cloud.db.query("update sessions set seen = seen - ? where hash = ?").run(days * day, Cloud.hash(token));
+  const cookie = Cloud.session(cloud, { id: "u1", name: "me@x.com" });
+  const term = Cloud.random();
+  Cloud.login(cloud, { id: "u1", name: "me@x.com" }, Cloud.hash(term), true);
+  age(cookie, 29);
+  age(term, 89);
+  expect(as(cookie)).not.toBeNull();
+  expect(bearer(term)).not.toBeNull();
+  age(cookie, 2);
+  age(term, 2);
+  expect(as(cookie)).toBeNull();
+  expect(Cloud.user(cloud, "u1")).toBeNull();
+  expect(bearer(term)).toBeNull();
+  const fresh = Cloud.session(cloud, { id: "u2", name: "b@x.com" });
+  idle(fresh, 13);
+  expect(as(fresh)).not.toBeNull();
+  // the lookup marks it seen
+  idle(fresh, 13);
+  expect(as(fresh)).not.toBeNull();
+  idle(fresh, 15);
+  expect(as(fresh)).toBeNull();
+  // logout-all: a POST only, every session of the user, no one else's
+  const a = Cloud.session(cloud, { id: "u3", name: "c@x.com" });
+  const b = Cloud.session(cloud, { id: "u3", name: "c@x.com" });
+  const other = Cloud.session(cloud, { id: "u4", name: "d@x.com" });
+  const all = (method: string) => Cloud.http(cloud, new Request("http://127.0.0.1/api/logout-all", { method, headers: { cookie: "unii=" + a } }));
+  expect((await all("GET"))?.status).toBe(405);
+  expect(as(b)).not.toBeNull();
+  const out = await all("POST");
+  expect(out?.status).toBe(204);
+  expect(out?.headers.get("set-cookie")).toContain("Max-Age=0");
+  expect(as(a)).toBeNull();
+  expect(as(b)).toBeNull();
+  expect(as(other)).not.toBeNull();
+  // a cookie's Max-Age is its session's age, no more
+  const page = await Cloud.web_auth(cloud, Cloud.ticket(cloud, { who: "", session: null, user: { id: "u5", name: "e@x.com" } }, 60000));
+  expect(page.headers.get("set-cookie")).toContain("Max-Age=2592000");
+});
+
+// the sign-in posts, read before anyone is signed in, take at most
+// SMALL bytes: a bigger one (said, or streamed without saying) is 413,
+// never parsed
+test("sign-in posts over SMALL bytes are refused unread", async () => {
+  const cloud = cloud_new();
+  const big = JSON.stringify({ who: "a@x.com", pad: "x".repeat(Cloud.SMALL) });
+  const said = (p: string, body: string) => Cloud.http(cloud, new Request("http://127.0.0.1" + p, { method: "POST", body }));
+  const streamed = (p: string, body: string) => Cloud.http(cloud, new Request("http://127.0.0.1" + p, { method: "POST", body: new Blob([body]).stream() }));
+  for (const p of ["/api/login", "/auth"]) {
+    expect((await said(p, big))?.status).toBe(413);
+    expect((await streamed(p, big))?.status).toBe(413);
+  }
+  // one that says it's bigger is refused before a byte is read (this
+  // one's body never ends)
+  const endless = new ReadableStream({ start: (c) => c.enqueue(new TextEncoder().encode("{")) });
+  const lying = new Request("http://127.0.0.1/api/login", { method: "POST", headers: { "content-length": String(Cloud.SMALL + 1) }, body: endless });
+  expect((await Promise.race([Cloud.http(cloud, lying), Bun.sleep(500).then(() => null)]))?.status).toBe(413);
+  expect((await said("/api/login", JSON.stringify({ who: "a@x.com" })))?.status).toBe(200);
+  expect((await streamed("/api/login", JSON.stringify({ who: "b@x.com" })))?.status).toBe(200);
+});
+
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off): the
+// client's address is the X-Forwarded-For entry the proxy in front
+// appended (the last), never one the client wrote; none: the socket's
+test("Cloud.ip: the proxy's entry, else the socket's address", () => {
+  const req = (xff: string | null) => new Request("http://127.0.0.1/", { headers: xff === null ? {} : { "x-forwarded-for": xff } });
+  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"))).toBe("1.2.3.4");
+  expect(Cloud.ip(req(" 1.2.3.4 "))).toBe("1.2.3.4");
+  expect(Cloud.ip(req(null), "127.0.0.1")).toBe("127.0.0.1");
+  expect(Cloud.ip(req(null))).toBeNull();
+  expect(Cloud.ip(req("6.6.6.6, 1.2.3.4"), "127.0.0.1")).toBe("1.2.3.4");
 });
 
 // `legion web`: a terminal's Bearer session mints a ticket for its own

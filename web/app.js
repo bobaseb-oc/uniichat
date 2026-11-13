@@ -167,6 +167,8 @@ var PRICE = { base: 187, byte: 735, depth: 628 };
 var PART = 2 ** 20;
 var OLD = "Nothing new: these chats are in Unii's memory already.";
 var NOT_EXPORT = "Not a Claude or ChatGPT export.";
+var ZIP_CAP = 256 * 1024 * 1024;
+var THREAD = 1e5;
 var MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 var DONE = "Your past chats are in Unii's memory: ask about them any time.";
 var DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" });
@@ -329,9 +331,12 @@ function chat_session(chat) {
 }
 function chat_openai(chat) {
   const nodes = [];
-  for (let id = chat.current_node;id; id = chat.mapping[id]?.parent) {
-    nodes.unshift(chat.mapping[id]?.message);
+  const seen = new Set;
+  for (let id = chat.current_node;id && !seen.has(id) && seen.size < THREAD; id = chat.mapping[id]?.parent) {
+    seen.add(id);
+    nodes.push(chat.mapping[id]?.message);
   }
+  nodes.reverse();
   let date = import_date(chat.create_time, "");
   return nodes.flatMap((m) => {
     const role = m?.author?.role;
@@ -352,7 +357,7 @@ function chat_claude(chat) {
     return blocks_msgs(kind, [...blocks, ...files], date);
   });
 }
-async function zip_file(zip, name) {
+async function zip_file(zip, name, cap = ZIP_CAP) {
   const view = async (at, n) => new DataView(await zip.slice(at, at + n).arrayBuffer());
   const back = Math.min(zip.size, 65577);
   const tail = await view(zip.size - back, back);
@@ -375,11 +380,25 @@ async function zip_file(zip, name) {
     if (entry === name || entry.endsWith("/" + name)) {
       const head = await view(at, 30);
       const data = zip.slice(at + 30 + head.getUint16(26, true) + head.getUint16(28, true)).slice(0, packed);
-      return dir.getUint16(p + 10, true) === 8 ? new Response(data.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob() : data;
+      return dir.getUint16(p + 10, true) === 8 ? zip_inflate(data, cap) : data;
     }
     p += 46 + dir.getUint16(p + 28, true) + dir.getUint16(p + 30, true) + dir.getUint16(p + 32, true);
   }
   return null;
+}
+async function zip_inflate(data, cap) {
+  const parts = [];
+  let n = 0;
+  const reader = data.stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  for (let r = await reader.read();!r.done; r = await reader.read()) {
+    n += r.value.length;
+    if (n > cap) {
+      await reader.cancel();
+      throw new Error("The zip's file is over " + cap + " bytes inflated.");
+    }
+    parts.push(r.value);
+  }
+  return new Blob(parts);
 }
 function zip_sizes(dir, p) {
   const short = [p + 24, p + 20, p + 42].map((at) => dir.getUint32(at, true));
@@ -501,11 +520,14 @@ function look_css(kind, look) {
 var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 var READS = ["read", "glob", "grep", "google", "harvest"];
-var REVIEWED = ["shell", "write", "edit"];
-var SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
-var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+var REVIEWED = ["shell", "write", "edit", "computer"];
+var MCP_READS = /^(get|list|search|read|find|query|lookup|describe|view|show)([_A-Z-]|$)/;
+var MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
+var SECRETS = /printenv|environ|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
-var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+var GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
+var GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
 var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 var Modes;
 ((Modes2) => {
@@ -530,11 +552,22 @@ var Modes;
   }
   Modes2.allows = allows;
   function reviews(mode, tool, input) {
-    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+    if (mode !== "auto") {
+      return false;
+    }
+    if (tool.startsWith("mcp__")) {
+      const own = tool.split("__").slice(2).join("__");
+      return !MCP_READS.test(own) || MCP_WRITES.test(own);
+    }
+    if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
+    if (command === null || SECRETS.test(command) || Modes.readonly(command) !== null) {
+      return true;
+    }
+    const lexed = lex(command);
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w));
   }
   Modes2.reviews = reviews;
   function readonly(command) {
@@ -595,6 +628,8 @@ var Modes;
         return "a command substitution";
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
+      } else if ("{}()*?[]".includes(c) || c === "=" && word === null || c === "$" && "~=^{[".includes(line[k + 1] ?? " ")) {
+        return "an unquoted " + c + " (the shell expands it: glob, brace, paren or =cmd)";
       } else if (c === ">") {
         const to = stderr(line, k, word);
         if (typeof to === "string") {
@@ -633,12 +668,19 @@ var Modes;
       if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
         return "a command substitution";
       }
+      if (line[k] === "$" && (line[k + 1] === "{" || line[k + 1] === "[")) {
+        return "a ${...} or $[...] (zsh's flags can run code)";
+      }
       if (line[k] === "\\") {
         k += 1;
       }
       w += line[k] ?? "";
     }
     return k >= line.length ? "an unclosed quote" : [w, k];
+  }
+  function long(a, names) {
+    const name = a.split("=")[0];
+    return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
   }
   function check(words) {
     const [cmd, ...args] = words;
@@ -653,10 +695,13 @@ var Modes;
     }
     switch (cmd) {
       case "sort": {
-        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+        return args.some((a) => long(a, ["--output", "--compress-program"]) || /^-[a-zA-Z]*o/.test(a)) ? "sort -o or --compress-program writes or runs" : null;
       }
       case "tree": {
-        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+        return args.some((a) => long(a, ["--output"]) || /^-[^-]*o/.test(a)) ? "tree -o writes a file" : null;
+      }
+      case "file": {
+        return args.some((a) => long(a, ["--compile"]) || /^-[a-zA-Z]*C/.test(a)) ? "file -C writes a magic file" : null;
       }
       case "uniq": {
         return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
@@ -677,10 +722,13 @@ var Modes;
           return "git " + sub + " is not one that only reads";
         }
         const rest = args.slice(1);
-        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+        if (rest.some((a) => long(a, ["--output", "--ext-diff", "--exec", "--open-files-in-pager"]) || sub === "grep" && /^-[a-zA-Z]*O/.test(a))) {
           return "git " + sub + " with an option that writes or runs";
         }
-        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+        if (sub === "reflog" && rest[0] !== undefined && rest[0] !== "show" && !rest[0].startsWith("-")) {
+          return "git reflog " + rest[0] + " (only show reads)";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => long(a, GIT_WRITES) || GIT_SHORTS.test(a) || !a.startsWith("-"))) {
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
