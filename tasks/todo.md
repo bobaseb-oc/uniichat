@@ -662,3 +662,13 @@ built, signed or run on a device. Left open, by design or for the user: Google's
 still readable by an agent's shell (a prompt per inbox read is unworkable; documented in Google.ts);
 the proof is checked just before a socket opens, not bound to it; no UI button for /api/logout-all yet;
 the request ceiling is 4 GiB for imports.
+
+Round 2 (an independent check of the branch, 2026-11-13): the settings guard now ignores case (an
+agent could plant .claude/SETTINGS.LOCAL.JSON) and covers $CLAUDE_CONFIG_DIR, which Hooks.ts now
+reads; one case-insensitive secret-path list for shell, read/grep/glob and the files pane; read-only
+gh views and GET-only gh api, so unattended PR reviews can read the PR; proxy and CA vars kept in job
+envs; MCP names with replace/reset/run/exec/query reviewed; redaction catches *_KEY, *_SECRET_*,
+empty-user and @-in-password URLs, and no pattern is quadratic (14 crafted 1 MB lines < 200 ms);
+the old Harvest token moves to the guarded store once; X-Forwarded-For only with UNII_PROXY=1; old
+sessions keep 90 days once. Suite 379 pass, the same 3 fails; mutants 35/35 killed. Left for a
+follow-up PR: devices reach the server over a 0700 unix socket, so the proof can't be relayed.
