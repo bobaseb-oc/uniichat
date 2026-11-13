@@ -269,3 +269,24 @@ test("timesheet: drafts by day, totals, Submit only the unsent, sent and failed 
   const Routines = await import("./Routines.ts");
   expect(typeof Routines.routine_check(Pages.TIMESHEET_ROUTINE)).toBe("object");
 });
+
+// every page has a link on screen (user's report 2026-11-13: Files and
+// Timesheet had none): the sidebar's pages and Home's Apps list each name
+// all of View.PAGES; Files counts the agents with files, Timesheet the
+// drafts waiting
+test("every page is linked from the sidebar and Home's Apps, with Files' and Timesheet's counts", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  const d = (n: number, state: string) => ({ n, project_id: 7, task_id: 70, project: "P", task: "T", date: "2026-11-12", hours: 1, notes: "", why: "", by: "main", state });
+  View.view_hear(v, { $: "state", ...v, drafts: [d(1, "draft"), d(2, "failed"), d(3, "sent")], crew: [{ name: "Owl", parent: "main", tier: "worker", model: "m", status: "working", since: 0, files: ["a.ts"] }] } as any);
+  const side = Pages.side_html(v, "files", NOW).join("");
+  const home = Pages.home_html(v, new Date(NOW)).join("");
+  for (const page of View.PAGES) {
+    expect([page, side.includes(`href="#${page}"`)]).toEqual([page, true]);
+    expect([page, page === "home" || home.includes(`href="#${page}"`)]).toEqual([page, true]);
+  }
+  expect(side).toContain('<a href="#files" class="here">Files<span class="n">1</span></a>');
+  expect(side).toContain('<a href="#timesheet">Timesheet<span class="n">2</span></a>');
+  expect(home).toContain("2 drafts to review");
+  expect(home).toContain("1 agent's files");
+});
