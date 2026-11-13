@@ -1,0 +1,31 @@
+local/okf-wiki.test.ts
+  s_c8e515843bc46c::t_c2a51442c6e4f8 82-87
+Machine.test.ts
+  s_c8e515843bc46c::t_163f82768168f2 336-346
+Machine.ts
+  s_c8e515843bc46c::t_e991fbb730959b 74-79,233-234,239-241
+Modes.test.ts
+  s_c8e515843bc46c::t_cc99de7ba30ce2 351-365
+Modes.ts
+  s_c8e515843bc46c::t_c0ee58e58e41fd 116-119
+README.md
+  s_c8e515843bc46c::t_c8377b9dba21a0 122-124
+Tools.ts
+  s_c8e515843bc46c::t_5cfa654b80d280 699
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0556f07f800202975e11daed6dffd7403578602",
+  "prompts": {},
+  "sessions": {
+    "s_c8e515843bc46c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b08513c-712f-494b-be80-85986676b60d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
