@@ -58,6 +58,7 @@ import index_html from "./web/index.html" with { type: "file" };
 import install_sh from "./web/install.sh" with { type: "file" };
 import legal_css from "./web/legal.css" with { type: "file" };
 import mark_svg from "./web/mark.svg" with { type: "file" };
+import oncorps_png from "./web/oncorps.png" with { type: "file" };
 import experimental_jpg from "./web/experimental.jpg" with { type: "file" };
 import og_png from "./web/og.png" with { type: "file" };
 import style_css from "./web/style.css" with { type: "file" };
@@ -270,6 +271,7 @@ const WEB: Record<string, string> = {
   "/install.sh"     : install_sh,
   "/legal.css"      : legal_css,
   "/mark.svg"       : mark_svg,
+  "/oncorps.png"    : oncorps_png,
   "/og.png"         : og_png,
   "/style.css"      : style_css,
 };

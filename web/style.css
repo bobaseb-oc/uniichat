@@ -95,6 +95,11 @@ header > .brand:hover { background: none; }
    ink, so it follows the theme */
 .mark { display: block; width: 26px; height: 26px; background: var(--ink); -webkit-mask: url(/mark.svg) center / contain no-repeat; }
 header .credits { font: 500 12.5px var(--mono); }
+/* OnCorps' wordmark (web/oncorps.png: its letters' alpha, from the brand
+   banner), in the text's color, light or dark */
+header > .oncorps { display: block; width: 104px; height: 13px; margin: 0 8px; background: var(--ink); opacity: .85; -webkit-mask: url(/oncorps.png) center / contain no-repeat; mask: url(/oncorps.png) center / contain no-repeat; }
+header > .oncorps:hover { opacity: 1; }
+@media (max-width: 720px) { header > .oncorps { display: none; } }
 header .net { font-size: 13px; color: var(--mid); }
 
 /* Footer: the rule with the pick (a click on a part moves it), the
