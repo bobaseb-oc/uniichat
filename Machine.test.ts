@@ -333,3 +333,14 @@ test("read refuses a secret path spelled with Unicode lookalikes", () => {
     expect([p, Machine.secret(p)]).toEqual([p, true]);
   }
 });
+
+// Legion's own config (~/.unii, or $UNII_DIR): config.json holds mcp_reads
+// (what auto mode skips and plan mode runs), mcp.json the commands started;
+// an agent's write or edit reaches none of them, in any case
+test("write and edit refuse Legion's config.json, mcp.json and mcp.local.json", () => {
+  for (const f of ["config.json", "mcp.json", "mcp.local.json", "MCP.json"]) {
+    expect([f, Machine.gating(os.homedir() + "/.unii/" + f)]).toEqual([f, true]);
+  }
+  expect(Machine.gating(os.homedir() + "/.unii/okf-gaps.jsonl")).toBe(false);
+  expect(Machine.gating(os.homedir() + "/.unii/work/config.json")).toBe(false);
+});

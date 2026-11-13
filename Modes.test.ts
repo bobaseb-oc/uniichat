@@ -348,3 +348,18 @@ test("git fetch --upload-p (abbreviated) and gh api -H other than Accept are not
   }
   expect(Modes.readonly("gh api --header='Accept: application/vnd.github.raw' repos/o/r/readme")).toBeNull();
 });
+
+// plan mode runs exactly the MCP reads auto mode lets by unreviewed:
+// MCP_READS or the user's mcp_reads (OKF's tools, K), with no file argument
+test("plan mode runs the allowlisted MCP reads, the user's too, and nothing else", () => {
+  const okf = ["list_cqs", "run_cq", "run_sparql", "describe_vocabulary", "list_root_causes", "list_quirks", "list_remediation_rules"].map((t) => "mcp__okf__" + t);
+  for (const t of okf) {
+    expect([t, Modes.reviews("auto", t, {}, okf)]).toEqual([t, false]);
+    expect([t, Modes.allows("plan", t, {}, okf)]).toEqual([t, null]);
+    expect([t, Modes.allows("plan", t, {})]).not.toEqual([t, null]);
+  }
+  expect(Modes.allows("plan", "mcp__atlassian__getJiraIssue", { issueIdOrKey: "X-1" })).toBeNull();
+  expect(Modes.allows("plan", "mcp__atlassian__createJiraIssue", {})).not.toBeNull();
+  expect(Modes.allows("plan", "mcp__playwright__browser_snapshot", { filename: "/tmp/x" })).not.toBeNull();
+  expect(Modes.allows("plan", "mcp__okf__run_sparql", { path: "x" }, okf)).not.toBeNull();
+});

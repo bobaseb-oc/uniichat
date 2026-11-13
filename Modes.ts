@@ -113,8 +113,10 @@ export namespace Modes {
 
   // why a mode refuses a device tool call; null: it may run (auto's
   // reviewer may still refuse it: reviews)
-  export function allows(mode: Mode, tool: string, input: any): string | null {
-    if (mode !== "plan" || READS.includes(tool)) {
+  // (an MCP tool: only the reads auto mode lets by unreviewed, reviews;
+  // reads: config's mcp_reads)
+  export function allows(mode: Mode, tool: string, input: any, reads: readonly string[] = []): string | null {
+    if (mode !== "plan" || READS.includes(tool) || (tool.startsWith("mcp__") && !Modes.reviews("auto", tool, input, reads))) {
       return null;
     }
     const why = "In plan mode only reading is allowed, until the user approves a plan";

@@ -69,6 +69,10 @@ export function mcp_config(home: string, root: string, which: (cmd: string) => s
     if (!on(name)) {
       continue;
     }
+    if (out.servers.some((s) => s.name === name)) {
+      out.notes.push(name + ": Claude Code's own is used");
+      continue;
+    }
     if (typeof x.url === "string") {
       out.servers.push({ name, url: x.url, ...(x.oauth === true ? { oauth: true } : {}), ...tools(name) });
       continue;

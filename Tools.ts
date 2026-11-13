@@ -696,7 +696,7 @@ export namespace Tools {
       return args?.as === "claude" ? "In plan mode only reading is allowed, until the user approves a plan: no Claude Code workers." : null;
     }
     const touches = name === "computer" || name.startsWith("mcp__") || TOOLS.some((t) => t.name === name);
-    return touches ? Modes.allows(mode, name, args) : null;
+    return touches ? Modes.allows(mode, name, args, config.MCP_READS) : null;
   }
 
   // id: a job's, if it starts one
