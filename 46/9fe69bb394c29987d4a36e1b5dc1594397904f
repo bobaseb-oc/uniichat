@@ -1,0 +1,51 @@
+Config.test.ts
+  s_0a2ebc44ae045f::t_0b4cc33ea93928 48-65
+Config.ts
+  s_c8e515843bc46c::t_ccc7e5388b92fa 69-73,135-143
+Html.test.ts
+  s_0a2ebc44ae045f::t_9ecae0bb7a9dc1 267-279
+Machine.test.ts
+  s_0a2ebc44ae045f::t_41b1756434bd93 291
+Modes.test.ts
+  s_0a2ebc44ae045f::t_4798d53323e5b0 184,186-189,192,200-217,221-222
+Modes.ts
+  s_0a2ebc44ae045f::t_33a974b61401de 49,113-123,126-128,133
+Tools.test.ts
+  s_0a2ebc44ae045f::t_e1df036e9dd151 543,546
+Tools.ts
+  s_0a2ebc44ae045f::t_f63bf6c556401a 709
+local/prime/redact.test.ts
+  s_0a2ebc44ae045f::t_3874b3ffc98a69 78-82,94-97,111
+local/prime/redact.ts
+  s_0a2ebc44ae045f::t_845fec2994fbde 52-56
+web/app.js
+  s_0a2ebc44ae045f::t_a40fd0778bdf6f 524,534-535,561-566,571,577,581,712-722,2327,2330,2334,4182,4193,4196-4207,4217-4220
+web/src/Html.ts
+  s_0a2ebc44ae045f::t_a52c5cf6ff8a15 300-301,312,315,319
+web/src/main.ts
+  s_0a2ebc44ae045f::t_835d81d8cfa818 1585,1596,1599-1610,1622-1627
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "469fe69bb394c29987d4a36e1b5dc1594397904f",
+  "prompts": {},
+  "sessions": {
+    "s_0a2ebc44ae045f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b1419cf-cca1-47f7-99ff-12a223ec12ff",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    },
+    "s_c8e515843bc46c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1b08513c-712f-494b-be80-85986676b60d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Sebastian Bobadilla Suarez <sebastian.suarez@oncorps.io>"
+    }
+  }
+}
