@@ -566,7 +566,7 @@ Intent: four separate, reviewable changes, in this order (one commit set each):
   - Invariant: still fails closed (no answer from the reviewer: ask the user), and plan mode's rules are unchanged.
   - verify: Tools/Modes tests: `git status` never reaches the reviewer; `rm -rf ~` still goes to the reviewer; a reviewer timeout still asks the user. Negative tests kill mutants.
 - [x] K3a Gmail and Google Chat reads and the agents' `google` tool (RED ZONE, signed off by the user 2026-11-13). One tool, 7 read-only actions, output fenced <untrusted>; plan mode allows it, auto mode doesn't review it. Proof: Google.test.ts 8/8, Modes 3/3, full suite 312 pass / 2 known fails. Not built (K3b): unread mail and Chat mentions in the inbox. Not live-checked: needs the user's re-login.
-- [ ] K3 (original plan) Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
+- [x] K3 (original plan) Gmail and Google Chat, read-only, and agent tools for Google (RED ZONE: OAuth scopes, PII).
   - Scopes added: gmail.readonly, chat.spaces.readonly, chat.messages.readonly. Users re-run `legion google-login` once.
   - Device reads (the Keychain grant stays on the device): gmail search/read, chat spaces/messages; inbox gains unread threads that need the user and recent Chat mentions.
   - Agent tools (native, read-only, run on the device): google_mail_search, google_mail_read, google_chat_read, google_calendar, google_doc_read. Tool output is marked untrusted (an email can carry instructions); in auto mode, a tool call right after reading mail still goes to the reviewer.
@@ -717,18 +717,38 @@ host, response size cap, cache with TTL; OKF's agent write path (PLP-2837/2853) 
 knowledge is Proposed, never self-approved, a human merges. RED ZONE: client segregation, a gap
 found on client work must not carry client data into the shared repo.
 
-- [ ] K1 OKF MCP registered: local/mcp.extra.json "okf" entry (uv, OKF_DATASET_MANIFEST from
+- [x] K1 OKF MCP registered: local/mcp.extra.json "okf" entry (uv, OKF_DATASET_MANIFEST from
       ~/.unii/mcp.local.json, skipped with a note if the checkout or manifest is missing).
       → verify: local/mcp.test.ts case, live list shows mcp__okf__* tools.
-- [ ] K2 wiki MCP: local/okf-wiki.ts, tools search_wiki(query, k) and get_wiki_page(location),
+- [x] K2 wiki MCP: local/okf-wiki.ts, tools search_wiki(query, k) and get_wiki_page(location),
       host pinned, https only, 5 MB cap, cached index, HTML to text. → verify: red-first tests
       (wrong host refused, oversize refused, ranking, page fetch), Modes allows both read-only.
 - [ ] K3 agent brief: rules.md says look up OKF (mcp__okf__ then wiki) before guessing company
       facts, cite page or record, and on a miss call record_gap.
-- [ ] K4 gap log: tool record_gap(topic, wanted, evidence) appends to ~/.unii/okf-gaps.jsonl,
+- [x] K4 gap log: tool record_gap(topic, wanted, evidence) appends to ~/.unii/okf-gaps.jsonl,
       redacted (local/prime/redact.ts), client names refused (RED ZONE draft). Note: name has
       "record" → MCP_WRITES? check; it is a local write, review in auto mode is fine.
 - [ ] K5 gap loop: routine (Chat.automate) weekly, read-only agent dedupes gaps against OKF,
       writes Proposed docs in a fork worktree, runs OKF gates, opens a DRAFT PR to OnCorps:0.x;
       never merges. Stale side: `list_stale_records.py --as-of` drives refresh proposals.
       RED ZONE draft, needs sign-off before it runs unattended.
+
+K review (2026-11-13): K1 is config only. OKF's server registered with Claude Code reaches Legion through
+local/mcp.ts, proven live: 7 mcp__okf__* tools, list_cqs answered through Mcp.pool against an
+internal build of 0.x@8904fff. K2+K4 are in local/okf-wiki.ts (one server, 3 tools; tests 9/9,
+red first; live search checked). K3 is in local/rules.md. Full suite: 376 pass, 3 fail, the known
+three (link_ask, two log-staging).
+Open: (a) OKF's run_cq and run_sparql have "run" names, so auto mode reviews them and plan mode
+refuses them, although the server is read-only. A per-server read-only trust flag would be an
+access-control change (RED ZONE), so it is left for the user. (b) K5 is not built: design below,
+RED ZONE draft for sign-off.
+
+K5 design (RED ZONE draft, not implemented): `legion okf-propose`, by hand first, as a weekly
+read-only routine (Tools.start plan=true) only after sign-off. 1) It reads ~/.unii/okf-gaps.jsonl
+and drops gaps OKF now answers (search_wiki, okf list_cqs). 2) Egress gate, fail closed: it
+refuses a gap that names any okf-fs:Client (from the okf MCP server, internal scope), any
+client-named repo path, or any redact.ts hit. Refused gaps stay local and are listed to the user.
+3) It writes Proposed docs in an OKF worktree off upstream/0.x, runs verify_bundle, pytest and
+mkdocs --strict, and opens a DRAFT PR from the user's fork with every gap cited (repo@commit).
+It never merges and never self-approves (PLP-2853). 4) Stale side: list_stale_records.py --as-of
+today feeds the same path.
