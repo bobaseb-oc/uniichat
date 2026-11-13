@@ -32,7 +32,8 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import type { ServerWebSocket } from "bun";
-import { READING } from "./Agent.ts";
+import { Agent, READING } from "./Agent.ts";
+import { gateway_budget, type Budget } from "./Gateway.ts";
 import { AskAI, type Bill, type Grant, type Call, type End, type Event, type Kind, type Say, type Sink } from "./AskAI.ts";
 import type { Wallet } from "./Billing.ts";
 import { clip_pages } from "./Clip.ts";
@@ -135,7 +136,7 @@ type Chat = {
   rolled: boolean; // the turn's last call rolled over: the next goes on from it
   wallet: Wallet;
   tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
-  looks?: Set<string>; // the looks asked of the devices, not yet answered (Chat.look)
+  looks?: Map<string, number>; // the looks asked of the devices, not yet answered: how many devices may still answer (Chat.look)
   harvests?: Map<string, number[]>; // the timesheet's submits sent to a device, not yet answered: their drafts (Chat.timesheet)
 };
 
@@ -1404,7 +1405,7 @@ export namespace Chat {
         return Chat.transcript(chat, device, msg);
       }
       case "look": {
-        return Chat.look(chat, id, msg.what);
+        return Chat.look(chat, id, msg.what, device);
       }
       case "timesheet": {
         return Chat.timesheet(chat, id, msg);
@@ -1584,12 +1585,16 @@ export namespace Chat {
   // the files pane and git tab (K4): a view's look, its shape checked, to
   // the devices (each checks it against its own roots: Device.device_look)
   // under the act's id; at most LOOKS waiting (the oldest let go)
-  export function look(chat: Chat, id: string, raw: any): Answer {
+  // device: who asks ("": a view); a save only a view's (RED ZONE: the
+  // user's edit, never a device's nor an agent's)
+  export function look(chat: Chat, id: string, raw: any, device = ""): Answer {
     const str = (x: unknown) => typeof x === "string" && x.length > 0 && x.length <= LOOK_TEXT;
     const what: Look | null =
       raw?.kind === "file" && str(raw.path) && (raw.agent === undefined || str(raw.agent)) ? { kind: "file", path: raw.path, ...(raw.agent === undefined ? {} : { agent: raw.agent }) }
       : raw?.kind === "git" && str(raw.repo) && str(raw.op) && (raw.rev === undefined || str(raw.rev)) ? { kind: "git", repo: raw.repo, op: raw.op, ...(raw.rev === undefined ? {} : { rev: raw.rev }) }
       : (raw?.kind === "dir" || raw?.kind === "open") && str(raw.path) ? { kind: raw.kind, path: raw.path }
+      : (raw?.kind === "find" || raw?.kind === "grep") && str(raw.path) && str(raw.q) && raw.q.length <= LOOK_Q ? { kind: raw.kind, path: raw.path, q: raw.q }
+      : raw?.kind === "save" && device === "" && str(raw.path) && typeof raw.text === "string" && raw.text.length <= LOOK_SHOWN && typeof raw.base === "string" && /^[0-9a-f]{64}$/.test(raw.base) ? { kind: "save", path: raw.path, text: raw.text, base: raw.base }
       : null;
     if (what === null) {
       return { error: "Ask to see a file or a folder (path), open a file (path), or a repo's git (repo, op)." };
@@ -1598,15 +1603,15 @@ export namespace Chat {
       return { error: "No device is up to show it: open a terminal (legion), or run legion device." };
     }
     // a file opened in an editor: by one device (each would open a window)
-    const link = what.kind === "open" ? Tools.opened(chat.tools).flatMap(([, d]) => [...d.terms.values()]).find((l) => l.live?.() !== false) : null;
+    const link = what.kind === "open" || what.kind === "save" ? Tools.opened(chat.tools).flatMap(([, d]) => [...d.terms.values()]).find((l) => l.live?.() !== false) : null;
     if (link === undefined) {
       return { error: "No device is up to open it: open a terminal (legion), or run legion device." };
     }
-    const looks = (chat.looks ??= new Set());
+    const looks = (chat.looks ??= new Map());
     if (looks.size >= LOOKS) {
-      looks.delete(looks.values().next().value!);
+      looks.delete(looks.keys().next().value!);
     }
-    looks.add(id);
+    looks.set(id, link === null ? Tools.opened(chat.tools).reduce((n, [, d]) => n + d.terms.size, 0) : 1);
     if (link === null) {
       Chat.all(chat, { $: "look", id, what });
     } else {
@@ -1677,15 +1682,39 @@ export namespace Chat {
     return {};
   }
 
-  // a device's answer to a look asked, once, its fields cut, to the views
+  // the gateway's report (Gateway.ts) to every chat's views: its budget,
+  // read anew past GATEWAY_READ and only through a gateway (never
+  // Anthropic's own API), and when a model last answered busy
+  export const GATEWAY_TICK = 60e3;      // the report to the views, this often
+  const GATEWAY_READ = 10 * 60e3;        // the budget read anew past this
+  export const budget: { at: number; read: Budget | null } = { at: -Infinity, read: null };
+  export async function gateway(now: number, read = gateway_budget): Promise<void> {
+    if (now - budget.at > GATEWAY_READ && config.ANTHROPIC_URL !== "https://api.anthropic.com" && config.KEYS.anthropic) {
+      budget.at = now;
+      budget.read = await read(config.ANTHROPIC_URL, config.KEYS.anthropic);
+    }
+    for (const chat of Chat.chats.values()) {
+      Chat.all(chat, { $: "gateway", budget: budget.read, busy: Agent.health.busy });
+    }
+  }
+
+  // a device's answer to a look asked, once, its fields cut, to the views;
+  // a refusal waits while another device may still show it (one with
+  // other roots, an old terminal), the last one told
   export function looked(chat: Chat, device: string, msg: any): Answer {
     const id = String(msg?.id ?? "");
-    if (device === "" || !chat.looks?.delete(id)) {
+    const left = chat.looks?.get(id);
+    if (device === "" || left === undefined) {
       return { error: "No look " + id.slice(0, 40) + " waits for a device's answer." };
     }
+    if (msg.error !== undefined && left > 1) {
+      chat.looks!.set(id, left - 1);
+      return {};
+    }
+    chat.looks!.delete(id);
     const s = (x: unknown, most: number) => (typeof x === "string" ? x.slice(0, most) : undefined);
     const out: Looked = { $: "looked", id, kind: LOOK_KINDS.find((k) => k === msg.kind) ?? "file" };
-    for (const [k, most] of [["path", LOOK_TEXT], ["op", 20], ["text", LOOK_SHOWN], ["error", 300]] as const) {
+    for (const [k, most] of [["path", LOOK_TEXT], ["op", 20], ["q", LOOK_Q], ["hash", 64], ["text", LOOK_SHOWN], ["error", 300]] as const) {
       const v = s(msg[k], most);
       if (v !== undefined) {
         out[k] = v;
@@ -1771,6 +1800,7 @@ export namespace Chat {
 const LOOKS = 50;
 const LOOK_TEXT = 1000;
 const LOOK_SHOWN = 512 * 1024;
+const LOOK_Q = 200; // a find's or a search's text, at most
 const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
 
   export async function transcript(chat: Chat, device: string, msg: any): Promise<Answer> {
@@ -2559,6 +2589,7 @@ export namespace Main {
         chat.socks.forEach((sock) => sock.send(TICK));
       }
     }, PING / 2);
+    setInterval(() => void Chat.gateway(Date.now()), Chat.GATEWAY_TICK);
     for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
       process.on(sig, () => process.exit(0));
     }

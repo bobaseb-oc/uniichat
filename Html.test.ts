@@ -277,3 +277,11 @@ test("account: sign out everywhere, asked first in a hidden confirm", () => {
   expect(html.indexOf('<form class="kill ends"')).toBeGreaterThan(html.indexOf('<form class="kill" hidden>'));
   expect(html).not.toContain("<i>");
 });
+
+// a message's fenced code colored by its language (Hl.ts), escaped; an
+// unknown language's, or none's, as it is
+test("block_html: fenced code colored by its fence's language", () => {
+  expect(Html.block_html({ $: "Code", k: "ts", x: "const a = \"<b>\";" })).toContain('<code><span class="k">const</span> a = <span class="s">&quot;&lt;b&gt;&quot;</span>;</code>');
+  expect(Html.block_html({ $: "Code", k: "", x: "const <b>" })).toContain("<code>const &lt;b&gt;</code>");
+  expect(Html.block_html({ $: "Code", k: "brainfuck", x: "if" })).toContain("<code>if</code>");
+});

@@ -1498,7 +1498,11 @@ function view_new() {
     dirs: new Map,
     unfolded: new Set,
     workspaces: [],
-    opened: null,
+    told: null,
+    found: null,
+    gateway: null,
+    editing: false,
+    line: null,
     notes: [],
     tab: crypto.randomUUID(),
     out: [],
@@ -1526,17 +1530,37 @@ function view_hear(v, msg) {
       v.themes = msg.themes.by;
       return [];
     }
+    case "gateway": {
+      v.gateway = { budget: msg.budget, busy: msg.busy };
+      return [];
+    }
     case "looked": {
       if (msg.kind === "dir") {
         v.dirs.set(msg.path ?? "", msg.error === undefined ? { text: msg.text ?? "" } : { error: msg.error });
         return [];
       }
       if (msg.kind === "open") {
-        v.opened = msg.error ?? msg.text ?? null;
+        v.told = msg.error ?? msg.text ?? null;
         return [];
+      }
+      if (msg.kind === "find" || msg.kind === "grep") {
+        const f = v.found;
+        if (f !== null && f.kind === msg.kind && f.q === msg.q && f.by.has(msg.path ?? "")) {
+          f.by.set(msg.path ?? "", msg.error === undefined ? { text: msg.text ?? "" } : { error: msg.error });
+        }
+        return [];
+      }
+      if (msg.kind === "save") {
+        v.told = msg.error ?? msg.text ?? null;
+        if (msg.error !== undefined || msg.path === undefined) {
+          return [];
+        }
+        v.editing = false;
+        return [{ $: "look", what: { kind: "file", path: msg.path } }];
       }
       v.looked = msg;
       v.source = false;
+      v.editing = false;
       return [];
     }
     case "look":
@@ -1734,10 +1758,16 @@ function view_act(v, act) {
       return [{ $: "themes" }];
     }
     case "Look": {
-      return [{ $: "look", what: act.what }];
+      if (act.what.kind !== "file") {
+        return [{ $: "look", what: act.what }];
+      }
+      const { line, ...what } = act.what;
+      v.line = line ?? null;
+      return [{ $: "look", what }];
     }
     case "Source": {
       v.source = act.on;
+      v.line = act.on ? v.line : null;
       return [];
     }
     case "List": {
@@ -1753,6 +1783,19 @@ function view_act(v, act) {
       }
       v.unfolded.add(act.path);
       return view_act(v, { $: "List", path: act.path });
+    }
+    case "Find": {
+      const q = act.q.trim();
+      v.found = q === "" ? null : { kind: act.kind, q, by: new Map(v.workspaces.map((w) => [w, {}])) };
+      return v.workspaces.length === 0 || q === "" ? [] : v.workspaces.map((path) => ({ $: "look", what: { kind: act.kind, path, q } }));
+    }
+    case "Edit": {
+      v.editing = act.on;
+      return [];
+    }
+    case "Save": {
+      const l = v.looked;
+      return l?.kind !== "file" || l.path === undefined || l.hash === undefined || l.error !== undefined ? [] : [{ $: "look", what: { kind: "save", path: l.path, text: act.text, base: l.hash } }];
     }
     case "Workspace": {
       v.workspaces = v.workspaces.filter((w) => w !== act.path);
@@ -1996,6 +2039,8 @@ function status_text(s) {
     s.model,
     ...s.working === 0 ? [] : [s.working + (s.working === 1 ? " agent" : " agents") + " at work"],
     ...s.spend.spend === null ? [] : [usd(s.spend.spend) + (s.spend.stale ? "*" : "") + " today"],
+    ...s.budget ? ["gateway $" + Math.round(s.budget.spend) + "/$" + Math.round(s.budget.max)] : [],
+    ...s.busy ? ["⚠ AI service busy"] : [],
     ...s.mode === undefined ? [] : [s.mode + " mode"],
     ...!s.waiting ? [] : [s.waiting + " waiting for you"],
     ...!s.questions ? [] : [s.questions + (s.questions === 1 ? " question" : " questions") + " (/questions)"]
@@ -2007,7 +2052,11 @@ function view_status(v) {
     return "";
   }
   const spend = { spend: s.spend, stale: s.stale };
-  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v) });
+  return s.device + ": " + status_text({ up: v.up, dir: s.dir, branch: s.branch, model: v.pick?.model ?? "?", working: v.agents.length, spend, questions: view_questions(v).length, mode: v.mode, waiting: view_waiting(v), budget: v.gateway?.budget ?? null, busy: view_busy(v, Date.now()) });
+}
+var BUSY_FOR = 5 * 60000;
+function view_busy(v, now) {
+  return (v.gateway?.busy ?? 0) > 0 && now - v.gateway.busy <= BUSY_FOR;
 }
 function view_waiting(v) {
   return (v.plan ? 1 : 0) + (v.calls ?? []).length;
@@ -2026,6 +2075,10 @@ function view_path(text) {
   }
   const pathy = /^(~|\.{1,2})?\/?[\w.@+-]+(\/[\w.@+-]+)+\/?$/.test(p) || /^[\w.@+-]+$/.test(p);
   return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
+}
+function view_line(text) {
+  const m = /:(\d{1,7})(?::\d+)?$/.exec(text.trim());
+  return m === null ? null : Number(m[1]);
 }
 function view_route(hash) {
   const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files|timesheet)(?:\/(.+))?$/.exec(hash);
@@ -2280,20 +2333,145 @@ function entry_body(kind, text) {
   }
 }
 
-// web/src/Html.ts
+// Hl.ts
+var words = (s) => new Set(s.split(" "));
+var C_LIKE = { line: ["//"], block: [["/*", "*/"]] };
+var JS = {
+  ...C_LIKE,
+  quotes: ["`", '"', "'"],
+  long: ["`"],
+  words: words("as async await break case catch class const continue default delete do else enum export extends false finally for from function if implements import in instanceof interface let new null of private protected public readonly return static super switch this throw true try type typeof undefined var void while yield namespace declare keyof satisfies")
+};
+var PY = {
+  line: ["#"],
+  block: [],
+  quotes: ['"""', "'''", '"', "'"],
+  long: ['"""', "'''"],
+  words: words("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case self")
+};
+var SH = {
+  line: ["#"],
+  word: true,
+  block: [],
+  quotes: ['"', "'"],
+  long: ['"', "'"],
+  words: words("if then else elif fi for while until do done case esac in function return local export readonly set unset shift exit echo printf cd source trap")
+};
+var JSON_ = { line: [], block: [], quotes: ['"'], long: [], words: words("true false null") };
+var YAML = { line: ["#"], word: true, block: [], quotes: ['"', "'"], long: [], words: words("true false null yes no on off") };
+var TOML = { line: ["#"], block: [], quotes: ['"""', "'''", '"', "'"], long: ['"""', "'''"], words: words("true false") };
+var SQL = {
+  line: ["--"],
+  block: [["/*", "*/"]],
+  quotes: ["'", '"'],
+  long: ["'"],
+  fold: true,
+  words: words("select from where and or not in is null as join left right inner outer full cross on group by order having limit offset union all distinct insert into values update set delete create table view index drop alter add with case when then else end exists between like asc desc true false primary key references default")
+};
+var CSS2 = { line: [], block: [["/*", "*/"]], quotes: ['"', "'"], long: [], words: words("important inherit initial none auto") };
+var LANGS = {
+  ts: JS,
+  tsx: JS,
+  js: JS,
+  jsx: JS,
+  mjs: JS,
+  cjs: JS,
+  javascript: JS,
+  typescript: JS,
+  py: PY,
+  python: PY,
+  sh: SH,
+  bash: SH,
+  zsh: SH,
+  shell: SH,
+  json: JSON_,
+  jsonl: JSON_,
+  yaml: YAML,
+  yml: YAML,
+  toml: TOML,
+  sql: SQL,
+  css: CSS2
+};
+function hl_lang(name) {
+  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  return Object.hasOwn(LANGS, ext) ? LANGS[ext] : null;
+}
 var ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+var esc = (s) => s.replace(/[&<>"]/g, (c) => ESC[c]);
+var WORD = /[A-Za-z_$][\w$]*/y;
+var NUM = /\d[\w.]*/y;
+function quote_end(text, i, quote, lang) {
+  const escapes = !(lang === SH && quote === "'");
+  let j = i + quote.length;
+  while (j < text.length && !text.startsWith(quote, j) && (lang.long.includes(quote) || text[j] !== `
+`)) {
+    j += escapes && text[j] === "\\" ? 2 : 1;
+  }
+  return Math.min(text.length, text.startsWith(quote, j) ? j + quote.length : j);
+}
+function hl_lines(text, lang) {
+  const out = [""];
+  const put = (cls, s) => s.split(`
+`).forEach((part, k) => {
+    if (k > 0) {
+      out.push("");
+    }
+    out[out.length - 1] += part === "" || cls === "" ? esc(part) : `<span class="${cls}">${esc(part)}</span>`;
+  });
+  const starts = (at, s) => text.startsWith(s, at);
+  const inword = (at) => at > 0 && /[\w$]/.test(text[at - 1]);
+  let i = 0;
+  let plain = 0;
+  const take = (cls, end) => {
+    put("", text.slice(plain, i));
+    put(cls, text.slice(i, end));
+    i = plain = end;
+  };
+  while (i < text.length) {
+    const block = lang.block.find(([open2]) => starts(i, open2));
+    const line = lang.line.find((s) => starts(i, s) && !(lang.word && i > 0 && !/\s/.test(text[i - 1])));
+    const quote = lang.quotes.find((q) => starts(i, q));
+    if (block !== undefined) {
+      const end = text.indexOf(block[1], i + block[0].length);
+      take("c", end < 0 ? text.length : end + block[1].length);
+    } else if (line !== undefined) {
+      const end = text.indexOf(`
+`, i);
+      take("c", end < 0 ? text.length : end);
+    } else if (quote !== undefined) {
+      take("s", quote_end(text, i, quote, lang));
+    } else if (!inword(i) && (NUM.lastIndex = i, NUM.test(text))) {
+      take("n", NUM.lastIndex);
+    } else if (!inword(i) && (WORD.lastIndex = i, WORD.test(text))) {
+      const end = WORD.lastIndex;
+      const w = text.slice(i, end);
+      if (lang.words.has(lang.fold ? w.toLowerCase() : w)) {
+        take("k", end);
+      } else {
+        i = end;
+      }
+    } else {
+      i += 1;
+    }
+  }
+  put("", text.slice(plain));
+  return out;
+}
+
+// web/src/Html.ts
+var ESC2 = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
 var TALL = 4000;
 var SHEETS = `<svg viewBox="0 0 16 16" width="15" height="15"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 3.5v-.2A1.8 1.8 0 0 0 8.7 1.5H4.3A1.8 1.8 0 0 0 2.5 3.3v4.4a1.8 1.8 0 0 0 1.8 1.8h.2"/></svg>`;
 var CHECK = `<svg viewBox="0 0 16 16" width="15" height="15"><path d="M3 8.5l3.2 3L13 4.5"/></svg>`;
 var MARKS = { " ": "", "-": "del", "+": "add" };
-function esc(s) {
-  return s.replace(/[&<>"]/g, (c) => ESC[c]);
+function esc2(s) {
+  return s.replace(/[&<>"]/g, (c) => ESC2[c]);
 }
 function act_html(act) {
-  return ` data-act="${esc(JSON.stringify(act))}"`;
+  return ` data-act="${esc2(JSON.stringify(act))}"`;
 }
 function copy_html(text) {
-  return `<button class="copy" data-copy="${esc(text)}" title="Copy">${SHEETS}</button>`;
+  return `<button class="copy" data-copy="${esc2(text)}" title="Copy">${SHEETS}</button>`;
 }
 var MADE = new WeakMap;
 function row_html(row) {
@@ -2305,14 +2483,14 @@ function row_make(row) {
   switch (row.$) {
     case "Sum": {
       const open2 = act_html({ $: "Open", id: row.id, n: row.n });
-      const text = row.call === null ? esc(row.text) : head_html(row.call, call_line(row.call), "");
+      const text = row.call === null ? esc2(row.text) : head_html(row.call, call_line(row.call), "");
       return `<div class="block"${open2} data-a="${row.id}"><span class="lv">${row.n}x</span><div>${text}</div></div>`;
     }
     case "Box": {
       const shut = act_html({ $: "Shut", id: row.id, n: row.n });
       const one = row.n === 1 ? " one" : "";
       const rows = row.rows.map(row_html).join("");
-      return `<div class="open${one}" data-a="${row.id}"><button class="fold"${shut}>${esc(row.text)}</button>${rows}</div>`;
+      return `<div class="open${one}" data-a="${row.id}"><button class="fold"${shut}>${esc2(row.text)}</button>${rows}</div>`;
     }
     case "Msg": {
       const at = row.id === null ? "" : ` data-a="${row.id}"`;
@@ -2322,11 +2500,11 @@ function row_make(row) {
       const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split(`
 `).length > TALL;
       const fold = tall ? `<div class="clip">${body}</div><details class="more"><summary></summary></details>` : body;
-      const who = row.who === "" ? "" : ` data-who="${esc(row.who)}"`;
+      const who = row.who === "" ? "" : ` data-who="${esc2(row.who)}"`;
       return `<div class="msg ${row.kind}"${at}${who}>${copy}${fold}${pics}</div>`;
     }
     case "Cap": {
-      return `<p class="cap">${esc(row.text)}</p>`;
+      return `<p class="cap">${esc2(row.text)}</p>`;
     }
   }
 }
@@ -2335,20 +2513,20 @@ function call_html(c) {
 }
 function head_html(c, text, device) {
   const icon = `<span class="ic">${tool_glyph(c.name)}</span>`;
-  const verb = c.name === "" ? "" : `<b>${esc(c.name)}</b> `;
-  const where = device === "" ? "" : `<span class="on">· ${esc(device)}</span>`;
-  return `<p class="call">${where}${icon}${verb}${esc(text)}</p>`;
+  const verb = c.name === "" ? "" : `<b>${esc2(c.name)}</b> `;
+  const where = device === "" ? "" : `<span class="on">· ${esc2(device)}</span>`;
+  return `<p class="call">${where}${icon}${verb}${esc2(text)}</p>`;
 }
 function images_html(names) {
   const pics = names.map((name) => {
-    const url = "/image/" + esc(name);
-    return `<a href="${url}" target="_blank"><img src="${url}" alt="${esc(name)}" loading="lazy"></a>`;
+    const url = "/image/" + esc2(name);
+    return `<a href="${url}" target="_blank"><img src="${url}" alt="${esc2(name)}" loading="lazy"></a>`;
   });
   return names.length === 0 ? "" : `<div class="pics">${pics.join("")}</div>`;
 }
 function pick_html(fold, on, knobs) {
-  const parts = knobs.map((k) => `<button title="${esc(k.hint)}"${act_html({ $: "Move", move: k.move })}>${esc(k.text)}</button>`);
-  const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc(fold)}</button>`];
+  const parts = knobs.map((k) => `<button title="${esc2(k.hint)}"${act_html({ $: "Move", move: k.move })}>${esc2(k.text)}</button>`);
+  const all = fold === null ? [] : [`<button class="all"${act_html({ $: "Fold", on })}>${esc2(fold)}</button>`];
   return [...all, `<span class="rule"></span>`, ...parts.flatMap((part, i) => i === 0 ? [part] : [`<span class="dot">·</span>`, part])];
 }
 function acts_html(c) {
@@ -2364,16 +2542,16 @@ function acts_html(c) {
   }
 }
 function who_html(c, chips = true) {
-  return `<b>${esc(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
+  return `<b>${esc2(c.title ?? c.name)}</b>${chips ? repos_html(c) : ""}`;
 }
 function repos_html(c) {
-  return (c.repos ?? []).map((r) => `<span class="repo">${esc(r)}</span>`).join("");
+  return (c.repos ?? []).map((r) => `<span class="repo">${esc2(r)}</span>`).join("");
 }
 function also(c) {
   return c.title === undefined ? "" : c.name + " · ";
 }
 function focus_href(name) {
-  return ` href="${esc(view_hash("crew", name))}"`;
+  return ` href="${esc2(view_hash("crew", name))}"`;
 }
 function tree_html(v, now) {
   return view_tree(v, now).map((r) => {
@@ -2381,9 +2559,9 @@ function tree_html(v, now) {
     const caret = r.kids === 0 ? `<span class="caret"></span>` : `<button class="caret" title="${r.open ? "fold" : "open"}"${act_html({ $: "Expand", name: r.name })}>${r.open ? "▾" : "▸"}</button>`;
     const ago = r.text.slice(r.text.lastIndexOf(" · ") + 3);
     const info = r.kids > 0 && !r.open ? r.rollup : r.tier + " · " + r.model + " · " + ago;
-    const what = `<span class="st">${CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc(info)}</span>`;
+    const what = `<span class="st">${CREW[r.status]}</span>${who_html(r, false)}<span class="meta">${esc2(info)}</span>`;
     const repos = (r.repos ?? []).length === 0 ? "" : " · " + r.repos.join(", ");
-    const title = esc(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
+    const title = esc2(r.name + " · " + r.tier + " · " + r.model + " · " + r.status + " · " + ago + repos);
     return `<div class="node d${Math.min(r.depth, 4)} ${r.status}${here}">${caret}<a${focus_href(r.name)} title="${title}">${what}</a>${acts_html(r)}${line_html(v, r)}</div>`;
   });
 }
@@ -2391,16 +2569,16 @@ function line_html(v, c) {
   const p = v.pulses.get(c.name);
   const at = c.status === "working" || c.status === "waiting" || c.status === "asking";
   const text = p === undefined ? "" : at ? p.act || p.last : p.last || p.act;
-  return text === "" ? "" : `<div class="line">${esc(text)}</div>`;
+  return text === "" ? "" : `<div class="line">${esc2(text)}</div>`;
 }
 function grid_html(v, now) {
   return view_tiles(v, now).map((t) => {
-    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc(d.name + " · " + d.status)}"></a>`).join("");
+    const dots = t.dots.map((d) => `<a class="dot ${d.status}"${focus_href(d.name)} title="${esc2(d.name + " · " + d.status)}"></a>`).join("");
     const todo = view_todo(t);
-    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc(todo)}</span>`}<span class="meta">${esc(also(t) + t.tier + " · " + t.model)}</span></a>`;
+    const head = `<a class="head"${focus_href(t.name)}><span class="st">${CREW[t.status]}</span>${who_html(t, false)}${todo === "" ? "" : `<span class="todo">${esc2(todo)}</span>`}<span class="meta">${esc2(also(t) + t.tier + " · " + t.model)}</span></a>`;
     const repos = repos_html(t);
-    const roll = t.rollup === "" ? "" : `<div class="roll">${esc(t.rollup)}</div>`;
-    const tell = `<form class="tell" data-tell="${esc(t.name)}"><input placeholder="Tell ${esc(t.name)}…" aria-label="tell ${esc(t.name)}"></form>`;
+    const roll = t.rollup === "" ? "" : `<div class="roll">${esc2(t.rollup)}</div>`;
+    const tell = `<form class="tell" data-tell="${esc2(t.name)}"><input placeholder="Tell ${esc2(t.name)}…" aria-label="tell ${esc2(t.name)}"></form>`;
     return `<div class="tile ${t.status}"><div class="top">${head}${acts_html(t)}</div>${repos === "" ? "" : `<div class="repos">${repos}</div>`}${dots === "" ? "" : `<div class="dots">${dots}</div>`}${roll}${line_html(v, t)}${tell}</div>`;
   });
 }
@@ -2411,55 +2589,55 @@ function lane_html(v, now) {
   }
   const pct = (at) => Math.round(at * 1000) / 10 + "%";
   const mk = marks.map((m) => {
-    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
+    const attrs = `class="mk ${m.kind}" style="left:${pct(m.at)}" title="${esc2(new Date(m.t).toLocaleTimeString() + " · " + m.label)}"`;
     return m.k === null ? `<span ${attrs}></span>` : `<button ${attrs} data-seek="${m.k}"></button>`;
   });
   return `<div class="lane">${mk.join("")}</div>`;
 }
 function needs_html(v) {
   const plan = v.plan ? [`<div class="need question"><a href="#chat" data-qs-open><b>Plan ready</b> <span class="meta">waiting for your approval</span></a></div>`] : [];
-  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc(c.who)} wants to run</b> <span class="meta">${esc(c.what.slice(0, 80))}</span></a></div>`);
-  const asked = [...plan, ...calls, ...view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc(q.text.split(`
+  const calls = (v.calls ?? []).map((c) => `<div class="need asking"><a href="#chat" data-qs-open><b>${esc2(c.who)} wants to run</b> <span class="meta">${esc2(c.what.slice(0, 80))}</span></a></div>`);
+  const asked = [...plan, ...calls, ...view_questions(v).map((q) => `<div class="need question"><a href="#chat" data-qs-open><b>? ${esc2(q.text.split(`
 `)[0])}</b> <span class="meta">question ${q.id}</span></a></div>`)];
   return [...asked, ...view_needs(v).map((c) => {
     const why = c.status === "asking" ? "asks to start" : "failed";
-    const name = c.title === undefined ? "" : ` <span class="meta">${esc(c.name)}</span>`;
-    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
+    const name = c.title === undefined ? "" : ` <span class="meta">${esc2(c.name)}</span>`;
+    return `<div class="need ${c.status}"><a${focus_href(c.name)}><b>${esc2(c.title ?? c.name)}</b>${name} ${why}</a>${acts_html(c)}</div>`;
   })];
 }
 function waiting_html(v) {
   const b = (label, a, cls = "qo") => `<button class="${cls}"${act_html(a)}>${label}</button>`;
-  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
-  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
+  const plan = v.plan ? [`<div class="q plan"><div class="qh"><b>Plan</b><span class="meta">${esc2(new Date(v.plan.date).toLocaleString())}</span></div><div class="qt">${esc2(v.plan.text)}</div><div class="qos">${b("Approve: auto", { $: "Verdict", yes: true, mode: "auto" })}${b("Approve: full", { $: "Verdict", yes: true, mode: "full" })}</div><form class="qa" data-verdict><input placeholder="Send it back: what to change…" aria-label="send the plan back with feedback"></form></div>`] : [];
+  const calls = (v.calls ?? []).map((c) => `<div class="q call"><div class="qh"><b>${c.id}</b><span class="meta">${esc2(c.who)} wants to run (auto mode's reviewer couldn't check it)</span></div><div class="qt">${esc2(c.what)}</div><div class="qos">${b("Run it", { $: "Consent", n: c.id, yes: true })}${b("Refuse", { $: "Consent", n: c.id, yes: false })}</div></div>`);
   return [...plan, ...calls];
 }
 function questions_html(v) {
   return view_questions(v).map((q) => {
-    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
-    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc2(o)}</button>`).join("");
+    const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc2(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
     const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
-    return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
+    return `<div class="q">${head}<div class="qt">${esc2(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
   }).concat(view_notes(v).map((q) => {
-    const head = `<div class="qh"><b>note</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
-    return `<div class="q fyi">${head}<div class="qt">${esc(q.text)}</div></div>`;
+    const head = `<div class="qh"><b>note</b><span class="meta">${esc2(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    return `<div class="q fyi">${head}<div class="qt">${esc2(q.text)}</div></div>`;
   }));
 }
 function focus_html(v) {
   const name = v.page?.name ?? null;
   if (name === null) {
-    return `<div class="focus"><b>${esc(MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
+    return `<div class="focus"><b>${esc2(MAIN)}</b> <span class="meta">orchestrator · ${v.busy ? "working" : "idle"} · type to tell it</span></div>`;
   }
   const c = v.crew.find((x) => x.name === name);
   if (c === undefined) {
-    return `<div class="focus"><b>${esc(name)}</b></div>`;
+    return `<div class="focus"><b>${esc2(name)}</b></div>`;
   }
-  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
-  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
+  const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc2(x.status)}">${esc2(x.text)}</li>`).join("")}</ol>`;
+  return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc2(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
 function mode_html(mode, pill, asked = 0, perm, inbox = 0, notes = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
   const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
-  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
+  const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc2(pill)}</span>`;
   const said = [asked === 0 ? "" : "? " + asked, notes === 0 ? "" : "i " + notes].filter((x) => x !== "").join(" · ");
   const qs = said === "" ? [] : [`<button class="qs" data-qs title="${notes === 0 ? "your questions" : "your questions and notes"}">${said}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
@@ -2468,7 +2646,7 @@ function mode_html(mode, pill, asked = 0, perm, inbox = 0, notes = 0) {
 function tabs_html(tabs) {
   return tabs.map((tab) => {
     const here = tab.here ? ` class="here"` : "";
-    return `<button${here}${act_html({ $: "Goto", name: tab.name })}>${esc(tab.text)}</button>`;
+    return `<button${here}${act_html({ $: "Goto", name: tab.name })}>${esc2(tab.text)}</button>`;
   });
 }
 function credit_html(app) {
@@ -2488,10 +2666,10 @@ function account_html(a, app) {
   const money = a.bills ? balance + usage + buys : "";
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
   const closes = a.bills ? `<p>This also closes your BendAI account (same sign-in). Credit you bought and didn't use goes back to your card.</p>` : "";
-  const kill = `<form class="kill" hidden>${closes}<p>Type <b>${esc(a.name)}</b> to confirm.</p><input name="name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(a.name)}"><p class="why"></p><div><button type="button" class="chip keep">Cancel</button><button class="chip red" disabled>Delete for good</button></div></form>`;
+  const kill = `<form class="kill" hidden>${closes}<p>Type <b>${esc2(a.name)}</b> to confirm.</p><input name="name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc2(a.name)}"><p class="why"></p><div><button type="button" class="chip keep">Cancel</button><button class="chip red" disabled>Delete for good</button></div></form>`;
   const ends = `<form class="kill ends" hidden><p>Sign out of every browser and app?</p><div><button type="button" class="chip keep">Cancel</button><button class="chip red">Sign out everywhere</button></div></form>`;
   const acts = [
-    item(esc(a.name), "", `<button class="chip out">Sign out</button>`),
+    item(esc2(a.name), "", `<button class="chip out">Sign out</button>`),
     item("Sign out everywhere", "Every browser and app signed in as you, this one too.", `<button class="chip outs">Sign out everywhere</button>`),
     item("Export memory", "Chat and account, in one file.", `<a class="chip" href="/export">Download</a>`),
     item("Delete account", "Erases chat and memory for good.", `<button class="chip red del">Delete</button>`)
@@ -2501,7 +2679,7 @@ function account_html(a, app) {
   return `<a class="back" href="/" data-go="/">← Chat</a><h1>Account</h1>` + money + account + links;
 }
 function section_html(title, body) {
-  return `<section><h2>${esc(title)}</h2>${body}</section>`;
+  return `<section><h2>${esc2(title)}</h2>${body}</section>`;
 }
 function table_html(cls, head, rows) {
   const cells = (row, tag) => row.map((x) => `<${tag}>${spans_html(span_parse(x))}</${tag}>`).join("");
@@ -2518,8 +2696,10 @@ function block_html(b) {
       return `<${tag}>${spans_html(b.x)}</${tag}>`;
     }
     case "Code": {
-      const lang = b.k === "" ? "" : `<span class="lang">${esc(b.k)}</span>`;
-      return `<pre>${copy_html(b.x)}${lang}<code>${esc(b.x)}</code></pre>`;
+      const lang = b.k === "" ? "" : `<span class="lang">${esc2(b.k)}</span>`;
+      const hl = hl_lang(b.k);
+      return `<pre>${copy_html(b.x)}${lang}<code>${hl === null ? esc2(b.x) : hl_lines(b.x, hl).join(`
+`)}</code></pre>`;
     }
     case "Rule": {
       return "<hr>";
@@ -2553,15 +2733,15 @@ function diff_html(file, hunks) {
   const nw = all.reduce((w, l) => Math.max(w, String(l.n).length), 0);
   const adds = all.filter((l) => l.s === "+").length;
   const dels = all.filter((l) => l.s === "-").length;
-  const head = `<span class="lang">${esc(file)} <b class="add">+${adds}</b> <b class="del">-${dels}</b></span>`;
-  const line = (l) => `<span class="${MARKS[l.s]}"><i>${l.n}</i>${l.s} ${esc(l.x)}</span>`;
+  const head = `<span class="lang">${esc2(file)} <b class="add">+${adds}</b> <b class="del">-${dels}</b></span>`;
+  const line = (l) => `<span class="${MARKS[l.s]}"><i>${l.n}</i>${l.s} ${esc2(l.x)}</span>`;
   const lines = hunks.map((h) => h.map(line).join("")).join(`<span class="gap">⋯</span>`);
   return `<pre class="diff" style="--nw:${nw}ch">${head}<code>${lines}</code></pre>`;
 }
 function file_html(shown, from, lines) {
   const nw = String(from + lines.length - 1).length;
-  const head = `<span class="lang">${esc(shown)}</span>`;
-  const body = lines.map((x, k) => `<span class="file"><i>${from + k}</i>${esc(x)}</span>`).join("");
+  const head = `<span class="lang">${esc2(shown)}</span>`;
+  const body = lines.map((x, k) => `<span class="file"><i>${from + k}</i>${esc2(x)}</span>`).join("");
   return `<pre class="diff" style="--nw:${nw}ch">${head}<code>${body}</code></pre>`;
 }
 function spans_html(spans) {
@@ -2570,22 +2750,22 @@ function spans_html(spans) {
 function span_html(s) {
   switch (s.$) {
     case "Text": {
-      return esc(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
+      return esc2(s.x).replaceAll("Legion", `<span class="brand">Legion</span>`);
     }
     case "Code": {
-      return `<code>${esc(s.x)}</code>`;
+      return `<code>${esc2(s.x)}</code>`;
     }
     case "Bold": {
-      return `<strong>${esc(s.x)}</strong>`;
+      return `<strong>${esc2(s.x)}</strong>`;
     }
     case "Ital": {
-      return `<em>${esc(s.x)}</em>`;
+      return `<em>${esc2(s.x)}</em>`;
     }
     case "Link": {
-      return `<a href="${esc(s.k)}" target="_blank" rel="noopener">${esc(s.x)}</a>`;
+      return `<a href="${esc2(s.k)}" target="_blank" rel="noopener">${esc2(s.x)}</a>`;
     }
     case "Name": {
-      return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc(s.x)}]</button>`;
+      return `<button class="name"${act_html({ $: "Goto", name: s.x })}>[${esc2(s.x)}]</button>`;
     }
   }
 }
@@ -2855,138 +3035,13 @@ function up_next(v, now) {
   });
 }
 
-// Hl.ts
-var words = (s) => new Set(s.split(" "));
-var C_LIKE = { line: ["//"], block: [["/*", "*/"]] };
-var JS = {
-  ...C_LIKE,
-  quotes: ["`", '"', "'"],
-  long: ["`"],
-  words: words("as async await break case catch class const continue default delete do else enum export extends false finally for from function if implements import in instanceof interface let new null of private protected public readonly return static super switch this throw true try type typeof undefined var void while yield namespace declare keyof satisfies")
-};
-var PY = {
-  line: ["#"],
-  block: [],
-  quotes: ['"""', "'''", '"', "'"],
-  long: ['"""', "'''"],
-  words: words("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case self")
-};
-var SH = {
-  line: ["#"],
-  word: true,
-  block: [],
-  quotes: ['"', "'"],
-  long: ['"', "'"],
-  words: words("if then else elif fi for while until do done case esac in function return local export readonly set unset shift exit echo printf cd source trap")
-};
-var JSON_ = { line: [], block: [], quotes: ['"'], long: [], words: words("true false null") };
-var YAML = { line: ["#"], word: true, block: [], quotes: ['"', "'"], long: [], words: words("true false null yes no on off") };
-var TOML = { line: ["#"], block: [], quotes: ['"""', "'''", '"', "'"], long: ['"""', "'''"], words: words("true false") };
-var SQL = {
-  line: ["--"],
-  block: [["/*", "*/"]],
-  quotes: ["'", '"'],
-  long: ["'"],
-  fold: true,
-  words: words("select from where and or not in is null as join left right inner outer full cross on group by order having limit offset union all distinct insert into values update set delete create table view index drop alter add with case when then else end exists between like asc desc true false primary key references default")
-};
-var CSS2 = { line: [], block: [["/*", "*/"]], quotes: ['"', "'"], long: [], words: words("important inherit initial none auto") };
-var LANGS = {
-  ts: JS,
-  tsx: JS,
-  js: JS,
-  jsx: JS,
-  mjs: JS,
-  cjs: JS,
-  javascript: JS,
-  typescript: JS,
-  py: PY,
-  python: PY,
-  sh: SH,
-  bash: SH,
-  zsh: SH,
-  shell: SH,
-  json: JSON_,
-  jsonl: JSON_,
-  yaml: YAML,
-  yml: YAML,
-  toml: TOML,
-  sql: SQL,
-  css: CSS2
-};
-function hl_lang(name) {
-  const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
-  return Object.hasOwn(LANGS, ext) ? LANGS[ext] : null;
-}
-var ESC2 = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
-var esc2 = (s) => s.replace(/[&<>"]/g, (c) => ESC2[c]);
-var WORD = /[A-Za-z_$][\w$]*/y;
-var NUM = /\d[\w.]*/y;
-function quote_end(text, i, quote, lang) {
-  const escapes = !(lang === SH && quote === "'");
-  let j = i + quote.length;
-  while (j < text.length && !text.startsWith(quote, j) && (lang.long.includes(quote) || text[j] !== `
-`)) {
-    j += escapes && text[j] === "\\" ? 2 : 1;
-  }
-  return Math.min(text.length, text.startsWith(quote, j) ? j + quote.length : j);
-}
-function hl_lines(text, lang) {
-  const out = [""];
-  const put = (cls, s) => s.split(`
-`).forEach((part, k) => {
-    if (k > 0) {
-      out.push("");
-    }
-    out[out.length - 1] += part === "" || cls === "" ? esc2(part) : `<span class="${cls}">${esc2(part)}</span>`;
-  });
-  const starts = (at, s) => text.startsWith(s, at);
-  const inword = (at) => at > 0 && /[\w$]/.test(text[at - 1]);
-  let i = 0;
-  let plain = 0;
-  const take = (cls, end) => {
-    put("", text.slice(plain, i));
-    put(cls, text.slice(i, end));
-    i = plain = end;
-  };
-  while (i < text.length) {
-    const block = lang.block.find(([open2]) => starts(i, open2));
-    const line = lang.line.find((s) => starts(i, s) && !(lang.word && i > 0 && !/\s/.test(text[i - 1])));
-    const quote = lang.quotes.find((q) => starts(i, q));
-    if (block !== undefined) {
-      const end = text.indexOf(block[1], i + block[0].length);
-      take("c", end < 0 ? text.length : end + block[1].length);
-    } else if (line !== undefined) {
-      const end = text.indexOf(`
-`, i);
-      take("c", end < 0 ? text.length : end);
-    } else if (quote !== undefined) {
-      take("s", quote_end(text, i, quote, lang));
-    } else if (!inword(i) && (NUM.lastIndex = i, NUM.test(text))) {
-      take("n", NUM.lastIndex);
-    } else if (!inword(i) && (WORD.lastIndex = i, WORD.test(text))) {
-      const end = WORD.lastIndex;
-      const w = text.slice(i, end);
-      if (lang.words.has(lang.fold ? w.toLowerCase() : w)) {
-        take("k", end);
-      } else {
-        i = end;
-      }
-    } else {
-      i += 1;
-    }
-  }
-  put("", text.slice(plain));
-  return out;
-}
-
 // web/src/Pages.ts
 var ISSUES = "https://github.com/bobaseb-oc/uniichat/issues/new";
 function act_html2(act) {
-  return ` data-act="${esc(JSON.stringify(act))}"`;
+  return ` data-act="${esc2(JSON.stringify(act))}"`;
 }
 function link_html(url, text = "↗") {
-  return url === "" ? "" : `<a class="go" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
+  return url === "" ? "" : `<a class="go" href="${esc2(url)}" target="_blank" rel="noopener noreferrer" title="open">${text}</a>`;
 }
 var FIXABLE = ["failing", "conflicts", "changes"];
 function row_acts(s, r) {
@@ -3004,40 +3059,40 @@ function row_acts(s, r) {
 function detail_html(r) {
   const p = r.pr;
   if (p === undefined) {
-    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc(r.clean.path)}</code></div>`;
+    return r.clean === undefined ? "" : `<div class="ibd"><code>${esc2(r.clean.path)}</code></div>`;
   }
-  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc).join(" · ")}</p>`;
-  const body = p.body.trim() === "" ? "" : `<div class="body">${esc(p.body)}</div>`;
-  return `<div class="ibd"><p class="meta">${esc(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
+  const checks = p.failing.length === 0 ? "" : `<p class="fail">${p.failing.map(esc2).join(" · ")}</p>`;
+  const body = p.body.trim() === "" ? "" : `<div class="body">${esc2(p.body)}</div>`;
+  return `<div class="ibd"><p class="meta">${esc2(`+${p.add} −${p.del} · ${p.files} files · ${p.branch} · ${p.author}`)}</p>${checks}${body}</div>`;
 }
 function row_html2(s, r, ui) {
   const here = ui.cursor === r.key ? " here" : "";
-  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
-  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc(r.tag)}</span>`;
+  const pick = r.pr === undefined ? `<span class="pk"></span>` : `<input type="checkbox" class="pk" data-pick="${esc2(r.key)}"${ui.picks.has(r.key) ? " checked" : ""} aria-label="pick">`;
+  const tag = r.tag === "" ? "" : `<span class="tag ${r.tone}">${esc2(r.tag)}</span>`;
   const open2 = ui.detail === r.key ? detail_html(r) : "";
-  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
-  return `<div class="ibr ${r.kind}${here}" data-row="${esc(r.key)}">${pick}<span class="sub">${esc(r.sub)}</span><span class="t">${esc(r.title)}</span>${tag}<span class="age">${esc(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
+  const goto = r.agent === undefined ? "" : `<a class="go" href="#crew/${esc2(encodeURIComponent(r.agent))}" title="go to agent">→</a>`;
+  return `<div class="ibr ${r.kind}${here}" data-row="${esc2(r.key)}">${pick}<span class="sub">${esc2(r.sub)}</span><span class="t">${esc2(r.title)}</span>${tag}<span class="age">${esc2(r.age)}</span>${row_acts(s, r)}${link_html(r.url)}${goto}</div>${open2}`;
 }
 function inbox_html(sections, ui) {
   return sections.map((s) => {
     const shut = ui.shut.has(s.id);
-    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc(s.title)}</b><span class="meta">${esc(s.sub)}</span><span class="n">${s.count}</span></button>`;
+    const head = `<button class="ibt" data-fold="${s.id}"><span class="caret">${shut ? "▸" : "▾"}</span><b>${esc2(s.title)}</b><span class="meta">${esc2(s.sub)}</span><span class="n">${s.count}</span></button>`;
     const fresh = s.rows.filter((r) => !r.old).map((r) => row_html2(s.id, r, ui)).join("");
     const old = s.rows.filter((r) => r.old);
     const folded = old.length === 0 ? "" : `<details class="old"><summary>${old.length} older than 60 days</summary>${old.map((r) => row_html2(s.id, r, ui)).join("")}</details>`;
-    const note = s.note === undefined ? "" : `<p class="ibnote">${esc(s.note)}</p>`;
+    const note = s.note === undefined ? "" : `<p class="ibnote">${esc2(s.note)}</p>`;
     return `<section class="ibs${shut ? " shut" : ""}" data-sec="${s.id}">${head}<div class="ibrows">${note}${fresh}${folded}</div></section>`;
   });
 }
 function inbox_head(inbox, changed) {
-  const issue = `<a class="pbtn" href="${esc(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
+  const issue = `<a class="pbtn" href="${esc2(ISSUES)}" target="_blank" rel="noopener noreferrer">File issue</a>`;
   const refresh = `<button class="pbtn"${act_html2({ $: "Fetch" })} title="the devices read it anew">Refresh</button>`;
   if (inbox === null) {
     return `<div class="phead"><h2>Inbox</h2><p class="meta">No device has read the inbox yet: open a terminal (legion) or run legion device; it reads with your gh, acli and git.</p>${refresh}${issue}</div>`;
   }
   const at = new Date(inbox.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc(e)}</p>`).join("");
-  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
+  const errs = inbox.errors.filter((e) => !e.startsWith("acli")).map((e) => `<p class="err">${esc2(e)}</p>`).join("");
+  return `<div class="phead"><h2>Inbox</h2><p class="meta">updated ${esc2(at)} · ${changed} changed since you looked</p>${refresh}${issue}${errs}</div>`;
 }
 function picks_html(sections, picks, claude) {
   if (picks.size === 0) {
@@ -3048,31 +3103,31 @@ function picks_html(sections, picks, claude) {
   const reviews = keys.filter((k) => rows.some(([s, r]) => r.key === k && s === "reviews"));
   const fixes = keys.filter((k) => rows.some(([s, r]) => r.key === k && s !== "reviews" && FIXABLE.includes(r.pr.state)));
   const go = (label, prs, how) => prs.length === 0 ? "" : `<button class="pbtn"${act_html2(claude ? { $: "Review", prs, how, claude: true } : { $: "Review", prs, how })}>${label} ${prs.length}</button>`;
-  const list = keys.map((k) => `<li>${esc(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
+  const list = keys.map((k) => `<li>${esc2(rows.find(([, r]) => r.key === k)[1].sub + " " + rows.find(([, r]) => r.key === k)[1].title)}</li>`).join("");
   return `<aside class="picks"><b>${keys.length} picked</b><p class="meta">Each gets its own Legion agent.</p><ul>${list}</ul>` + `<label class="cc"><input type="checkbox" data-claude${claude ? " checked" : ""}> as Claude Code workers</label>` + `<div class="acts">${go("Review", reviews, "review")}${go("Fix", fixes, "fix")}<button class="pbtn" data-open-picks>Open</button><button class="pbtn" data-drop-picks>Drop picks</button></div></aside>`;
 }
 function card_html(c) {
   const archive = !["working", "waiting", "asking"].includes(c.status);
-  const chips = [c.repo, c.ticket, c.pr].filter((x) => x !== null).map((x) => `<span class="hchip">${esc(x)}</span>`).join("");
+  const chips = [c.repo, c.ticket, c.pr].filter((x) => x !== null).map((x) => `<span class="hchip">${esc2(x)}</span>`).join("");
   const under = c.under === 0 ? "" : `<span class="meta">${c.under} under it</span>`;
-  const acts = `<a class="pbtn" href="#crew/${esc(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
-  return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc(c.name)}</span><span class="meta">${esc(c.status)}</span><span class="age">${esc(c.age)}</span></div>` + `<b class="ht">${esc(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
+  const acts = `<a class="pbtn" href="#crew/${esc2(encodeURIComponent(c.name))}">Go to agent</a>` + (archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: [c.name] })}>Archive</button>` : "");
+  return `<div class="hcard ${c.status}"><div class="hc1"><span class="hchip who">${esc2(c.name)}</span><span class="meta">${esc2(c.status)}</span><span class="age">${esc2(c.age)}</span></div>` + `<b class="ht">${esc2(c.title)}</b><div class="hc2">${chips}${c.cost === "" ? "" : `<span class="cost">${esc2(c.cost)}</span>`}${under}</div><div class="hc3">${acts}</div></div>`;
 }
 var KIND_MARK = { review: "◎", assign: "▣", mention: "@", ci: "✗", security: "⚠", other: "•" };
 function home_html(v, now) {
   const day = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
-  const head = `<div class="phead home"><p class="meta">${esc(day)}</p><h2>${esc(home_greeting(now))}</h2><p class="meta">${esc(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
-  const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc(s.label)}</span><b>${esc(s.value)}</b><span class="meta">${esc(s.sub)}</span></a>`).join("")}</div>`;
+  const head = `<div class="phead home"><p class="meta">${esc2(day)}</p><h2>${esc2(home_greeting(now))}</h2><p class="meta">${esc2(home_line(v))}</p>` + `<button class="pbtn" data-new-agent title="start an agent on a task (/agent)">New agent</button><button class="pbtn" data-focus title="hide the side columns">Focus</button></div>`;
+  const stats = `<div class="stats">${home_stats(v).map((s) => `<a class="stat" href="${s.href}"><span class="meta">${esc2(s.label)}</span><b>${esc2(s.value)}</b><span class="meta">${esc2(s.sub)}</span></a>`).join("")}</div>`;
   const { working, done } = home_cards(v, now.getTime());
-  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map(card_html).join("")}</div>`;
+  const group = (title, cards, archive) => cards.length === 0 ? "" : `<div class="hgroup"><div class="hgh"><b>${esc2(title)}</b><span class="n">${cards.length}</span>${archive ? `<button class="pbtn"${act_html2({ $: "Archive", names: cards.map((c) => c.name) })}>Archive all</button>` : ""}</div>${cards.map(card_html).join("")}</div>`;
   const empty = working.length + done.length === 0 ? `<p class="meta">No agents yet: tell Legion what to do in the chat, or start one with New agent.</p>` : "";
   const apps = home_apps(v);
-  const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc(name)}</b><span class="meta">${esc(line)}</span></a>`;
+  const app = (href, name, line) => `<a class="app" href="${href}"><b>${esc2(name)}</b><span class="meta">${esc2(line)}</span></a>`;
   const signed = v.inbox?.errors.find((e) => e.startsWith("google:"));
   const next = up_next(v, now.getTime());
-  const meet = (url) => url === "" ? "" : `<a class="pbtn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
-  const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? next.map((e) => `<div class="next"><span class="when">${esc(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>` : `<p class="meta">${esc(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
-  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}` + `${app("#digest", "Digest", String(v.inbox?.digest?.merged.length ?? 0) + " merged this week")}${app("#files", "Files", files_line(v))}${app("#timesheet", "Timesheet", sheet_line(v))}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  const meet = (url) => url === "" ? "" : `<a class="pbtn" href="${esc2(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
+  const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? next.map((e) => `<div class="next"><span class="when">${esc2(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc2(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>` : `<p class="meta">${esc2(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
+  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}` + `${app("#digest", "Digest", String(v.inbox?.digest?.merged.length ?? 0) + " merged this week")}${app("#files", "Files", files_line(v))}${app("#timesheet", "Timesheet", sheet_line(v))}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc2(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc2(n.title)}</span><span class="meta">${esc2(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
 }
 function with_files(v) {
@@ -3108,12 +3163,12 @@ function side_html(v, mode, now) {
   ];
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
   const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
-  const groups = side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc(g.ticket ?? "–")}</div>${g.agents.map((a) => `<a class="sagent ${a.status}" href="#crew/${esc(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc(a.title)}</span><span class="age">${esc(a.age)}</span></a>`).join("")}</div>`).join("");
+  const groups = side_groups(v, now).map((g) => `<div class="sgroup"><div class="sgh">${esc2(g.ticket ?? "–")}</div>${g.agents.map((a) => `<a class="sagent ${a.status}" href="#crew/${esc2(encodeURIComponent(a.name))}"><span class="st">${MARK[a.status]}</span><span class="t">${esc2(a.title)}</span><span class="age">${esc2(a.age)}</span></a>`).join("")}</div>`).join("");
   const count = v.crew.filter((c) => c.parent === "main").length;
   const agents = `<section class="sagents"><h3>Agents <span class="n">${count}</span></h3>${groups || `<p class="meta">None yet.</p>`}</section>`;
   const all = side_spaces(v);
   const more = all.length > SPACES ? `<p class="meta">+${all.length - SPACES} more (the palette finds them)</p>` : "";
-  const spaces = `<section class="sspaces"><h3>Spaces</h3>${all.slice(0, SPACES).map((s) => `<button class="sspace" data-space="${esc(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}${more}</section>`;
+  const spaces = `<section class="sspaces"><h3>Spaces</h3>${all.slice(0, SPACES).map((s) => `<button class="sspace" data-space="${esc2(s.repo)}" title="the inbox, filtered by it"><span class="t">${esc2(s.repo)}</span>${s.agents === 0 ? "" : `<span class="meta">${s.agents}×</span>`}${s.clean === 0 ? "" : `<span class="dirty" title="worktrees to clean up">${s.clean}</span>`}</button>`).join("") || `<p class="meta">None yet.</p>`}${more}</section>`;
   const foot = `<div class="sfoot"><button data-go="/account">Settings</button><button data-add-machine title="another computer runs agents' jobs">Add machine</button></div>`;
   return [search, nav, agents, spaces, foot];
 }
@@ -3121,18 +3176,18 @@ function palette_html(items, sel) {
   if (items.length === 0) {
     return [`<p class="meta pnone">Nothing matches.</p>`];
   }
-  return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc(it.label)}</span><span class="meta">${esc(it.hint)}</span></button>`);
+  return items.slice(0, 50).map((it, k) => `<button class="pi${k === sel ? " here" : ""}" data-pi="${k}"><span class="t">${esc2(it.label)}</span><span class="meta">${esc2(it.hint)}</span></button>`);
 }
 function routines_html(v, now) {
   const time = (ms) => new Date(ms).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
   const rows = (v.routines ?? []).map((r) => {
     const next = routine_next(r, now);
-    const when = `<span class="meta">${esc(when_text(r.when))} · ${r.tier}${!r.on ? " · off" : next === null ? "" : " · next " + esc(time(next))}${r.last === null ? "" : " · last " + esc(age(now - r.last)) + " ago"}</span>`;
+    const when = `<span class="meta">${esc2(when_text(r.when))} · ${r.tier}${!r.on ? " · off" : next === null ? "" : " · next " + esc2(time(next))}${r.last === null ? "" : " · last " + esc2(age(now - r.last)) + " ago"}</span>`;
     const run = r.when.$ === "review" ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "run", n: r.id })}>Run now</button>`;
     const flip = `<button class="pbtn"${act_html2({ $: "Routine", op: "toggle", n: r.id, on: !r.on })}>${r.on ? "Turn off" : "Turn on"}</button>`;
     const drop = `<button class="pbtn"${act_html2({ $: "Routine", op: "drop", n: r.id })}>Delete</button>`;
-    const task = r.task === "" ? "" : `<p class="rtask">${esc(r.task)}</p>`;
-    return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
+    const task = r.task === "" ? "" : `<p class="rtask">${esc2(r.task)}</p>`;
+    return `<div class="routine${r.on ? "" : " off"}"><div class="rh"><b>${r.id}. ${esc2(r.name)}</b>${when}</div>${task}<div class="acts">${run}${flip}${drop}</div></div>`;
   });
   const head = `<div class="phead"><h2>Routines</h2><p class="meta">Each starts a Legion agent on its task; they run while Legion's server runs and a view or a device is connected.</p></div>`;
   const form = `<form class="radd"><b>New routine</b><input name="name" placeholder="Name" maxlength="${NAME}" required>` + `<div class="rwhen"><select name="kind"><option value="daily">daily at</option><option value="weekly">weekly on</option><option value="every">every</option><option value="review">on each new review request</option></select>` + `<select name="day" aria-label="day">${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => `<option value="${i}"${i === 5 ? " selected" : ""}>${d}</option>`).join("")}</select>` + `<input name="at" type="time" value="09:00"><input name="hours" type="number" min="1" max="${HOURS}" value="4" aria-label="hours"><span class="meta">hours</span>` + `<select name="tier"><option value="worker">a worker</option><option value="manager">a manager</option></select></div>` + `<textarea name="task" rows="3" placeholder="The task (a review routine: what to look at besides the review)" maxlength="${TASK}"></textarea><button class="pbtn">Add</button></form>`;
@@ -3144,14 +3199,14 @@ function digest_html(v) {
   if (d === null) {
     return [`<div class="phead"><h2>Digest</h2><p class="meta">No digest yet: a device reads it from your spaces' GitHub repos (UNII_SPACES on the device, else its home repo).</p>${refresh}</div>`];
   }
-  const head = `<div class="phead"><h2>${esc(d.repos.join(", "))}: last 7 days</h2><p class="meta">${d.merged.length} merged · ${d.open.length} open</p>` + `<button class="pbtn"${act_html2({ $: "Themes" })} title="one call to the compactor's model">Summarize by theme</button>${refresh}</div>`;
-  const pr = (p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a> <span class="meta">#${p.number}</span></li>`;
+  const head = `<div class="phead"><h2>${esc2(d.repos.join(", "))}: last 7 days</h2><p class="meta">${d.merged.length} merged · ${d.open.length} open</p>` + `<button class="pbtn"${act_html2({ $: "Themes" })} title="one call to the compactor's model">Summarize by theme</button>${refresh}</div>`;
+  const pr = (p) => `<li><a href="${esc2(p.url)}" target="_blank" rel="noopener noreferrer">${esc2(p.title)}</a> <span class="meta">#${p.number}</span></li>`;
   const merged = digest_groups(d.merged).map((g) => {
     const themes = v.themes?.[g.author];
-    const lines = themes !== undefined && themes.length > 0 ? themes.map((t) => `<li>${esc(t)}</li>`).join("") : g.prs.map(pr).join("");
-    return `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${lines}</ul></div>`;
+    const lines = themes !== undefined && themes.length > 0 ? themes.map((t) => `<li>${esc2(t)}</li>`).join("") : g.prs.map(pr).join("");
+    return `<div class="dauthor"><h4>${esc2(g.author)}</h4><ul>${lines}</ul></div>`;
   });
-  const open2 = digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
+  const open2 = digest_groups(d.open).map((g) => `<div class="dauthor"><h4>${esc2(g.author)}</h4><ul>${g.prs.map(pr).join("")}</ul></div>`);
   return [head, `<section class="digest"><h3>Merged</h3>${merged.join("") || `<p class="meta">Nothing merged this week.</p>`}</section>`, `<section class="digest"><h3>In progress</h3>${open2.join("") || `<p class="meta">Nothing open.</p>`}</section>`];
 }
 function transcripts_html(v, sel, reading) {
@@ -3159,17 +3214,17 @@ function transcripts_html(v, sel, reading) {
   const head = `<div class="phead"><h2>Transcripts</h2><p class="meta">Recorded calls: last 14 days</p><button class="pbtn"${act_html2({ $: "Fetch" })}>Refresh</button></div>`;
   if (g === null) {
     const why = v.inbox?.errors.find((e) => e.startsWith("google:")) ?? "google: run legion google-login on your device";
-    return [head, `<p class="meta">${esc(why.replace(/^google: /, "Google: "))}</p>`];
+    return [head, `<p class="meta">${esc2(why.replace(/^google: /, "Google: "))}</p>`];
   }
   const day = (at) => new Date(at).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  const list = g.docs.map((d) => `<button class="tdoc${d.id === sel ? " here" : ""}" data-doc="${esc(d.id)}"><span class="meta">${esc(day(d.at))}</span><span class="t">${esc(d.title)}</span>${v.summaries.has(d.id) ? `<span class="meta">summarized</span>` : ""}</button>`).join("") || `<p class="meta">No transcripts in the last 14 days.</p>`;
+  const list = g.docs.map((d) => `<button class="tdoc${d.id === sel ? " here" : ""}" data-doc="${esc2(d.id)}"><span class="meta">${esc2(day(d.at))}</span><span class="t">${esc2(d.title)}</span>${v.summaries.has(d.id) ? `<span class="meta">summarized</span>` : ""}</button>`).join("") || `<p class="meta">No transcripts in the last 14 days.</p>`;
   const doc = g.docs.find((d) => d.id === sel);
   let body = `<p class="meta">Pick a transcript.</p>`;
   if (doc !== undefined) {
     const s = v.summaries.get(doc.id);
-    const open2 = doc.url === "" ? "" : `<a class="pbtn" href="${esc(doc.url)}" target="_blank" rel="noopener noreferrer">Open full transcript</a>`;
+    const open2 = doc.url === "" ? "" : `<a class="pbtn" href="${esc2(doc.url)}" target="_blank" rel="noopener noreferrer">Open full transcript</a>`;
     const what = s !== undefined ? `<div class="tsum">${md_parse(s.text).map(block_html).join("")}</div>` : reading.has(doc.id) ? `<p class="meta">Reading and summarizing…</p>` : `<button class="pbtn"${act_html2({ $: "Transcript", id: doc.id })} title="its text goes to the compactor's model, once">Summarize</button>`;
-    body = `<h3>${esc(doc.title)}</h3><p class="meta">${esc(day(doc.at))}</p><div class="acts">${open2}</div>${what}`;
+    body = `<h3>${esc2(doc.title)}</h3><p class="meta">${esc2(day(doc.at))}</p><div class="acts">${open2}</div>${what}`;
   }
   return [head, `<div class="tcols"><div class="tlist">${list}</div><div class="tbody">${body}</div></div>`];
 }
@@ -3177,34 +3232,69 @@ function files_html(v) {
   const looked = v.looked;
   const head = `<div class="phead"><h2>Files</h2><p class="meta">What the agents read and changed, read-only; Git: its repo</p></div>`;
   const agents = v.crew.filter((c) => (c.files ?? []).length > 0).map((c) => {
-    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc(f)}</button>`).join("");
-    return `<div class="fgroup"><h3>${esc(c.title ?? c.name)} <span class="meta">${esc(c.name)}</span></h3>${files}</div>`;
+    const files = (c.files ?? []).map((f) => `<button class="fpath${looked?.kind === "file" && looked.path?.endsWith("/" + f.replace(/^\.?\//, "")) ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "file", path: f, agent: c.name } })}>${esc2(f)}</button>`).join("");
+    const full = (c.files ?? []).find((f) => f.startsWith("/"));
+    const changes = full === undefined ? "" : ` <button class="pbtn" title="its branch's work since main, committed or not"${act_html2({ $: "Look", what: { kind: "git", repo: full, op: "changes" } })}>changes</button>`;
+    return `<div class="fgroup"><h3>${esc2(c.title ?? c.name)} <span class="meta">${esc2(c.name)}</span>${changes}</h3>${files}</div>`;
   }).join("") || `<p class="meta">No agent has read or changed a file yet. A path in the chat opens here too.</p>`;
   const repo = looked?.path ?? "@home";
   const editor = looked?.kind === "file" && looked.path !== undefined && looked.error === undefined ? `<button class="pbtn" title="in VS Code, else your default editor"${act_html2({ $: "Look", what: { kind: "open", path: looked.path } })}>Open in editor</button>` : "";
-  const opened = v.opened === null ? "" : `<span class="meta">${esc(v.opened)}</span>`;
-  const git = ["status", "log", "diff", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
-  const where = `<div class="fbar"><span class="meta">${esc(looked?.path ?? "home repo")}</span>${editor}${opened}<span class="fgit">Git: ${git}</span></div>`;
+  const told = v.told === null ? "" : `<span class="meta">${esc2(v.told)}</span>`;
+  const shown = looked?.kind === "file" && looked.hash !== undefined && looked.error === undefined;
+  const edit = !shown || v.editing ? "" : `<button class="pbtn" title="edit it here; saved only if unchanged since shown"${act_html2({ $: "Edit", on: true })}>Edit</button>`;
+  const git = ["status", "log", "diff", "changes", "branches"].map((op) => `<button class="pbtn${looked?.kind === "git" && looked.op === op ? " here" : ""}"${act_html2({ $: "Look", what: { kind: "git", repo, op } })}>${op}</button>`).join("");
+  const where = `<div class="fbar"><span class="meta">${esc2(looked?.path ?? "home repo")}</span>${editor}${edit}${told}<span class="fgit">Git: ${git}</span></div>`;
   const dir = looked?.path === undefined ? "" : looked.kind === "file" ? looked.path.slice(0, Math.max(1, looked.path.lastIndexOf("/"))) : looked.path;
-  const run = `<form class="fsh" data-dir="${esc(dir)}"><input placeholder="Run a command in ${esc(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
-  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${shown_html(looked, v.source)}</div></div>`];
+  const run = `<form class="fsh" data-dir="${esc2(dir)}"><input placeholder="Run a command in ${esc2(dir || "the home repo")} (its output comes in the chat)" aria-label="run a command here" autocomplete="off"></form>`;
+  return [head, `<div class="tcols"><div class="tlist">${explorer_html(v)}${agents}</div><div class="tbody">${where}${run}${v.editing && shown ? edit_html(looked.text ?? "") : shown_html(looked, v.source, v.line)}</div></div>`];
+}
+function edit_html(text) {
+  return `<form class="fedit" data-edit><textarea data-keep="edit" spellcheck="false" aria-label="the file's text">${esc2(text)}</textarea><div class="acts"><button type="submit" class="pbtn">Save</button><button type="button" class="pbtn"${act_html2({ $: "Edit", on: false })}>Cancel</button><span class="meta">⌘S saves</span></div></form>`;
+}
+function found_html(v) {
+  const f = v.found;
+  const box = (kind, hint) => `<form class="ffind" data-find="${kind}"><input data-keep="${kind}" value="${esc2(f?.kind === kind ? f.q : "")}" placeholder="${hint}" aria-label="${hint}" autocomplete="off"></form>`;
+  const boxes = box("find", "Find a file… ⌘P") + box("grep", "Search text… ⌘⇧F");
+  if (f === null) {
+    return boxes;
+  }
+  const close2 = `<button class="fclose" title="clear"${act_html2({ $: "Find", kind: f.kind, q: "" })}>×</button>`;
+  if (f.by.size === 0) {
+    return boxes + `<p class="meta">Open a workspace to find in it.</p>`;
+  }
+  const each = [...f.by].map(([w, got]) => {
+    const head = `<p class="meta fx">${esc2(w.slice(w.lastIndexOf("/") + 1) || w)}</p>`;
+    if (got.error !== undefined || got.text === undefined) {
+      return head + `<p class="meta fx" style="--d:1">${esc2(got.error ?? (f.kind === "find" ? "Finding…" : "Searching…"))}</p>`;
+    }
+    const rows = got.text.split(`
+`).filter((l) => l !== "").map((l) => {
+      if (f.kind === "find") {
+        return `<button class="fx" style="--d:1"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + l } })}>${esc2(l)}</button>`;
+      }
+      const m = /^(.*?):(\d+):(.*)$/.exec(l);
+      return m === null ? "" : `<button class="fx" style="--d:1" title="${esc2(m[1] + ":" + m[2])}"${act_html2({ $: "Look", what: { kind: "file", path: w + "/" + m[1], line: Number(m[2]) } })}><b>${esc2(m[1].slice(m[1].lastIndexOf("/") + 1))}:${m[2]}</b> ${esc2(m[3].trim())}</button>`;
+    });
+    return head + (rows.join("") || `<p class="meta fx" style="--d:1">none</p>`);
+  }).join("");
+  return boxes + `<div class="ffound"><h3>${f.kind === "find" ? "Files" : "Lines"} with “${esc2(f.q)}” ${close2}</h3>${each}</div>`;
 }
 function explorer_html(v) {
   const roots = (v.dirs.get("@roots")?.text ?? "").split(`
 `).filter((l) => l.startsWith("d ")).map((l) => l.slice(2));
   const base = (p) => p.slice(p.lastIndexOf("/") + 1) || p;
-  const pick = roots.filter((r) => !v.workspaces.includes(r)).map((r) => `<option value="${esc(r)}">${esc(base(r) + " — " + r)}</option>`).join("");
+  const pick = roots.filter((r) => !v.workspaces.includes(r)).map((r) => `<option value="${esc2(r)}">${esc2(base(r) + " — " + r)}</option>`).join("");
   const picker = `<select data-ws aria-label="open a workspace"><option value="">Open a workspace…</option>${pick}</select>`;
   const spaces = v.workspaces.map((w) => {
     const open2 = v.unfolded.has(w);
-    const head = `<div class="fws"><button class="fx fdir" title="${esc(w)}"${act_html2({ $: "Tree", path: w })}>${open2 ? "▾" : "▸"} ${esc(base(w))}</button><button class="fclose" title="close this workspace"${act_html2({ $: "Workspace", path: w, on: false })}>×</button></div>`;
+    const head = `<div class="fws"><button class="fx fdir" title="${esc2(w)}"${act_html2({ $: "Tree", path: w })}>${open2 ? "▾" : "▸"} ${esc2(base(w))}</button><button class="fclose" title="close this workspace"${act_html2({ $: "Workspace", path: w, on: false })}>×</button></div>`;
     return head + (open2 ? folder_html(v, w, 1) : "");
   }).join("");
-  return `<div class="fgroup fexp"><h3>Workspaces</h3>${picker}${spaces}</div>`;
+  return `<div class="fgroup fexp">${found_html(v)}<h3>Workspaces</h3>${picker}${spaces}</div>`;
 }
 function folder_html(v, dir, depth) {
   const got = v.dirs.get(dir);
-  const note = (s) => `<p class="meta fx" style="--d:${depth}">${esc(s)}</p>`;
+  const note = (s) => `<p class="meta fx" style="--d:${depth}">${esc2(s)}</p>`;
   if (got?.error !== undefined) {
     return note(got.error);
   }
@@ -3218,17 +3308,18 @@ function folder_html(v, dir, depth) {
     const pad = ` style="--d:${depth}"`;
     if (l[0] === "d") {
       const open2 = v.unfolded.has(at);
-      return `<button class="fx fdir"${pad}${act_html2({ $: "Tree", path: at })}>${open2 ? "▾" : "▸"} ${esc(name)}</button>${open2 ? folder_html(v, at, depth + 1) : ""}`;
+      return `<button class="fx fdir"${pad}${act_html2({ $: "Tree", path: at })}>${open2 ? "▾" : "▸"} ${esc2(name)}</button>${open2 ? folder_html(v, at, depth + 1) : ""}`;
     }
     if (l[0] === "s") {
-      return `<button class="fx fsec"${pad} title="may hold a secret: opens in your editor, never here"${act_html2({ $: "Look", what: { kind: "open", path: at } })}>\uD83D\uDD12 ${esc(name)}</button>`;
+      return `<button class="fx fsec"${pad} title="may hold a secret: opens in your editor, never here"${act_html2({ $: "Look", what: { kind: "open", path: at } })}>\uD83D\uDD12 ${esc2(name)}</button>`;
     }
     const here = v.looked?.kind === "file" && v.looked.path === at ? " here" : "";
-    return `<button class="fx${here}"${pad}${act_html2({ $: "Look", what: { kind: "file", path: at } })}>${esc(name)}</button>`;
+    return `<button class="fx${here}"${pad}${act_html2({ $: "Look", what: { kind: "file", path: at } })}>${esc2(name)}</button>`;
   });
   return rows.join("") || note("(empty)");
 }
-function file_html2(path, text, source) {
+function file_html2(path, text, asked, line) {
+  const source = asked || line !== null;
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   const kind = ["md", "markdown"].includes(ext) ? "md" : ["html", "htm"].includes(ext) ? "html" : null;
   const toggle = kind === null ? "" : `<button class="pbtn"${act_html2({ $: "Source", on: !source })}>${source ? kind === "md" ? "Rendered" : "Preview" : "Source"}</button>`;
@@ -3236,23 +3327,24 @@ function file_html2(path, text, source) {
     return `${toggle}<div class="msg fmd">${md_parse(text).map(block_html).join("")}</div>`;
   }
   if (kind === "html" && !source) {
-    return `${toggle}<iframe class="fprev" sandbox="" srcdoc="${esc(text)}"></iframe>`;
+    return `${toggle}<iframe class="fprev" sandbox="" srcdoc="${esc2(text)}"></iframe>`;
   }
   const lang = hl_lang(path);
   const lines = lang === null ? text.replace(/\n$/, "").split(`
-`).map(esc) : hl_lines(text.replace(/\n$/, ""), lang);
-  return `${toggle}<pre class="code">${lines.map((l, k) => `<span class="ln">${k + 1}</span>${l}`).join(`
+`).map(esc2) : hl_lines(text.replace(/\n$/, ""), lang);
+  const row = (l, k) => k + 1 === line ? `<span class="hit" id="L${k + 1}"><span class="ln">${k + 1}</span>${l}</span>` : `<span class="ln">${k + 1}</span>${l}`;
+  return `${toggle}<pre class="code">${lines.map(row).join(`
 `)}</pre>`;
 }
-function shown_html(looked, source) {
+function shown_html(looked, source, at) {
   if (looked === null) {
     return `<p class="meta">Pick a file, or a git view.</p>`;
   }
   if (looked.error !== undefined) {
-    return `<p class="meta">${esc(looked.error)}</p>`;
+    return `<p class="meta">${esc2(looked.error)}</p>`;
   }
   if (looked.kind === "file") {
-    return file_html2(looked.path ?? "", looked.text ?? "", source);
+    return file_html2(looked.path ?? "", looked.text ?? "", source, at);
   }
   const lines = (looked.text ?? "").replace(/\n$/, "").split(`
 `);
@@ -3260,10 +3352,10 @@ function shown_html(looked, source) {
   const line = (l) => {
     const sha = looked.op === "log" ? /^([0-9a-f]{7,40})\b/.exec(l)?.[1] : undefined;
     if (sha !== undefined) {
-      return `<button class="sha"${act_html2({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc(sha)}</button>${esc(l.slice(sha.length))}`;
+      return `<button class="sha"${act_html2({ $: "Look", what: { kind: "git", repo, op: "show", rev: sha } })}>${esc2(sha)}</button>${esc2(l.slice(sha.length))}`;
     }
     const cls = l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : "";
-    return cls === "" ? esc(l) : `<span class="${cls}">${esc(l)}</span>`;
+    return cls === "" ? esc2(l) : `<span class="${cls}">${esc2(l)}</span>`;
   };
   return `<pre class="code git">${lines.map(line).join(`
 `)}</pre>`;
@@ -3285,13 +3377,13 @@ function timesheet_html(v) {
   }
   const days = [...new Set(drafts.map((d) => d.date))].sort().reverse();
   const row = (d) => {
-    const state = d.state === "sent" ? `<span class="tag ok">Harvest #${esc(String(d.harvest ?? ""))}</span>` : d.state === "failed" ? `<span class="tag bad">${esc(d.error ?? "failed")}</span>` : d.state === "sending" ? `<span class="tag">sending</span>` : `<button class="x" title="drop"${act_html2({ $: "Timesheet", op: "drop", ns: [d.n] })}>×</button>`;
-    return `<div class="trow ${esc(d.state)}"><span class="h">${esc(String(d.hours))} h</span><span class="p">${esc(d.project)} · ${esc(d.task)}</span><span class="n">${esc(d.notes)}</span><span class="meta why">${esc(d.why)} · by ${esc(d.by)}</span>${state}</div>`;
+    const state = d.state === "sent" ? `<span class="tag ok">Harvest #${esc2(String(d.harvest ?? ""))}</span>` : d.state === "failed" ? `<span class="tag bad">${esc2(d.error ?? "failed")}</span>` : d.state === "sending" ? `<span class="tag">sending</span>` : `<button class="x" title="drop"${act_html2({ $: "Timesheet", op: "drop", ns: [d.n] })}>×</button>`;
+    return `<div class="trow ${esc2(d.state)}"><span class="h">${esc2(String(d.hours))} h</span><span class="p">${esc2(d.project)} · ${esc2(d.task)}</span><span class="n">${esc2(d.notes)}</span><span class="meta why">${esc2(d.why)} · by ${esc2(d.by)}</span>${state}</div>`;
   };
   const body = days.map((day) => {
     const of = drafts.filter((d) => d.date === day);
     const total = Math.round(of.reduce((t, d) => t + d.hours, 0) * 100) / 100;
-    return `<div class="tday"><h3>${esc(day)} <span class="meta">${total} h</span></h3>${of.map(row).join("")}</div>`;
+    return `<div class="tday"><h3>${esc2(day)} <span class="meta">${total} h</span></h3>${of.map(row).join("")}</div>`;
   }).join("");
   return [head, body];
 }
@@ -3336,6 +3428,7 @@ var P = {
 };
 var C = {
   rooted: 0,
+  lined: null,
   restored: false,
   shut: new Set,
   cursor: null,
@@ -3493,6 +3586,9 @@ function chat() {
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
   $("#page").addEventListener("submit", files_run);
+  $("#page").addEventListener("submit", files_find);
+  $("#page").addEventListener("submit", files_save);
+  document.addEventListener("keydown", files_keys);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -3608,7 +3704,8 @@ function click(ev) {
   const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : view_path(code.textContent ?? "");
   if (named !== null) {
     const agent = v.page?.name ?? null;
-    act({ $: "Look", what: { kind: "file", path: named, ...agent === null ? {} : { agent } } });
+    const line = view_line(code.textContent ?? "");
+    act({ $: "Look", what: { kind: "file", path: named, ...agent === null ? {} : { agent }, ...line === null ? {} : { line } } });
     location.hash = "#files";
     return;
   }
@@ -4007,7 +4104,7 @@ function import_draw(status) {
   for (const src of import_srcs()) {
     const list = src.querySelector(".sessions");
     const shown = plan.sessions.filter((s) => s.app === src.dataset.app);
-    markup(list, shown.map((s) => `<label title="${esc(s.where + ", " + import_count(s.heads.length, ""))}"><input type="checkbox" name="session" value="${esc(import_id(s))}">${import_cells(s).map((c) => `<span>${esc(c)}</span>`).join("")}</label>`));
+    markup(list, shown.map((s) => `<label title="${esc2(s.where + ", " + import_count(s.heads.length, ""))}"><input type="checkbox" name="session" value="${esc2(import_id(s))}">${import_cells(s).map((c) => `<span>${esc2(c)}</span>`).join("")}</label>`));
     list.querySelectorAll("input").forEach((box) => box.checked = !P.off.has(box.value));
     const on = shown.filter((s) => !P.off.has(import_id(s))).length;
     src.querySelector(".pick").hidden = shown.length === 0;
@@ -4268,7 +4365,10 @@ function page_bars(mode) {
     files_open();
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
+    const typed = typing($("#page .pbody"));
     markup($("#page .pbody"), files_html(v));
+    typed();
+    files_drawn();
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -4361,6 +4461,61 @@ function palette_run(k) {
     document.body.classList.toggle("focus");
   }
   draw(true);
+}
+function typing(el) {
+  const was = [...el.querySelectorAll("[data-keep]")].map((box) => ({
+    key: box.dataset.keep,
+    value: box.value,
+    focus: document.activeElement === box,
+    from: box.selectionStart,
+    to: box.selectionEnd,
+    top: box.scrollTop
+  }));
+  return () => {
+    for (const w of was) {
+      const box = el.querySelector(`[data-keep="${w.key}"]`);
+      if (box === null || box.value === w.value && !w.focus || !w.focus && box.tagName === "INPUT") {
+        continue;
+      }
+      box.value = w.value;
+      box.scrollTop = w.top;
+      if (w.focus) {
+        box.focus();
+        box.setSelectionRange(w.from, w.to);
+      }
+    }
+  };
+}
+function files_find(ev) {
+  const form = ev.target.closest("form.ffind");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  act({ $: "Find", kind: form.dataset.find === "grep" ? "grep" : "find", q: form.querySelector("input").value });
+}
+function files_save(ev) {
+  const form = ev.target.closest("form.fedit");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  act({ $: "Save", text: form.querySelector("textarea").value });
+}
+function files_keys(ev) {
+  if (view_route(location.hash).mode !== "files" || !(ev.metaKey || ev.ctrlKey)) {
+    return;
+  }
+  const key = ev.key.toLowerCase();
+  const box = key === "p" && !ev.shiftKey ? "find" : key === "f" && ev.shiftKey ? "grep" : null;
+  if (box !== null) {
+    ev.preventDefault();
+    document.querySelector(`#page [data-keep="${box}"]`)?.focus();
+  }
+  if (key === "s" && document.activeElement?.closest("form.fedit") !== null && document.activeElement !== null) {
+    ev.preventDefault();
+    document.activeElement.closest("form.fedit").requestSubmit();
+  }
 }
 function files_run(ev) {
   const form = ev.target.closest("form.fsh");
@@ -4471,6 +4626,13 @@ function page_change(ev) {
     return;
   }
   draw(true);
+}
+function files_drawn() {
+  const at = v.line === null ? null : document.getElementById("L" + v.line);
+  if (at !== null && C.lined !== v.looked?.id) {
+    C.lined = v.looked?.id ?? null;
+    at.scrollIntoView({ block: "center" });
+  }
 }
 function files_open() {
   if (v.dirs.get("@roots")?.text === undefined && Date.now() - C.rooted > 1e4) {

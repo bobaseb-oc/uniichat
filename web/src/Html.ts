@@ -8,6 +8,7 @@
 
 import * as Call from "../../Call.ts";
 import * as Md from "../../Md.ts";
+import { hl_lang, hl_lines } from "../../Hl.ts";
 import * as Theme from "../../Theme.ts";
 import type { Mode as Perm } from "../../Modes.ts";
 import * as View from "../../View.ts";
@@ -344,7 +345,8 @@ export function block_html(b: Md.Block): string {
     }
     case "Code": {
       const lang = b.k === "" ? "" : `<span class="lang">${esc(b.k)}</span>`;
-      return `<pre>${copy_html(b.x)}${lang}<code>${esc(b.x)}</code></pre>`;
+      const hl = hl_lang(b.k);
+      return `<pre>${copy_html(b.x)}${lang}<code>${hl === null ? esc(b.x) : hl_lines(b.x, hl).join("\n")}</code></pre>`;
     }
     case "Rule": {
       return "<hr>";

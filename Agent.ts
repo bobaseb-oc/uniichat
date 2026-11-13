@@ -149,6 +149,10 @@ export const READING = { n: 0 };
 // =====
 
 export namespace Agent {
+  // when a model last answered busy (ms; 0: not since start), for the
+  // status line's "AI service busy" (the server's gateway report)
+  export const health = { busy: 0 };
+
 
   export function ask(ask: Ask, on: (ev: Event) => void): Try {
     const end = AskAI.end("");
@@ -266,6 +270,9 @@ export namespace Agent {
           return Agent.fail("stopped", seen);
         }
         const { res, step } = got;
+        if (step.stop === "busy") {
+          Agent.health.busy = Date.now();
+        }
         if (step.stop === "down") {
           console.error(model + ": " + step.why.slice(0, 300));
         }

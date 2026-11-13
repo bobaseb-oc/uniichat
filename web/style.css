@@ -741,3 +741,15 @@ pre.code .sha { font: inherit; color: var(--accent); padding: 0; text-decoration
 .fx.here { background: var(--block); }
 p.fx { cursor: default; }
 .fsec { color: var(--soft); }
+/* a message's fenced code colored (Hl.ts), as a file's is */
+.msg pre .k { color: var(--accent); }
+.msg pre .s { color: var(--hl-s); }
+.msg pre .n { color: var(--hl-n); }
+.msg pre .c { color: var(--soft); font-style: italic; }
+pre.code .hit { display: inline-block; min-width: 100%; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* the explorer's find and search (⌘P, ⌘⇧F), and the file's editing box */
+.ffind input { width: 100%; margin: 0 0 4px; font: 12px var(--mono); }
+.ffound { margin: 4px 0 10px; }
+.ffound b { font-weight: 600; }
+.fedit textarea { width: 100%; height: calc(100vh - 280px); font: 12px/1.5 ui-monospace, monospace; padding: 10px; border-radius: 8px; border: 1px solid var(--frame); background: var(--block); color: var(--ink); white-space: pre; tab-size: 4; }
+.fedit .acts { display: flex; gap: 6px; align-items: center; margin-top: 6px; }

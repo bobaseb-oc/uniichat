@@ -110,6 +110,7 @@ const P = {
 // (what changed since the user looked), the inbox last stamped
 const C = {
   rooted  : 0, // when the explorer's roots were last asked (files_open)
+  lined   : null as string | null, // the file shown whose asked line was scrolled to (files_drawn)
   restored: false, // the explorer's kept workspaces opened again
   shut    : new Set<string>(),
   cursor  : null as string | null,
@@ -300,6 +301,9 @@ function chat(): void {
   $("#side").addEventListener("click", page_click);
   $("#page").addEventListener("submit", routine_add);
   $("#page").addEventListener("submit", files_run);
+  $("#page").addEventListener("submit", files_find);
+  $("#page").addEventListener("submit", files_save);
+  document.addEventListener("keydown", files_keys);
   document.addEventListener("keydown", palette_keys);
   $("#pq").oninput = () => {
     C.pal = 0;
@@ -434,7 +438,8 @@ function click(ev: MouseEvent): void {
   const named = code === null || code.closest("pre") !== null || !(getSelection()?.isCollapsed ?? true) ? null : View.view_path(code.textContent ?? "");
   if (named !== null) {
     const agent = v.page?.name ?? null;
-    act({ $: "Look", what: { kind: "file", path: named, ...(agent === null ? {} : { agent }) } });
+    const line = View.view_line(code.textContent ?? "");
+    act({ $: "Look", what: { kind: "file", path: named, ...(agent === null ? {} : { agent }), ...(line === null ? {} : { line }) } });
     location.hash = "#files";
     return;
   }
@@ -1261,7 +1266,10 @@ function page_bars(mode: View.Mode): boolean {
     files_open();
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
+    const typed = typing($("#page .pbody"));
     markup($("#page .pbody"), Pages.files_html(v));
+    typed();
+    files_drawn();
   } else if (mode === "digest") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);
@@ -1370,6 +1378,68 @@ function palette_run(k: number): void {
 
 // the Files page's box sent (K9): its command run on the device in the
 // folder shown (none: the home repo), its output a note in the chat
+// what is being typed in el's boxes (data-keep: the edit, a find), kept
+// across a draw that makes them anew (markup: the page's body changed):
+// their text, the focus, the cursor
+function typing(el: Element): () => void {
+  const was = [...el.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("[data-keep]")].map((box) => ({
+    key: box.dataset.keep!, value: box.value, focus: document.activeElement === box, from: box.selectionStart, to: box.selectionEnd, top: box.scrollTop,
+  }));
+  return () => {
+    for (const w of was) {
+      const box = el.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-keep="${w.key}"]`);
+      // a box left (not the edit's): as drawn, so a cleared find clears
+      if (box === null || box.value === w.value && !w.focus || !w.focus && box.tagName === "INPUT") {
+        continue;
+      }
+      box.value = w.value;
+      box.scrollTop = w.top;
+      if (w.focus) {
+        box.focus();
+        box.setSelectionRange(w.from, w.to);
+      }
+    }
+  };
+}
+
+// a find (⌘P) or a search (⌘⇧F) across the open workspaces
+function files_find(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.ffind");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  act({ $: "Find", kind: form.dataset.find === "grep" ? "grep" : "find", q: form.querySelector("input")!.value });
+}
+
+// the file shown saved as edited (RED ZONE: the device saves it only if
+// still as it was shown)
+function files_save(ev: SubmitEvent): void {
+  const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.fedit");
+  if (form === null) {
+    return;
+  }
+  ev.preventDefault();
+  act({ $: "Save", text: form.querySelector("textarea")!.value });
+}
+
+// on the Files page: ⌘P finds a file, ⌘⇧F searches text; ⌘S saves the edit
+function files_keys(ev: KeyboardEvent): void {
+  if (View.view_route(location.hash).mode !== "files" || !(ev.metaKey || ev.ctrlKey)) {
+    return;
+  }
+  const key = ev.key.toLowerCase();
+  const box = key === "p" && !ev.shiftKey ? "find" : key === "f" && ev.shiftKey ? "grep" : null;
+  if (box !== null) {
+    ev.preventDefault();
+    document.querySelector<HTMLInputElement>(`#page [data-keep="${box}"]`)?.focus();
+  }
+  if (key === "s" && document.activeElement?.closest("form.fedit") !== null && document.activeElement !== null) {
+    ev.preventDefault();
+    document.activeElement.closest<HTMLFormElement>("form.fedit")!.requestSubmit();
+  }
+}
+
 function files_run(ev: SubmitEvent): void {
   const form = (ev.target as HTMLElement).closest<HTMLFormElement>("form.fsh");
   if (form === null) {
@@ -1495,6 +1565,15 @@ function page_change(ev: Event): void {
     return;
   }
   draw(true);
+}
+
+// the Files page drawn: the line asked for scrolled to, once a file shown
+function files_drawn(): void {
+  const at = v.line === null ? null : document.getElementById("L" + v.line);
+  if (at !== null && C.lined !== v.looked?.id) {
+    C.lined = v.looked?.id ?? null;
+    at.scrollIntoView({ block: "center" });
+  }
 }
 
 // the explorer as the Files page draws: its roots asked (again if not
