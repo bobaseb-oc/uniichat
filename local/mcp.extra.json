@@ -12,6 +12,9 @@
       "--no-usage-statistics", "--no-performance-crux"
     ]
   },
+  "okf-wiki": {
+    "command": "local/okf-wiki.ts"
+  },
   "atlassian": {
     "url": "https://mcp.atlassian.com/v2/mcp",
     "oauth": true
