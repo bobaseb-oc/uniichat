@@ -108,3 +108,89 @@ test("what each mode allows: plan only reading; auto and full every tool (auto r
   expect(Modes.next("full")).toBe("plan");
   expect(Modes.read("bogus")).toBe("auto");
 });
+
+// security review SA (RED ZONE): zsh (the device's $SHELL) expands an
+// unquoted glob, brace or paren before the command sees its words, so
+// per-word checks can't see what runs: such a word isn't read-only (C1)
+test("C1: unquoted glob, brace, paren or zsh expansion is not read-only; quoted ones are", () => {
+  for (const bad of [
+    "ls *(e:'echo PWNED':)",
+    "rg {--pre=sh,} x",
+    "find . {-delete,}",
+    "git log {--output=/tmp/x,}",
+    "ls *.ts",
+    "cat a?",
+    "ls [ab]",
+    "( rm x )",
+    "ls =(rm x)",
+    "cat =rm",
+    "echo \"${(e):-\\$(rm x)}\"",
+    "echo $~x",
+    "echo $=x",
+  ]) {
+    expect([bad, Modes.readonly(bad)]).not.toEqual([bad, null]);
+    expect([bad, Modes.reviews("auto", "shell", { command: bad })]).toEqual([bad, true]);
+    expect([bad, Modes.allows("plan", "shell", { command: bad })]).toEqual([bad, expect.stringContaining("plan mode")]);
+  }
+  for (const ok of ["rg 'a*b' .", "find . -name '*.ts'", "grep -n \"[a-z]\" f", "ls \\*", "echo '{}'", "git log --format='%H (%s)'", "git diff HEAD~1", "ls ~/src", "git log --since=2.weeks"]) {
+    expect([ok, Modes.readonly(ok)]).toEqual([ok, null]);
+  }
+});
+
+// options that write or run, in any form git and GNU take them: abbreviated
+// long options, =value, short ones run together (C1b)
+test("C1b: git grep -O, reflog expire/delete, sort --compress-program, file -C, branch -u/--set-upstream-to=, abbreviations", () => {
+  for (const bad of [
+    "git grep -Ovim x",
+    "git grep -O x",
+    "git grep -iOvim x",
+    "git grep --open-files-in-pager=vim x",
+    "git grep --open x",
+    "git reflog expire --all",
+    "git reflog delete HEAD~1",
+    "git reflog drop",
+    "git reflog main",
+    "sort --compress-program=sh f",
+    "sort --compress=sh f",
+    "file -C -m x",
+    "file -C",
+    "file -bC",
+    "file --compile",
+    "git branch --set-upstream-to=origin/x",
+    "git branch --set-up=origin/x",
+    "git branch -uorigin/x",
+    "git branch -vD",
+    "git tag -fa",
+    "git log --out=x",
+    "git diff --outp=x",
+    "tree -oout",
+    "tree --out=x",
+  ]) {
+    expect([bad, Modes.readonly(bad)]).not.toEqual([bad, null]);
+  }
+  for (const ok of ["git reflog", "git reflog show -5", "git reflog -n 5", "git grep -n foo", "git branch -vv", "git branch --list", "git branch -r", "sort -n f", "sort -rn f", "file README.md", "file -b x", "git log --oneline", "git tag -l", "git log --output-indicator-new=+"]) {
+    expect([ok, Modes.readonly(ok)]).toEqual([ok, null]);
+  }
+});
+
+// secrets are looked for in the words as the shell gives them, quotes and
+// escapes taken off, not only the raw line (M4)
+test("M4: a secret path hidden by quotes or escapes is still reviewed", () => {
+  for (const command of ["cat ~/.a''ws/cred''entials", "cat ~/.a\\ws/config", "cat \"$HOME/.s\"sh/config", "cat ~/.?sh/id_*", "cat .e'n'v", "cat /proc/self/environ", "jq -n env"]) {
+    expect([command, Modes.reviews("auto", "shell", { command })]).toEqual([command, true]);
+  }
+});
+
+// auto mode reviews computer use always, and every MCP tool but one whose
+// name plainly only reads (H3); a fetch may send data off: reviewed
+test("H3: computer and MCP tools that may change things are reviewed; plain MCP reads are not", () => {
+  for (const tool of ["computer", "mcp__jira__createJiraIssue", "mcp__x__executeRead", "mcp__x__get_and_delete", "mcp__x__transitionJiraIssue", "mcp__x__send_message", "mcp__x__frobnicate", "mcp__x__getOrUpdate", "mcp__srv__get_thing_1234abcd", "mcp__x__list_and_post", "mcp__x__fetch"]) {
+    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, true]);
+  }
+  for (const tool of ["mcp__plugin_atlassian_atlassian__getJiraIssue", "mcp__x__searchJiraIssuesUsingJql", "mcp__x__list_pages", "mcp__x__read_file", "mcp__x__search", "mcp__x__getConfluenceContent"]) {
+    expect([tool, Modes.reviews("auto", tool, {})]).toEqual([tool, false]);
+  }
+  for (const tool of ["computer", "mcp__jira__createJiraIssue"]) {
+    expect(Modes.reviews("full", tool, {})).toBe(false);
+  }
+});

@@ -9,7 +9,10 @@
 // only read, joined by pipes and && || ;, with no redirect (but 2>/dev/null
 // and 2>&1), substitution, background job, newline, variable assignment
 // or path to a program; per command, the flags that would write or run
-// other code refused (find -exec, rg --pre, git's writing subcommands...).
+// other code refused (find -exec, rg --pre, git's writing subcommands...),
+// in any form git and GNU take them (abbreviated, =value, run together);
+// no word the shell would expand itself (zsh: glob, brace, paren, =cmd).
+// RED ZONE (security review SA, DRAFT awaiting the user's sign-off)
 
 // Types
 // =====
@@ -35,21 +38,27 @@ const AFTER = "Say what you would change instead: in your report, or, for Unii, 
 const READS = ["read", "glob", "grep", "google", "harvest"];
 
 // the tools auto mode's reviewer checks
-const REVIEWED = ["shell", "write", "edit"];
+const REVIEWED = ["shell", "write", "edit", "computer"];
+
+// an MCP tool auto mode lets by unreviewed: its name (after its server's)
+// plainly only reads, and says nothing of a change (nor is cut with a hash)
+const MCP_READS = /^(get|list|search|read|find|query|lookup|describe|view|show)([_A-Z-]|$)/;
+const MCP_WRITES = /write|creat|updat|delet|edit|exec|transition|add|upload|send|post|put|patch|remov|set|run|move|merg|publish|comment|assign|archiv|clos|invit|shar|submit|import|approv|_[0-9a-f]{8}$/i;
 
 // a read-only command that may read secrets: still reviewed in auto mode
-const SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+const SECRETS = /printenv|environ|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 
 // commands that only read, whatever their arguments
-// (not env, which runs its arguments; nor tree -o, uniq's output file:
-// checked below)
-const PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+// (not env, which runs its arguments; nor tree -o, uniq's output file,
+// file -C: checked below)
+const PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 
 // git's subcommands that only read
 const GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 
-// git branch/tag flags that write
-const GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+// git branch/tag flags that write: long ones, and short ones' letters
+const GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
+const GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
 
 // find's actions that write or run
 const FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
@@ -84,13 +93,25 @@ export namespace Modes {
   }
 
   // whether auto mode's reviewer checks a tool's call: not a plainly
-  // read-only shell command (as Claude Code), unless it reads secrets
+  // read-only shell command (as Claude Code), unless it reads secrets (in
+  // its line or its words, quotes off), nor an MCP tool that only reads
   export function reviews(mode: Mode, tool: string, input?: any): boolean {
-    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+    if (mode !== "auto") {
+      return false;
+    }
+    if (tool.startsWith("mcp__")) {
+      const own = tool.split("__").slice(2).join("__");
+      return !MCP_READS.test(own) || MCP_WRITES.test(own);
+    }
+    if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
+    if (command === null || SECRETS.test(command) || Modes.readonly(command) !== null) {
+      return true;
+    }
+    const lexed = lex(command);
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w));
   }
 
   // why a shell command is not plainly read-only; null: it is
@@ -152,6 +173,8 @@ export namespace Modes {
         return "a command substitution";
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
+      } else if ("{}()*?[]".includes(c) || (c === "=" && word === null) || (c === "$" && "~=^{[".includes(line[k + 1] ?? " "))) {
+        return "an unquoted " + c + " (the shell expands it: glob, brace, paren or =cmd)";
       } else if (c === ">") {
         const to = stderr(line, k, word);
         if (typeof to === "string") {
@@ -197,12 +220,22 @@ export namespace Modes {
       if (line[k] === "`" || (line[k] === "$" && line[k + 1] === "(")) {
         return "a command substitution";
       }
+      if (line[k] === "$" && (line[k + 1] === "{" || line[k + 1] === "[")) {
+        return "a ${...} or $[...] (zsh's flags can run code)";
+      }
       if (line[k] === "\\") {
         k += 1;
       }
       w += line[k] ?? "";
     }
     return k >= line.length ? "an unclosed quote" : [w, k];
+  }
+
+  // whether an argument is one of the long options named, as git and GNU
+  // take them: abbreviated, with or without =value
+  function long(a: string, names: string[]): boolean {
+    const name = a.split("=")[0]!;
+    return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
   }
 
   // why one command is not read-only; null: it is
@@ -219,10 +252,13 @@ export namespace Modes {
     }
     switch (cmd) {
       case "sort": {
-        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+        return args.some((a) => long(a, ["--output", "--compress-program"]) || /^-[a-zA-Z]*o/.test(a)) ? "sort -o or --compress-program writes or runs" : null;
       }
       case "tree": {
-        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+        return args.some((a) => long(a, ["--output"]) || /^-[^-]*o/.test(a)) ? "tree -o writes a file" : null;
+      }
+      case "file": {
+        return args.some((a) => long(a, ["--compile"]) || /^-[a-zA-Z]*C/.test(a)) ? "file -C writes a magic file" : null;
       }
       case "uniq": {
         return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
@@ -243,10 +279,13 @@ export namespace Modes {
           return "git " + sub + " is not one that only reads";
         }
         const rest = args.slice(1);
-        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+        if (rest.some((a) => long(a, ["--output", "--ext-diff", "--exec", "--open-files-in-pager"]) || (sub === "grep" && /^-[a-zA-Z]*O/.test(a)))) {
           return "git " + sub + " with an option that writes or runs";
         }
-        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+        if (sub === "reflog" && rest[0] !== undefined && rest[0] !== "show" && !rest[0].startsWith("-")) {
+          return "git reflog " + rest[0] + " (only show reads)";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => long(a, GIT_WRITES) || GIT_SHORTS.test(a) || !a.startsWith("-"))) {
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
