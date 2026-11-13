@@ -38,7 +38,7 @@ const READS = ["read", "glob", "grep", "google", "harvest"];
 const REVIEWED = ["shell", "write", "edit"];
 
 // a read-only command that may read secrets: still reviewed in auto mode
-const SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+const SECRETS = /printenv|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 
 // commands that only read, whatever their arguments
 // (not env, which runs its arguments; nor tree -o, uniq's output file:
@@ -50,6 +50,20 @@ const GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls
 
 // git branch/tag flags that write
 const GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+
+// gh's subcommands that only read, by noun (K10: network reads); gh api
+// only as a GET with no fields sent
+const GH_READS: Record<string, string[]> = {
+  pr: ["view", "list", "diff", "checks", "status"], issue: ["view", "list", "status"], repo: ["view", "list"],
+  run: ["view", "list"], workflow: ["view", "list"], release: ["view", "list"],
+  search: ["prs", "issues", "repos", "code", "commits"], auth: ["status"],
+};
+const GH_SENDS = /^(-f|-F|--field|--raw-field|--input)(=|$)|^-[fF].+/;
+
+// a branch a plain push may go to without the reviewer: not a default,
+// shared or release branch (K10)
+const PROTECTED = /^(main|master|develop|trunk|HEAD|gh-pages|release(\/.*)?|\d+(\.\d+)*\.x)$/;
+const PUSH_FLAGS = new Set(["-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose"]);
 
 // find's actions that write or run
 const FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
@@ -84,13 +98,14 @@ export namespace Modes {
   }
 
   // whether auto mode's reviewer checks a tool's call: not a plainly
-  // read-only shell command (as Claude Code), unless it reads secrets
+  // read-only shell command (as Claude Code), network reads included, nor
+  // a feature branch's plain push (K10), unless it touches secrets
   export function reviews(mode: Mode, tool: string, input?: any): boolean {
     if (mode !== "auto" || !REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
+    return command === null || SECRETS.test(command) || (Modes.readonly(command) !== null && !Modes.feature_push(command));
   }
 
   // why a shell command is not plainly read-only; null: it is
@@ -206,6 +221,53 @@ export namespace Modes {
   }
 
   // why one command is not read-only; null: it is
+  // gh that only reads (GH_READS; api: a GET sending no fields), else why not
+  function gh(args: string[]): string | null {
+    const [noun, verb, ...rest] = args;
+    if (noun === "api") {
+      const all = args.slice(1);
+      for (let k = 0; k < all.length; k++) {
+        const a = all[k]!;
+        const method = a === "-X" || a === "--method" ? all[k + 1] : /^--method=(.*)$/.exec(a)?.[1] ?? /^-X(.+)$/.exec(a)?.[1];
+        if (method !== undefined && method.toUpperCase() !== "GET") {
+          return "gh api " + method + " can change things";
+        }
+        if (GH_SENDS.test(a)) {
+          return "gh api with fields sends them (a POST)";
+        }
+      }
+      return null;
+    }
+    if (noun === undefined || verb === undefined || !Object.hasOwn(GH_READS, noun) || !GH_READS[noun]!.includes(verb)) {
+      return "gh " + [noun, verb].filter((x) => x !== undefined).join(" ") + " is not one that only reads";
+    }
+    if (rest.some((a) => a === "--show-token" || a === "-t" || a === "--web" || a === "-w")) {
+      return "gh " + noun + " " + verb + " that prints a token or opens a browser";
+    }
+    return null;
+  }
+
+  // a plain push of a feature branch to origin (K10): one command, git
+  // push, only PUSH_FLAGS, origin and one branch (or HEAD:branch), not
+  // forced (+), not deleting (:x), not a PROTECTED one
+  export function feature_push(command: string): boolean {
+    const lexed = lex(command);
+    if (typeof lexed === "string" || lexed.length !== 1) {
+      return false;
+    }
+    const [git, push, ...rest] = lexed[0]!;
+    if (git !== "git" || push !== "push") {
+      return false;
+    }
+    const flags = rest.filter((a) => a.startsWith("-"));
+    const places = rest.filter((a) => !a.startsWith("-"));
+    if (flags.some((f) => !PUSH_FLAGS.has(f)) || places.length !== 2 || places[0] !== "origin") {
+      return false;
+    }
+    const branch = /^(?:HEAD:)?([\w./-]+)$/.exec(places[1]!)?.[1];
+    return branch !== undefined && !PROTECTED.test(branch) && !branch.startsWith("-") && !branch.includes("..");
+  }
+
   function check(words: string[]): string | null {
     const [cmd, ...args] = words as [string, ...string[]];
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
@@ -230,6 +292,9 @@ export namespace Modes {
       case "rg": {
         return args.some((a) => a === "--pre" || a.startsWith("--pre=") || a === "--pre-glob" || a.startsWith("--pre-glob=")) ? "rg --pre runs another program" : null;
       }
+      case "gh": {
+        return gh(args);
+      }
       case "find": {
         const act = args.find((a) => FIND_WRITES.has(a));
         return act === undefined ? null : "find " + act + " writes or runs";
@@ -238,6 +303,9 @@ export namespace Modes {
         const sub = args[0];
         if (sub === undefined || sub.startsWith("-")) {
           return "git with options before its subcommand";
+        }
+        if (sub === "fetch") {
+          return args.some((a) => a.startsWith("--upload-pack")) ? "git fetch --upload-pack runs another program" : null;
         }
         if (!GIT.has(sub)) {
           return "git " + sub + " is not one that only reads";

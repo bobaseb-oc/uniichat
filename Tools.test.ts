@@ -374,12 +374,13 @@ test("auto mode: the reviewer allows or refuses; when it can't answer, the user 
 // the reviewer is told the user's last 3 messages, oldest first (a bare
 // "yes, go" says nothing alone), and refuses only clear harm: not work
 // outside the repo, nor "beyond what the user asked"
-test("auto mode's reviewer sees the user's last 3 messages and refuses only clear harm", async () => {
+test("auto mode's reviewer sees the user's last 8 messages, puts them above the task, and refuses only harm", async () => {
   const { AskAI } = await import("./AskAI.ts");
   const { Memory } = await import("./Memory.ts");
   const real = { ask: AskAI.ask, message: Memory.message };
   const told: string[] = [];
-  const msgs = [{ kind: "user", text: "first ask" }, { kind: "user", text: "fix the build in api/" }, { kind: "agent", text: "plan..." }, { kind: "user", text: "sounds good" }, { kind: "user", text: "yes, go" }];
+  const filler = Array.from({ length: 5 }, (_, k) => ({ kind: "user", text: "aside " + k }));
+  const msgs = [{ kind: "user", text: "first ask" }, { kind: "user", text: "fix the build in api/" }, { kind: "agent", text: "plan..." }, ...filler, { kind: "user", text: "sounds good" }, { kind: "user", text: "yes, go" }];
   (AskAI as any).ask = (ask: any) => {
     told.push(ask.system + "\n" + ask.blocks.map((b: any) => b.text).join(""));
     return { send: () => {}, stop: () => {}, move: () => {}, done: Promise.resolve({ ok: true, text: '{"allow": true}', left: [] }) };
@@ -397,6 +398,11 @@ test("auto mode's reviewer sees the user's last 3 messages and refuses only clea
     expect(said).not.toContain("works outside the repo");
     expect(said).toMatch(/pushes|deploys/);
     expect(said).toMatch(/credentials|secrets/);
+    // K10: the user outranks the task; reads aren't sends; no refusing over
+    // procedure
+    expect(said).toMatch(/user's messages outrank/i);
+    expect(said).toMatch(/fetch.*not sending/i);
+    expect(said).toMatch(/never refuse.*order of steps/i);
   } finally {
     (AskAI as any).ask = real.ask;
     (Memory as any).message = real.message;
