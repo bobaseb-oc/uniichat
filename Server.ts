@@ -1499,7 +1499,8 @@ export namespace Chat {
 
   // the person's answer to an open question (Tools.question): logged as
   // their message quoting it, which Unii answers in a turn (refused as a
-  // post is, short of credit); no text dismisses it, a note, no turn
+  // post is, short of credit); no text dismisses it, a note, no turn (a
+  // note of Unii's, notify, dismissed silently)
   export async function reply(chat: Chat, id: string, n: number, text: string): Promise<Answer> {
     const q = chat.mem.questions.find((x) => x.id === n);
     if (q === undefined) {
@@ -1513,10 +1514,12 @@ export namespace Chat {
     Memory.save(chat.mem);
     Chat.change(chat);
     if (text === "") {
-      Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      if (!q.fyi) {
+        Chat.note(chat, "The user dismissed your question " + n + " (" + q.text + ").");
+      }
       return {};
     }
-    await Chat.said(chat, id, "Answer to your question " + n + " (" + q.text + "):\n" + text);
+    await Chat.said(chat, id, (q.fyi ? "Reply to your note " : "Answer to your question ") + n + " (" + q.text + "):\n" + text);
     return {};
   }
 

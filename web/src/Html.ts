@@ -228,14 +228,18 @@ export function waiting_html(v: View.View): string[] {
 
 // the question backlog (View.view_questions), beside the chat: each the
 // orchestrator's question (its lines kept), its offered answers as
-// buttons, a box to answer it, a dismiss; none: nothing
+// buttons, a box to answer it, a dismiss; then its notes (notify), each
+// with a dismiss; none: nothing
 export function questions_html(v: View.View): string[] {
   return View.view_questions(v).map((q) => {
     const quick = (q.options ?? []).map((o) => `<button class="qo"${act_html({ $: "Answer", q: q.id, text: o })}>${esc(o)}</button>`).join("");
     const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
     const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
     return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
-  });
+  }).concat(View.view_notes(v).map((q) => {
+    const head = `<div class="qh"><b>note</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    return `<div class="q fyi">${head}<div class="qt">${esc(q.text)}</div></div>`;
+  }));
 }
 
 // the agent in focus, over its session (the log): its name, what it
@@ -258,11 +262,12 @@ export function focus_html(v: View.View): string {
 // marked when someone needs the person
 // and the questions open (a button showing or hiding their pane)
 // and the permission mode's chip (a click: the next)
-export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm, inbox = 0): string[] {
+export function mode_html(mode: View.Mode, pill: string, asked = 0, perm?: Perm, inbox = 0, notes = 0): string[] {
   const here = (m: View.Mode) => (m === mode ? ` class="here"` : "");
   const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
-  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  const said = [asked === 0 ? "" : "? " + asked, notes === 0 ? "" : "i " + notes].filter((x) => x !== "").join(" · ");
+  const qs = said === "" ? [] : [`<button class="qs" data-qs title="${notes === 0 ? "your questions" : "your questions and notes"}">${said}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
   return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }

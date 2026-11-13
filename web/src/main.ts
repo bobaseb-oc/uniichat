@@ -1100,7 +1100,8 @@ function crew_bars(): void {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = View.view_questions(v).length + View.view_waiting(v);
-  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox)));
+  const notes = View.view_notes(v).length;
+  markup($("#mode"), Html.mode_html(mode, View.view_pill(v), asked, P.guest ? undefined : v.mode, Cockpit.inbox_badge(v.inbox), notes));
   side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
@@ -1111,7 +1112,7 @@ function crew_bars(): void {
     return;
   }
   // the question backlog, beside the chat, till put away
-  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  const pane = !crew && asked + notes > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
   markup($("#questions"), pane ? [...Html.waiting_html(v), ...Html.questions_html(v)] : []);

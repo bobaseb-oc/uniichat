@@ -656,13 +656,15 @@ await until(() => asks.length === 1);
 const msgs = () => Array.from({ length: chat.mem.count }, (_, i) => Memory.message(chat.mem, i));
 const said = msgs().filter((m) => m.kind === "user" && m.text.includes("question")).map((m) => m.text);
 const dismissed = await Chat.act(chat, "a2", { $: "answer", q: 2 }, "");
+await Tools.call(chat.tools, "main", "notify", { text: "Picked bank-recon." }, go, "n1");
+await Chat.act(chat, "a3", { $: "answer", q: 3 }, "");
 await Bun.sleep(100);
 const notes = msgs().filter((m) => m.kind === "note").map((m) => m.text);
 console.log(JSON.stringify({ listed, unknown, answered, said, dismissed, notes, asks: asks.length, left: Chat.state(chat).questions }));
 process.exit(0);
 `;
 
-test("an answer from the question backlog is a message quoting it, and a turn; no text dismisses it", async () => {
+test("an answer from the question backlog is a message quoting it, and a turn; no text dismisses it (a note, silently)", async () => {
   const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
   fs.writeFileSync(dir + "/answer.ts", ANSWER);
   const proc = Bun.spawn([process.execPath, dir + "/answer.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });

@@ -360,6 +360,10 @@ test("questions: Answer and Drop acts, and the pill counts them as needing you",
 test("questions in the terminal: the listing, and /answer and /drop parsed", () => {
   const v = View.view_new();
   expect(View.view_questions_note(v)).toBe("No open questions.");
+  View.view_hear(v, { $: "state", ...v, questions: [{ id: 9, text: "Chose x.\nIt was faster.", at: 0, date: "2026-11-12T10:00:00.000Z", fyi: true }] } as any);
+  expect(View.view_questions_note(v)).toBe("No open questions. Notes:\nnote 9: Chose x.\n   It was faster.\nDismiss one: /drop <n>.");
+  expect(View.view_drop(v, "9")).toEqual({ $: "Drop", q: 9 });
+  View.view_hear(v, { $: "state", ...v, questions: [] } as any);
   View.view_hear(v, { $: "state", ...v, questions: [
     { id: 4, text: "Which repo?", options: ["bank-recon", "pimco"], at: 0, date: "2026-11-12T10:00:00.000Z" },
     { id: 7, text: "Ship Friday?\nNeeds sign-off.", at: 0, date: "2026-11-12T13:00:00.000Z" },

@@ -368,11 +368,15 @@ const TODO = spec("todo", "Set your checklist, the whole list each time, in orde
 // answers in due course (Tools.question); at most ASKS open, each at most
 // ASK_TEXT, with at most ASK_OPTIONS answers offered
 const ASKS = 20;
+const NOTES = 30;
 const ASK_TEXT = 2000;
 const ASK_OPTIONS = 6;
 const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: only a decision that is theirs (Red Zone, outward or hard to undo, money or credentials, a real fork in what they want); one question each, said in full as a short brief with your pick (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
   question: STR, options: { type: "array", items: STR }, close: INT,
 }, []);
+// the orchestrator's notes for the user, beside its questions (notify;
+// user's ask 2026-11-13): no answer awaited, the oldest dropped past NOTES
+const NOTIFY = spec("notify", "Put a short note in the user's pane beside their questions, to keep them in the loop without asking anything: a decision you made and why, a milestone done or an agent's result worth knowing, a risk or a change of plan, something they should look at when they can. One thing per note, said in full in a few lines (it is read apart from the chat). No answer is awaited; they may dismiss it or reply. Don't note routine progress the chat already shows.", { text: STR }, ["text"]);
 // plan mode's way out (Modes.ts), as Claude Code's ExitPlanMode
 const PLAN = spec("plan", "In plan mode: file your plan for the user's approval, once you (and your managers, reading) know enough. Say it whole: the steps, who does each, what changes where, how it will be checked. The user approves it (the mode they pick comes next, and you go ahead) or sends it back with their feedback.", { plan: STR }, ["plan"]);
 // auto mode's reviewer (Modes.ts): one call on the compactor's model per
@@ -528,7 +532,7 @@ export namespace Tools {
 
   export function list(tools: Tools, who: string): Spec[] {
     if (who === "main") {
-      return [...OWN, ASK, PLAN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
+      return [...OWN, ASK, NOTIFY, PLAN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
     const role = tools.agents.get(who)?.role;
     if (role?.$ === "hands") {
@@ -684,6 +688,9 @@ export namespace Tools {
       }
       case "ask": {
         return Tools.question(tools, who, args);
+      }
+      case "notify": {
+        return Tools.notify(tools, who, args);
       }
       case "todo": {
         return Tools.todo(tools, who, args.items);
@@ -1158,7 +1165,7 @@ export namespace Tools {
     if (text === "") {
       return { text: "Give the question, or close: a question's number.", fail: true };
     }
-    if (mem.questions.length >= ASKS) {
+    if (mem.questions.filter((q) => !q.fyi).length >= ASKS) {
       return { text: ASKS + " questions are open: wait for answers, or close some.", fail: true };
     }
     const line = (x: unknown) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, TODO_TEXT);
@@ -1168,6 +1175,27 @@ export namespace Tools {
     Memory.save(mem);
     tools.hooks.change();
     return { text: "Filed as question " + q.id + "; the user's answer will reach you as a message.", fail: false };
+  }
+
+  // the orchestrator's note for the user (notify): in the questions' pane,
+  // no answer awaited; the oldest notes dropped past NOTES (never a
+  // question), its number shared with the questions'
+  export function notify(tools: Tools, who: string, args: any): Out {
+    const mem = tools.mem;
+    if (who !== "main") {
+      return { text: "Only Unii notes things for the user: tell Unii, in your report or a reply.", fail: true };
+    }
+    const text = String(args?.text ?? "").trim().slice(0, ASK_TEXT);
+    if (text === "") {
+      return { text: "Give the note's text.", fail: true };
+    }
+    const q: Question = { id: (mem.asked += 1), text, at: mem.count, date: new Date().toISOString(), fyi: true };
+    const notes = [...mem.questions.filter((x) => x.fyi), q];
+    const kept = new Set(notes.slice(-NOTES));
+    mem.questions = [...mem.questions, q].filter((x) => !x.fyi || kept.has(x));
+    Memory.save(mem);
+    tools.hooks.change();
+    return { text: "Noted for the user as note " + q.id + "; no answer is awaited.", fail: false };
   }
 
   // an agent's own checklist set whole, cleaned: each item one line, at

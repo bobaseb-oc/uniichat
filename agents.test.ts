@@ -529,6 +529,40 @@ test("ask: the orchestrator files questions, kept across a reload; close withdra
   Memory.stop(again);
 }));
 
+// the orchestrator's notes for the user (notify; user's ask 2026-11-13):
+// in the questions pane, not questions (no answer awaited, never counted
+// against the questions' cap); the oldest notes dropped past NOTES, never
+// a question; only the orchestrator
+test("notify: the orchestrator's notes go to the pane beside questions, capped apart, oldest dropped; agents can't", () => faked(async () => {
+  const mem = Memory.load(DIR + "/notify", () => SHARE);
+  const tools = served(mem, []);
+  const call = (who: string, name: string, args: object) => Tools.call(tools, who, name, args, new AbortController().signal, "x");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("notify");
+  await call("main", "ask", { question: "Which repo?" });
+  const one = await call("main", "notify", { text: "  Picked bank-recon:\nit holds the configs. " });
+  expect(one).toEqual({ text: "Noted for the user as note 2; no answer is awaited.", fail: false });
+  expect(mem.questions.map((q) => [q.id, q.text, q.fyi])).toEqual([[1, "Which repo?", undefined], [2, "Picked bank-recon:\nit holds the configs.", true]]);
+  expect((await call("main", "notify", { text: " " })).fail).toBe(true);
+  for (let k = 0; k < 40; k++) {
+    await call("main", "notify", { text: "n" + k });
+  }
+  expect(mem.questions.filter((q) => q.fyi)).toHaveLength(30);
+  expect(mem.questions.filter((q) => q.fyi).at(-1)!.text).toBe("n39");
+  expect(mem.questions.filter((q) => !q.fyi).map((q) => q.id)).toEqual([1]);
+  // notes don't fill the questions' cap
+  for (let k = 0; k < 19; k++) {
+    await call("main", "ask", { question: "q" + k });
+  }
+  expect((await call("main", "ask", { question: "one more" })).fail).toBe(true);
+  expect((await call("main", "notify", { text: "still fine" })).fail).toBe(false);
+  const name = Memory.agent_new(mem);
+  tools.agents.set(name, { name, parent: "main", role: { $: "sub", tier: "manager", effort: null, model: null }, call: null, live: [], calls: {}, stop: true, replies: [], user: false } as any);
+  expect(Tools.list(tools, name).map((t) => t.name)).not.toContain("notify");
+  expect((await call(name, "notify", { text: "mine" })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.stop(mem);
+}));
+
 // plan mode's way out: the orchestrator files its plan (plan), kept with
 // the chat till the user answers; only in plan mode, only the orchestrator
 test("plan: the orchestrator files its plan in plan mode, kept across a reload; not otherwise, not agents", () => faked(async () => {

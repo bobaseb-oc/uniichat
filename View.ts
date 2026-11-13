@@ -96,7 +96,7 @@ export type DeviceStatus = { device: string; dir: string; branch: string | null;
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
 // chat message count when asked, when
-export type Question = { id: number; text: string; options?: string[]; at: number; date: string };
+export type Question = { id: number; text: string; options?: string[]; at: number; date: string; fyi?: true }; // fyi: a note (notify), no answer awaited
 
 // an item of an agent's checklist (Tools.todo): what, and how far
 export type Todo = { text: string; status: "pending" | "doing" | "done" };
@@ -1052,21 +1052,27 @@ export function view_consent_cmd(v: View, arg: string, yes: boolean): Act | stri
 
 // the orchestrator's questions still open, oldest first
 export function view_questions(v: View): Question[] {
-  return [...(v.questions ?? [])].sort((a, b) => a.id - b.id);
+  return [...(v.questions ?? [])].filter((q) => !q.fyi).sort((a, b) => a.id - b.id);
+}
+
+// the orchestrator's notes for the person (notify), oldest first
+export function view_notes(v: View): Question[] {
+  return [...(v.questions ?? [])].filter((q) => q.fyi === true).sort((a, b) => a.id - b.id);
 }
 
 // the open questions as the terminal lists them (/questions)
 export function view_questions_note(v: View): string {
   const qs = view_questions(v);
+  const notes = view_notes(v).map((q) => "note " + q.id + ": " + q.text.split("\n").join("\n   "));
   if (qs.length === 0) {
-    return "No open questions.";
+    return notes.length === 0 ? "No open questions." : ["No open questions. Notes:", ...notes, "Dismiss one: /drop <n>."].join("\n");
   }
   const item = (q: Question) => {
     const [first, ...more] = q.text.split("\n");
     const pad = " ".repeat(String(q.id).length + 2);
     return [q.id + ". " + first, ...more.map((l) => pad + l), ...(q.options === undefined ? [] : [pad + "answers: " + q.options.join(" | ")])].join("\n");
   };
-  return ["Your questions:", ...qs.map(item), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
+  return ["Your questions:", ...qs.map(item), ...(notes.length === 0 ? [] : ["Notes:", ...notes]), "Answer one: /answer <n> <text> (or the answer's number); dismiss: /drop <n>."].join("\n");
 }
 
 // the terminal's /routines: each with its number, when, tier, on or off
@@ -1116,7 +1122,7 @@ export function view_answer(v: View, arg: string): Act | string {
 
 // /drop's argument, a question's number, as a Drop; else why not
 export function view_drop(v: View, arg: string): Act | string {
-  const q = view_questions(v).find((x) => String(x.id) === arg.trim());
+  const q = [...view_questions(v), ...view_notes(v)].find((x) => String(x.id) === arg.trim());
   return q === undefined ? "No open question " + arg.trim() + ": /questions lists them." : { $: "Drop", q: q.id };
 }
 

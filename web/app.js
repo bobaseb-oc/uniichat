@@ -500,8 +500,9 @@ function look_css(kind, look) {
 // Modes.ts
 var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
-var READS = ["read", "glob", "grep"];
+var READS = ["read", "glob", "grep", "google"];
 var REVIEWED = ["shell", "write", "edit"];
+var SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
@@ -528,8 +529,12 @@ var Modes;
     return why + ": " + tool + " can change things. " + AFTER;
   }
   Modes2.allows = allows;
-  function reviews(mode, tool) {
-    return mode === "auto" && REVIEWED.includes(tool);
+  function reviews(mode, tool, input) {
+    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+      return false;
+    }
+    const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
+    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
   }
   Modes2.reviews = reviews;
   function readonly(command) {
@@ -1733,7 +1738,10 @@ function view_waiting(v) {
   return (v.plan ? 1 : 0) + (v.calls ?? []).length;
 }
 function view_questions(v) {
-  return [...v.questions ?? []].sort((a, b) => a.id - b.id);
+  return [...v.questions ?? []].filter((q) => !q.fyi).sort((a, b) => a.id - b.id);
+}
+function view_notes(v) {
+  return [...v.questions ?? []].filter((q) => q.fyi === true).sort((a, b) => a.id - b.id);
 }
 function view_route(hash) {
   const m = /^#(chat|crew|home|inbox|routines|digest|transcripts)(?:\/(.+))?$/.exec(hash);
@@ -2147,7 +2155,10 @@ function questions_html(v) {
     const head = `<div class="qh"><b>${q.id}</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
     const box = `<form class="qa" data-q="${q.id}"><input placeholder="Answer…" aria-label="answer question ${q.id}"></form>`;
     return `<div class="q">${head}<div class="qt">${esc(q.text)}</div>${quick === "" ? "" : `<div class="qos">${quick}</div>`}${box}</div>`;
-  });
+  }).concat(view_notes(v).map((q) => {
+    const head = `<div class="qh"><b>note</b><span class="meta">${esc(new Date(q.date).toLocaleString())}</span><button class="x" title="dismiss"${act_html({ $: "Drop", q: q.id })}>×</button></div>`;
+    return `<div class="q fyi">${head}<div class="qt">${esc(q.text)}</div></div>`;
+  }));
 }
 function focus_html(v) {
   const name = v.page?.name ?? null;
@@ -2161,11 +2172,12 @@ function focus_html(v) {
   const todo = (c.todo ?? []).length === 0 ? "" : `<ol class="todo">${c.todo.map((x) => `<li class="${esc(x.status)}">${esc(x.text)}</li>`).join("")}</ol>`;
   return `<div class="focus ${c.status}">${who_html(c)} <span class="meta">${esc(also(c) + c.tier + " · " + c.model + " · " + c.status)} · type to tell it</span>${acts_html(c)}${todo}</div>`;
 }
-function mode_html(mode, pill, asked = 0, perm, inbox = 0) {
+function mode_html(mode, pill, asked = 0, perm, inbox = 0, notes = 0) {
   const here = (m) => m === mode ? ` class="here"` : "";
   const count = inbox === 0 ? "" : ` <span class="pill need">${inbox}</span>`;
   const tag = pill === "" ? "" : ` <span class="pill${pill.includes("need you") ? " need" : ""}">${esc(pill)}</span>`;
-  const qs = asked === 0 ? [] : [`<button class="qs" data-qs title="your questions">? ${asked}</button>`];
+  const said = [asked === 0 ? "" : "? " + asked, notes === 0 ? "" : "i " + notes].filter((x) => x !== "").join(" · ");
+  const qs = said === "" ? [] : [`<button class="qs" data-qs title="${notes === 0 ? "your questions" : "your questions and notes"}">${said}</button>`];
   const chip = perm === undefined ? [] : [`<button class="perm ${perm}" title="the mode: Shift+Tab in the box cycles it"${act_html({ $: "Mode" })}>${perm} mode</button>`];
   return [`<a href="#home"${here("home")}>Home</a>`, `<a href="#inbox"${here("inbox")}>Inbox${count}</a>`, `<a href="#chat"${here("chat")}>Chat</a>`, `<a href="#crew"${here("crew")}>Crew${tag}</a>`, ...chip, ...qs];
 }
@@ -3575,7 +3587,8 @@ function crew_bars() {
   const crew = mode === "crew";
   document.body.classList.toggle("crewmode", crew && !P.guest);
   const asked = view_questions(v).length + view_waiting(v);
-  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox)));
+  const notes = view_notes(v).length;
+  markup($("#mode"), mode_html(mode, view_pill(v), asked, P.guest ? undefined : v.mode, inbox_badge(v.inbox), notes));
   side_bars(mode);
   if (page_bars(mode)) {
     $("#questions").hidden = true;
@@ -3585,7 +3598,7 @@ function crew_bars() {
     watch();
     return;
   }
-  const pane = !crew && asked > 0 && !P.qhide && !P.guest;
+  const pane = !crew && asked + notes > 0 && !P.qhide && !P.guest;
   document.body.classList.toggle("qmode", pane);
   $("#questions").hidden = !pane;
   markup($("#questions"), pane ? [...waiting_html(v), ...questions_html(v)] : []);

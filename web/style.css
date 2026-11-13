@@ -172,6 +172,8 @@ body.qmode { padding-right: var(--crew); }
 #mode .perm.full { border-color: var(--del, #e5534b); color: var(--del, #e5534b); }
 #questions .q.plan { border-left: 3px solid var(--accent); }
 #questions .q.call { border-left: 3px solid var(--you, #d29922); }
+#questions .q.fyi { border-left: 3px solid var(--line, #8888); opacity: .9; }
+#questions .q.fyi .qh b { font-weight: 500; }
 #mode .qs { margin-left: 8px; padding: 0 8px; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper); font: 600 12px/18px var(--sans); cursor: pointer; }
 body.crewmode #tabs { display: none; }
 :root { --crew: 360px; }
