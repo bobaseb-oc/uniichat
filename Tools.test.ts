@@ -449,6 +449,17 @@ test("touched: an agent's files, newest first, once each, capped, in the crew", 
   expect(a.files[0]).toBe("f59.md");
 });
 
+// a call that fails touches nothing (user's report 2026-11-13: an edit by
+// a relative path refused, then made by its absolute one, listed both)
+test("touched: only by a call that succeeds", async () => {
+  const tools = Tools.serve({ dir: "/nowhere" } as any, { change: () => {}, pick: () => null } as any);
+  const a = { name: "Owl", parent: "main", role: { $: "sub", tier: "worker", effort: null, model: null }, call: null, live: [], calls: {}, stop: false, replies: [], user: false } as any;
+  tools.agents.set(a.name, a);
+  const out = await Tools.call(tools, "Owl", "read", { device: "nowhere", path: "src/a.ts" }, new AbortController().signal, "1");
+  expect(out.fail).toBe(true);
+  expect(a.files).toBeUndefined();
+});
+
 // an agent's cost so far, an estimate at list price (Price.ts) from each
 // of its requests' usage (Ask.used), in the crew as USD; a model with no
 // price adds nothing, never throws
