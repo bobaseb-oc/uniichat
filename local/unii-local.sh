@@ -23,6 +23,9 @@
 #   legion google-login [client.json]  sign in to Google for the cockpit's
 #                     calendar, transcripts, Gmail, Chat (read-only; Keychain only)
 #   legion google-logout  revoke that grant at Google and delete it
+#   legion harvest-login  keep a Harvest personal access token in the Keychain
+#                     (asked for, not echoed); the timesheet's drafts and Submit
+#   legion harvest-logout delete it
 #   legion <args>       anything else goes to Term.ts (e.g. login, version)
 set -euo pipefail
 
@@ -218,6 +221,8 @@ case "${1:-}" in
   mcp-logout) mcp_make && exec bun "$ROOT/local/mcp-login.ts" "${2:?which server, e.g. atlassian}" --logout ;;
   google-login)  exec bun "$ROOT/local/google-login.ts" "${@:2}" ;;
   google-logout) exec bun "$ROOT/local/google-login.ts" --logout ;;
+  harvest-login)  exec bun "$ROOT/local/harvest-login.ts" "${@:2}" ;;
+  harvest-logout) exec bun "$ROOT/local/harvest-login.ts" --logout ;;
   "")    server_start && logs_make && UNII_IMPORT_ASK=1 term_exec "$URL" ;;
   *)     term_exec "$@" ;;
 esac

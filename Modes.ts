@@ -32,7 +32,7 @@ export const ABOUT: Record<Mode, string> = {
 const AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 
 // the tools that only read, in every mode
-const READS = ["read", "glob", "grep", "google"];
+const READS = ["read", "glob", "grep", "google", "harvest"];
 
 // the tools auto mode's reviewer checks
 const REVIEWED = ["shell", "write", "edit"];
