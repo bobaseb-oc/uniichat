@@ -104,3 +104,17 @@ test("an extra server by URL, signed in to with OAuth: kept with its flag, no he
   expect(got.servers.find((s) => s.name === "remote")).toEqual({ name: "remote", url: "https://mcp.example.test/v2/mcp", oauth: true });
   expect(mcp_config(home({ remote: { enabled: false } }).home, h.root).servers.map((s) => s.name)).not.toContain("remote");
 });
+
+
+// a server both Claude Code and mcp.extra.json name (okf, okf-wiki) is
+// offered once, as Claude Code's, and the extra one said
+test("an extra server Claude Code already has is left out, said", () => {
+  const h = home();
+  const extra = JSON.parse(fs.readFileSync(h.root + "/local/mcp.extra.json", "utf8"));
+  extra["local.tool"] = { command: "local/tools/node_modules/.bin/browse" };
+  fs.writeFileSync(h.root + "/local/mcp.extra.json", JSON.stringify(extra));
+  const got = mcp_config(h.home, h.root);
+  expect(got.servers.filter((s) => s.name === "local.tool").length).toBe(1);
+  expect(got.servers.find((s) => s.name === "local.tool")!.command).toBe("/usr/bin/tool");
+  expect(got.notes).toContain("local.tool: Claude Code's own is used");
+});

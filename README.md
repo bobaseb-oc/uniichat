@@ -114,12 +114,13 @@ also be set as `UNII_<KEY>`. The ones that matter here:
   OAuth grant in the Keychain). It includes `okf-wiki`
   (local/okf-wiki.ts): search and read the OnCorps Knowledge Framework
   wiki, and `record_gap` for what it lacks (~/.unii/okf-gaps.jsonl, never
-  sent anywhere). For OKF's ontology too, register its MCP server with
-  Claude Code, and Legion gets it at its next start: in an OKF checkout of
-  `0.x`, `uv run src/scripts/build_client_dataset.py --internal --out-dir
-  build --okf-commit "$(git rev-parse HEAD)"`, then
-  `claude mcp add okf -s user -e OKF_DATASET_MANIFEST=<okf>/build/internal.manifest.json
-  -- uv run --project <okf> python <okf>/src/scripts/okf_mcp_server.py`.
+  sent anywhere), and `okf` (local/okf-mcp.sh): OKF's own read-only
+  ontology server, from the checkout of `0.x` that ~/.unii/okf links to (or
+  $OKF_CHECKOUT); it rebuilds the internal dataset when the checkout moves.
+  Claude Code can use the same one (`claude mcp add okf -s user --
+  <uniichat>/local/okf-mcp.sh`); a name Claude Code has, Legion takes from
+  it. Both servers' lookups are on Modes.MCP_READS, so auto mode does not
+  review them and plan mode runs them; record_gap is reviewed.
 - `searches`: 0 turns off the vendor's web search (Bedrock behind
   LiteLLM rejects it); `searxng_url` is the local search instead.
 - `after`: a shell command run after each turn.
