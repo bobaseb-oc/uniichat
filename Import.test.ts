@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Import from "./Import.ts";
 import { Memory } from "./Memory.ts";
+import * as zlib from "node:zlib";
 
 // a log's odd lines (no object, a null block, a date past JS's) are no
 // messages: the session keeps the rest, never fails the import
@@ -27,6 +28,38 @@ test("a ZIP64 export imports", async () => {
   const sessions = await Import.import_export(zip);
   expect(sessions.map((s) => [s.app, s.where, s.heads.length])).toEqual([["Claude", 'chat "t"', 1]]);
 });
+
+// security review L: a ChatGPT chat whose parents loop ends; its thread
+// read once
+test("a ChatGPT chat whose parents loop imports, its loop read once", async () => {
+  const say = (text: string) => ({ author: { role: "user" }, content: { content_type: "text", parts: [text] }, create_time: 1.79e9 });
+  const loop = { title: "loop", current_node: "a", mapping: { a: { parent: "b", message: say("a") }, b: { parent: "a", message: say("b") } } };
+  const self = { title: "self", current_node: "c", mapping: { c: { parent: "c", message: say("c") } } };
+  const sessions = await Import.import_export(new Blob([JSON.stringify([loop, self])]));
+  expect(sessions.map((s) => [s.where, s.heads.length])).toEqual([['chat "loop"', 2], ['chat "self"', 1]]);
+});
+
+// security review L: a deflated conversations.json inflated past the cap
+// is refused, its inflating stopped there (a zip bomb)
+test("a zip's file inflating past the cap is refused", async () => {
+  const data = new TextEncoder().encode(JSON.stringify([{ name: "t", chat_messages: [{ sender: "human", text: "x".repeat(5000), created_at: "2026-10-01T00:00:00Z" }] }]));
+  const zip = zip_deflated("conversations.json", data);
+  expect(await (await Import.zip_file(zip, "conversations.json", data.length))!.text()).toBe(new TextDecoder().decode(data));
+  await expect(Import.zip_file(zip, "conversations.json", 1000)).rejects.toThrow("over 1000 bytes inflated");
+  expect(Import.ZIP_CAP).toBe(256 * 1024 * 1024);
+});
+
+// a zip of one file, deflated
+function zip_deflated(name: string, data: Uint8Array): Blob {
+  const path = new TextEncoder().encode(name);
+  const packed = new Uint8Array(zlib.deflateRawSync(data));
+  const crc = Bun.hash.crc32(data);
+  const local = bytes([[4, 0x04034b50], [2, 20], [2, 0], [2, 8], [2, 0], [2, 0], [4, crc], [4, packed.length], [4, data.length], [2, path.length], [2, 0]]);
+  const at = local.length + path.length + packed.length;
+  const entry = bytes([[4, 0x02014b50], [2, 20], [2, 20], [2, 0], [2, 8], [2, 0], [2, 0], [4, crc], [4, packed.length], [4, data.length], [2, path.length], [2, 0], [2, 0], [2, 0], [2, 0], [4, 0], [4, 0]]);
+  const end = bytes([[4, 0x06054b50], [2, 0], [2, 0], [2, 1], [2, 1], [4, entry.length + path.length], [4, at], [2, 0]]);
+  return new Blob([local, path, packed, entry, path, end]);
+}
 
 // little-endian fields, each its width in bytes and its value
 function bytes(fields: Array<[number, number]>): Uint8Array {

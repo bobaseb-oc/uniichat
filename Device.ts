@@ -73,7 +73,7 @@ export const STATUS_EVERY = 60_000;
 export function device_status(rules: Rules, now: number): View.Client {
   const raw = rules.home || rules.work + "/main";
   const dir = raw.startsWith("~/") ? os.homedir() + raw.slice(1) : raw;
-  const git = Bun.spawnSync(["git", "-C", dir, "branch", "--show-current"], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
+  const git = Bun.spawnSync(device_git(dir, "branch", "--show-current"), { stdout: "pipe", stderr: "ignore", timeout: 2000 });
   const branch = git.exitCode === 0 ? git.stdout.toString().trim() || null : null;
   const spend = Cost.cost_read(Cost.COST_CACHE, now);
   if (spend.due) {
@@ -120,6 +120,29 @@ export const exec: Exec = async (cmd) => {
     return { code: 127, out: String(err?.message ?? err) };
   }
 };
+
+// security review L: every git the device runs, in dir, hardened: no
+// fsmonitor, hooks, external diff or pager (and --no-textconv where a
+// diff shows, GIT_VIEWS); only where device_trusted says
+const GIT_SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "-c", "core.pager=cat", "--no-pager"];
+export function device_git(dir: string, ...args: string[]): string[] {
+  return ["git", "-C", dir, ...GIT_SAFE, ...args];
+}
+
+// whether git may run in dir: it is this user's, and the repo's own config
+// (not the user's global or the system's) names no filter or textconv
+// driver, which a status or a diff would run
+export async function device_trusted(dir: string, run: Exec): Promise<boolean> {
+  try {
+    if (fs.statSync(dir).uid !== process.getuid?.()) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  const r = await run(device_git(dir, "config", "--show-scope", "--includes", "--get-regexp", "^filter\\.|\\.textconv$"));
+  return r.code === 1 || (r.code === 0 && r.out.split("\n").every((l) => l.trim() === "" || /^(global|system)\s/.test(l)));
+}
 
 // a path with ~ for home, whole
 function home(dir: string): string {
@@ -269,8 +292,8 @@ export async function device_inbox(rules: Rules, run: Exec, now: Date, g: Reads 
 async function device_digest(spaces: string[], run: Exec, now: Date, said: (tool: string, r: { out: string }) => void): Promise<Inbox.Digest | null> {
   // a fork's upstream first: the team's PRs are there, not on the fork
   const remote = async (s: string) => {
-    const up = await run(["git", "-C", s, "remote", "get-url", "upstream"]);
-    return up.code === 0 ? up : run(["git", "-C", s, "remote", "get-url", "origin"]);
+    const up = await run(device_git(s, "remote", "get-url", "upstream"));
+    return up.code === 0 ? up : run(device_git(s, "remote", "get-url", "origin"));
   };
   const remotes = await Promise.all(spaces.map(remote));
   const repos = [...new Set(remotes.filter((r) => r.code === 0).map((r) => Inbox.inbox_repo(r.out)).filter((r): r is string => r !== null))];
@@ -299,47 +322,111 @@ async function device_digest(spaces: string[], run: Exec, now: Date, said: (tool
   return digest;
 }
 
-// a space's worktrees to clean up: uncommitted changes, or a merged branch
+// a space's worktrees to clean up: uncommitted changes, or a merged
+// branch; none of a space git may not run in (device_trusted)
 async function device_clean(space: string, run: Exec): Promise<Inbox.Clean[]> {
-  const list = await run(["git", "-C", space, "worktree", "list", "--porcelain"]);
+  if (!await device_trusted(space, run)) {
+    return [];
+  }
+  const list = await run(device_git(space, "worktree", "list", "--porcelain"));
   const trees = list.code === 0 ? Inbox.inbox_worktrees(list.out) : [];
   if (trees.length === 0) {
     return [];
   }
-  const base = await run(["git", "-C", space, "rev-parse", "--abbrev-ref", "origin/HEAD"]);
-  const merged = base.code !== 0 ? [] : (await run(["git", "-C", space, "branch", "--merged", base.out.trim(), "--format=%(refname:short)"])).out.split("\n").map((b) => b.trim());
+  const base = await run(device_git(space, "rev-parse", "--abbrev-ref", "origin/HEAD"));
+  const merged = base.code !== 0 ? [] : (await run(device_git(space, "branch", "--merged", base.out.trim(), "--format=%(refname:short)"))).out.split("\n").map((b) => b.trim());
   const repo = path.basename(space);
   const rows = await Promise.all(trees.map(async (t) => {
-    const st = await run(["git", "-C", t.path, "status", "--porcelain"]);
+    const st = await device_trusted(t.path, run) ? await run(device_git(t.path, "status", "--porcelain")) : { code: 1, out: "" };
     const changes = st.code === 0 ? st.out.split("\n").filter((l) => l.trim() !== "").length : 0;
     return { repo, path: t.path, branch: t.branch, changes, merged: t.branch !== null && merged.includes(t.branch) };
   }));
   return rows.filter((r) => r.changes > 0 || r.merged);
 }
 
-// `legion device`: connects to the server at url as this device (auth: its
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): how
+// a device or terminal reaches the server on this computer: never over
+// TCP (any process may take 127.0.0.1:<port> first, and relay the real
+// server to get a session), only over its unix socket, <dir>/server.sock
+// (Server.ts Main.unix: this user's, 0600, in a 0700 dir, so only this
+// user's processes can be the server). url: the server's address, its
+// host the Host header (Server.ts Main.ours). No socket: a call fails and
+// is tried again, never sent over TCP
+export type Wire = { url: string; sock: string };
+
+// Bun reads a ':' in a ws+unix:// path as its end; macOS's socket paths
+// are at most 104 bytes, the last a NUL
+const SOCK_PATH = /^\/[^:]{1,102}$/;
+const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
+
+export const NO_SOCKET = "no server socket (none up): not connecting, trying again";
+
+// the wire to the server at url (loopback only) whose dir is dir; a path
+// Bun can't open as given is refused, not opened elsewhere
+export function device_wire(url: string, dir: string): Wire {
+  const sock = dir.replace(/\/$/, "") + "/server.sock";
+  if (!SOCK_PATH.test(sock)) {
+    throw new Error(sock + ": not a socket path this build opens (absolute, no ':', under 104 bytes)");
+  }
+  if (!LOOPBACK.includes(new URL(url).hostname)) {
+    throw new Error(url + ": not a server on this computer");
+  }
+  return { url: url.replace(/\/$/, ""), sock };
+}
+
+// a request to the server, over its socket only; a redirect is refused
+// (it would leave the socket)
+export function device_fetch(w: Wire, path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(w.url + path, { ...init, unix: w.sock, redirect: "error" } as RequestInit);
+}
+
+// a WebSocket to the server's path, over its socket only
+function device_socket(w: Wire, path: string, headers: Record<string, string>): WebSocket {
+  return new WebSocket("ws+unix://" + w.sock + ":" + path, { headers: { ...headers, host: new URL(w.url).host } } as any);
+}
+
+// RED ZONE U1: the link to the server (auth: the session's header; query:
+// this device), over its socket only (device_socket, device_fetch). No
+// socket: none opens, it tries again (View.RETRY), said once in log; only
+// with one does lost() hear of a loss (signed out?)
+export function device_link(v: View.View, w: Wire, auth: () => Record<string, string>, query: string, log: (line: string) => void, hear: (msg: View.Server) => void, lost: (up: boolean) => Promise<boolean>): void {
+  let said = false;
+  const link: View.Link = {
+    open : (q) => device_socket(w, "/ws" + q + query, auth()),
+    post : (path, body) => device_fetch(w, path, { method: "POST", headers: auth(), body }),
+    hear,
+    lost : async (up) => {
+      const none = !fs.existsSync(w.sock);
+      if (none && !said) {
+        log(NO_SOCKET);
+      }
+      said = none;
+      return none || lost(up);
+    },
+  };
+  View.link_open(v, link);
+}
+
+// `legion device`: connects to the server (w) as this device (auth: its
 // session's header; query: its name, work dir, whether it does computer
-// use) and runs its jobs, with no screen; what goes wrong, to log. A
-// lost socket opens again, unless lost() says not (signed out)
-export function device_open(url: string, auth: Record<string, string>, query: string, rules: Rules, log: (line: string) => void, lost: (up: boolean) => Promise<boolean> = async () => true): View.View {
+// use), over its socket only (device_link), and runs its jobs, with no
+// screen; what goes wrong, to log. A lost socket opens again, unless
+// lost() says not (signed out)
+export function device_open(w: Wire, auth: Record<string, string>, query: string, rules: Rules, log: (line: string) => void, lost: (up: boolean) => Promise<boolean> = async () => true): View.View {
   const v = View.view_new();
   const jobs = new Map<string, Run>();
   const send = (msg: View.Client) => View.link_send(v, msg, (a) => a.error !== undefined && log("refused: " + a.error));
   const heard = device_reads(rules, send);
-  View.link_open(v, {
-    open : (q) => new WebSocket(url.replace(/^http/, "ws") + "/ws" + q + query, { headers: auth } as any),
-    post : (path, body) => fetch(url + path, { method: "POST", headers: auth, body }),
-    hear : (msg) => {
-      for (const out of View.view_hear(v, msg)) {
-        send(out);
-      }
-      if (msg.$ === "jobs" || msg.$ === "job") {
-        device_jobs(v, jobs, msg, rules, send);
-      }
-      heard(msg);
-    },
-    lost,
-  });
+  const hear = (msg: View.Server) => {
+    for (const out of View.view_hear(v, msg)) {
+      send(out);
+    }
+    if (msg.$ === "jobs" || msg.$ === "job") {
+      device_jobs(v, jobs, msg, rules, send);
+    }
+    heard(msg);
+  };
+  device_link(v, w, () => auth, query, log, hear, lost);
   const report = () => send(device_status(rules, Date.now()));
   report();
   setInterval(report, STATUS_EVERY).unref();
@@ -384,17 +471,16 @@ export async function device_harvest(id: string, entries: unknown, h: Posts = po
 // What a view asks to see: a file (an agent's relative path from its own
 // dir), or a repo's git by one of GIT_VIEWS' fixed commands. Shown only
 // under the device's roots (its work dir, home repo, spaces), each path's
-// symlinks followed first; never a secret's file (SECRET), a binary or a
+// symlinks followed first; never a secret's file (Machine.secret), a binary or a
 // file past LOOK_BYTES; git's answer cut at LOOK_BYTES.
 
 export const LOOK_BYTES = 512 * 1024;
-const SECRET = /^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|\.netrc|\.npmrc|\.pypirc|credentials.*|\.credentials.*|secrets?(\..*)?)$/i;
 const GIT_VIEWS: Record<string, (rev: string | null) => string[]> = {
   status  : () => ["status", "--porcelain=v1", "--branch"],
   branches: () => ["branch", "--all", "-vv", "--no-color"],
   log     : () => ["log", "--oneline", "--decorate", "--no-color", "-80"],
-  diff    : () => ["diff", "--no-color", "--no-ext-diff", "HEAD"],
-  show    : (rev) => ["show", "--no-color", "--no-ext-diff", "--stat", "--patch", rev ?? "HEAD"],
+  diff    : () => ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD"],
+  show    : (rev) => ["show", "--no-color", "--no-ext-diff", "--no-textconv", "--stat", "--patch", rev ?? "HEAD"],
 };
 const REV = /^([0-9a-f]{4,40}|HEAD(~\d{1,3})?)$/;
 
@@ -443,28 +529,39 @@ function look_file(rules: Rules, what: View.Look & { kind: "file" }): Shown | st
   }
   const given = String(what.path ?? "");
   const at = path.resolve(agent === null ? home(rules.home ?? rules.work) : path.join(home(rules.work), agent), home(given));
-  if (SECRET.test(path.basename(at))) {
+  // by its name and its real path's (a symlink's target)
+  if (Machine.secret(at)) {
     return path.basename(at) + " may hold a secret: not shown.";
   }
   const real = look_under(rules, at);
   if (typeof real !== "string") {
     return real.why;
   }
-  if (SECRET.test(path.basename(real))) {
-    return path.basename(real) + " may hold a secret: not shown.";
+  // security review L: opened not following a symlink (one swapped in
+  // since look_under is refused), then the open file checked again: the
+  // one at its real path, still under a root, still no secret's
+  const fd = fs.openSync(real, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) {
+      return "No file " + given + " here (a directory?).";
+    }
+    const again = look_under(rules, real);
+    const same = typeof again === "string" && !Machine.secret(again) && fs.statSync(again).ino === st.ino && fs.statSync(again).dev === st.dev;
+    if (!same) {
+      return given + " changed as it was read: not shown.";
+    }
+    if (st.size > LOOK_BYTES) {
+      return given + " is too big to show (" + st.size + " bytes).";
+    }
+    const data = fs.readFileSync(fd);
+    if (data.includes(0)) {
+      return given + " is a binary file.";
+    }
+    return { path: at, text: data.toString("utf8") };
+  } finally {
+    fs.closeSync(fd);
   }
-  const st = fs.statSync(real);
-  if (!st.isFile()) {
-    return "No file " + given + " here (a directory?).";
-  }
-  if (st.size > LOOK_BYTES) {
-    return given + " is too big to show (" + st.size + " bytes).";
-  }
-  const data = fs.readFileSync(real);
-  if (data.includes(0)) {
-    return given + " is a binary file.";
-  }
-  return { path: at, text: data.toString("utf8") };
 }
 
 // a repo's git by one of GIT_VIEWS (a file's own repo; @home: the home
@@ -484,7 +581,10 @@ async function look_git(rules: Rules, what: View.Look & { kind: "git" }): Promis
     return real.why;
   }
   const dir = fs.statSync(real).isDirectory() ? real : path.dirname(real);
-  const r = await exec(["git", "-C", dir, "--no-pager", "-c", "core.fsmonitor=false", ...view(rev)]);
+  if (!await device_trusted(dir, exec)) {
+    return dir + ": not run: not this user's, or its git config names a filter or textconv driver.";
+  }
+  const r = await exec(device_git(dir, ...view(rev)));
   if (r.code !== 0) {
     return "git: " + r.out.trim();
   }

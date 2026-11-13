@@ -639,23 +639,67 @@ slice touches only its owned files, Red Zone items (auth, sessions, credentials,
 land as DRAFT for the user's sign-off. Success: every finding has a test that fails if the fix is removed,
 full suite stays at baseline (328 pass, 2 known log-staging fails) plus the new tests.
 
-- [ ] SA gating (Modes.ts, Tools.ts, Mcp.ts): C1 zsh glob/brace bypass, git grep -O / reflog / sort
+- [x] SA gating (Modes.ts, Tools.ts, Mcp.ts): C1 zsh glob/brace bypass, git grep -O / reflog / sort
       --compress-program / file -C / flag-prefix matching; H2 refuse over-long actions instead of cutting;
       H3 review mcp__* (except a read-only allowlist) and computer, fence MCP output; M4 SECRETS on
       unquoted words + globbed paths reviewed; L reviewer reply must be exactly one JSON object.
-- [ ] SB device (Term.ts, Device.ts, Machine.ts, Hooks.ts, local/unii-local.sh, local/legion, new Proof.ts):
+- [x] SB device (Term.ts, Device.ts, Machine.ts, Hooks.ts, local/unii-local.sh, local/legion, new Proof.ts):
       H1 device proves the server (HMAC of a nonce with a 0600 per-install key) before sending its token
       or taking jobs; M2 job shells get an allowlisted env; M3 refuse writes to .claude/settings*, ignore
       project disableAllHooks; L hardened git args everywhere (fsmonitor, textconv, filters); L look_file
       blocks .git/config, token, *.json keys and opens with O_NOFOLLOW; M4 read/grep secret-path denylist.
-- [ ] SC server (Server.ts, Cloud.ts, Memory.ts, web/index.html): M1 single-use sign-in link + confirm
+- [x] SC server (Server.ts, Cloud.ts, Memory.ts, web/index.html): M1 single-use sign-in link + confirm
       click; M6 body size caps; M7 per-socket backpressure; L session expiry + sign-out-everywhere; L XFF
       rightmost hop; L generic client errors; L CSP + frame-ancestors + Origin/Host allowlist; H4 review
       routines run in plan mode; /api/proof route for SB; Memory.save 0600.
-- [ ] SD integrations (local/prime/redact.ts, Google.ts, local/google-login.ts, Import.ts, Config.ts,
+- [x] SD integrations (local/prime/redact.ts, Google.ts, local/google-login.ts, Import.ts, Config.ts,
       Harvest.ts, Auth.ts, local/harvest-login.ts): M5 redaction boundary + missing shapes; L revoke result;
       L import cycle/depth/inflate caps; I gateway URL must be https; H5 Harvest token readable only with a
       Keychain prompt.
-- [ ] SE iOS + CI (ios/**, .github/workflows/ios.yml): M8 session in Keychain (ThisDeviceOnly); L web view
+- [x] SE iOS + CI (ios/**, .github/workflows/ios.yml): M8 session in Keychain (ThisDeviceOnly); L web view
       allows only the site origin + blob:, bridge and mic check origin; L XcodeGen sha256, actions pinned
       to SHAs, permissions: contents: read.
+
+Review (2026-11-13): all five slices done test-first, every Red Zone change marked DRAFT awaiting the
+user's sign-off. Proof: full suite 367 pass, 3 fail: the known log-staging pair and `link_ask`, which
+fails the same way on a clean 0450e14 when cache.test.ts runs first (a frozen clock it leaves behind).
+Mutation checks: SA 16/16, SB 36/37 (the survivor is the look_file re-check after open, a race no test
+can trigger), SC 35/35, SD 10/10, H4 2/2. iOS: both targets typecheck against the iOS 27.2 SDK; not
+built, signed or run on a device. Left open, by design or for the user: Google's Keychain grant is
+still readable by an agent's shell (a prompt per inbox read is unworkable; documented in Google.ts);
+the proof is checked just before a socket opens, not bound to it; no UI button for /api/logout-all yet;
+the request ceiling is 4 GiB for imports.
+
+Round 2 (an independent check of the branch, 2026-11-13): the settings guard now ignores case (an
+agent could plant .claude/SETTINGS.LOCAL.JSON) and covers $CLAUDE_CONFIG_DIR, which Hooks.ts now
+reads; one case-insensitive secret-path list for shell, read/grep/glob and the files pane; read-only
+gh views and GET-only gh api, so unattended PR reviews can read the PR; proxy and CA vars kept in job
+envs; MCP names with replace/reset/run/exec/query reviewed; redaction catches *_KEY, *_SECRET_*,
+empty-user and @-in-password URLs, and no pattern is quadratic (14 crafted 1 MB lines < 200 ms);
+the old Harvest token moves to the guarded store once; X-Forwarded-For only with UNII_PROXY=1; old
+sessions keep 90 days once. Suite 379 pass, the same 3 fails; mutants 35/35 killed. Left for a
+follow-up PR: devices reach the server over a 0700 unix socket, so the proof can't be relayed.
+
+Final check (2026-11-13): the Mac folds Unicode lookalikes as well as case (ſettings.local.json is
+settings.local.json), so the settings guard and read's secret check now compare NFKC-folded paths;
+a shell command that isn't plain ASCII, or greps the whole home or disk, goes to the reviewer; gh -R
+takes only OWNER/REPO, never another host. Suite 382 pass, the same 3 fails; 5/5 mutants killed.
+Still open, by design: MCP review by name is a deny-list (an allowlist of read-only servers is the
+sound version); a *_KEY value with no digit isn't redacted.
+
+Round 4 (close what was left open, user's ask 2026-11-13):
+- [x] U1 devices link to the server over a unix socket in the 0700 dir (no TCP proof to relay)
+- [x] U2 Google grant behind a Keychain prompt, read once per device start and kept in memory
+- [x] U3 MCP review by an exact read-only allowlist; a sign-out-everywhere button; *_KEY values
+      redacted unless they look like identifiers
+Round 4 proof: Proof.ts and /api/proof deleted (the 0700 dir's unix socket is the proof; a lone server
+binds TCP without reusePort); the Harvest guarded token got its own item (it had shared the old,
+bun-readable one, so the move never ran: found while doing U2); suite 393 pass, the same 3 fails;
+mutants U1 20/20, U2 13/13, U3 12/12. Left: launchd start order on a real login, the prompts, and
+iOS on a device are the user's checks; the K10 conflict is resolved when the second PR merges.
+Round 4 check: an allowlisted MCP "read" given a file, path or dir argument is reviewed (playwright's
+browser_console_messages takes a filename and writes it: an agent could have written ~/.zshenv); a
+*_KEY value with digits before a dot is redacted; a multi-worker server says it opens no device socket;
+the README says when to Allow a Keychain prompt. Suite 395 pass, the same 3 fails; mutants 2/2 (a
+SECRETS entry for security/launchctl survived: both are already reviewed as not read-only, so it was
+dropped).

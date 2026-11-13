@@ -9,7 +9,10 @@
 // only read, joined by pipes and && || ;, with no redirect (but 2>/dev/null
 // and 2>&1), substitution, background job, newline, variable assignment
 // or path to a program; per command, the flags that would write or run
-// other code refused (find -exec, rg --pre, git's writing subcommands...).
+// other code refused (find -exec, rg --pre, git's writing subcommands...),
+// in any form git and GNU take them (abbreviated, =value, run together);
+// no word the shell would expand itself (zsh: glob, brace, paren, =cmd).
+// RED ZONE (security review SA, DRAFT awaiting the user's sign-off)
 
 // Types
 // =====
@@ -35,30 +38,55 @@ const AFTER = "Say what you would change instead: in your report, or, for Unii, 
 const READS = ["read", "glob", "grep", "google", "harvest"];
 
 // the tools auto mode's reviewer checks
-const REVIEWED = ["shell", "write", "edit"];
+const REVIEWED = ["shell", "write", "edit", "computer"];
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): the one list of where a secret may be, in any case (macOS's
+// disk is case-insensitive). A file's name (a key, credentials, a token,
+// .env, a login's dotfile, a service account's JSON), a dir it is in
+// (~/.ssh, ~/.aws, ~/.kube...) or a repo's .git/config: Machine's read,
+// grep and glob refuse them (Machine.secret), so does Device's files pane
+const DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json`;
+const DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
+export const SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
+export const SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
 
 // a read-only command that may read secrets: still reviewed in auto mode
-const SECRETS = /printenv|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
+// (the list above, in the line or its words; not a bare key: too common.
+// not set, which flagged git push --set-upstream (K10); env stays: jq -n env
+// prints the environment)
+const SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
 
 // commands that only read, whatever their arguments
-// (not env, which runs its arguments; nor tree -o, uniq's output file:
-// checked below)
-const PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+// (not env, which runs its arguments; nor tree -o, uniq's output file,
+// file -C: checked below)
+const PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 
 // git's subcommands that only read
 const GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 
-// git branch/tag flags that write
-const GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+// git branch/tag flags that write: long ones, and short ones' letters
+const GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
+const GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
 
-// gh's subcommands that only read, by noun (K10: network reads); gh api
-// only as a GET with no fields sent
-const GH_READS: Record<string, string[]> = {
+// gh's subcommands that only read (an unattended PR review reads its PR
+// with them), the flags they may take (none opens a browser or waits),
+// and gh api's: a GET of a path on GitHub, no field (that makes it a POST)
+// (K10's nouns: the network reads the user chose; auth status takes no
+// flag, as its -t prints the token)
+const GH: Record<string, string[]> = {
   pr: ["view", "list", "diff", "checks", "status"], issue: ["view", "list", "status"], repo: ["view", "list"],
   run: ["view", "list"], workflow: ["view", "list"], release: ["view", "list"],
   search: ["prs", "issues", "repos", "code", "commits"], auth: ["status"],
 };
-const GH_SENDS = /^(-f|-F|--field|--raw-field|--input)(=|$)|^-[fF].+/;
+// a search over the whole home or disk, which holds the logins (a grep -r ~)
+const HOME_WIDE = /^(~\/?|\$HOME\/?|\$\{HOME\}\/?|\/|\/Users(\/[^\/]+)?\/?)$/;
+// gh -R: OWNER/REPO on GitHub, never HOST/OWNER/REPO
+const GH_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+const GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m",
+  "--log", "--log-failed", "--job", "-j", "--exit-status", "--attempt", "--verbose", "--workflow", "--event", "--status", "--user", "--commit", "--created",
+  "--owner", "--language", "--sort", "--order", "--match", "--updated", "--visibility", "--topic", "--archived", "--no-archived", "--fork", "--source", "--exclude-drafts", "--exclude-pre-releases", "--all", "--yaml", "--ref"]);
+const GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
 
 // a branch a plain push may go to without the reviewer: not a default,
 // shared or release branch (K10)
@@ -97,15 +125,42 @@ export namespace Modes {
     return why + ": " + tool + " can change things. " + AFTER;
   }
 
+  // RED ZONE (security review U3, DRAFT awaiting the user's sign-off):
+  // the MCP tools auto mode lets by unreviewed, by whole name, of the
+  // servers local/mcp.ts sets up: plainly reads (no fetch, navigate,
+  // evaluate, execute*, nor a screenshot written to a path). Config's
+  // mcp_reads adds more (Tools.ts passes them); any other is reviewed
+  // an argument naming a file or dir: an MCP read given one may write there
+  const MCP_FILE = /file|path|dir/i;
+  export const MCP_READS: readonly string[] = [
+    ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
+    ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
+    ...["list_pages", "take_snapshot", "list_console_messages", "get_console_message", "list_network_requests", "get_network_request"].map((t) => "mcp__chrome-devtools__" + t),
+  ];
+
   // whether auto mode's reviewer checks a tool's call: not a plainly
   // read-only shell command (as Claude Code), network reads included, nor
-  // a feature branch's plain push (K10), unless it touches secrets
-  export function reviews(mode: Mode, tool: string, input?: any): boolean {
-    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+  // a feature branch's plain push (K10), unless it reads secrets (in its
+  // line or its words, quotes off), nor an MCP tool whose exact name is on
+  // MCP_READS or reads (one cut with a hash, Mcp.name, never is)
+  export function reviews(mode: Mode, tool: string, input?: any, reads: readonly string[] = []): boolean {
+    if (mode !== "auto") {
+      return false;
+    }
+    if (tool.startsWith("mcp__")) {
+      // a file or path argument: the "read" may write it (playwright filename, devtools filePath)
+      return /_[0-9a-f]{8}$/.test(tool) || Object.keys(input ?? {}).some((k) => MCP_FILE.test(k)) || !(MCP_READS.includes(tool) || reads.includes(tool));
+    }
+    if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    return command === null || SECRETS.test(command) || (Modes.readonly(command) !== null && !Modes.feature_push(command));
+    // not plain ASCII: the Mac folds lookalikes (a long s is s), so a name may hide
+    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || (Modes.readonly(command) !== null && !Modes.feature_push(command))) {
+      return true;
+    }
+    const lexed = lex(command);
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w) || HOME_WIDE.test(w));
   }
 
   // why a shell command is not plainly read-only; null: it is
@@ -167,6 +222,8 @@ export namespace Modes {
         return "a command substitution";
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
+      } else if ("{}()*?[]".includes(c) || (c === "=" && word === null) || (c === "$" && "~=^{[".includes(line[k + 1] ?? " "))) {
+        return "an unquoted " + c + " (the shell expands it: glob, brace, paren or =cmd)";
       } else if (c === ">") {
         const to = stderr(line, k, word);
         if (typeof to === "string") {
@@ -212,6 +269,9 @@ export namespace Modes {
       if (line[k] === "`" || (line[k] === "$" && line[k + 1] === "(")) {
         return "a command substitution";
       }
+      if (line[k] === "$" && (line[k + 1] === "{" || line[k + 1] === "[")) {
+        return "a ${...} or $[...] (zsh's flags can run code)";
+      }
       if (line[k] === "\\") {
         k += 1;
       }
@@ -220,29 +280,51 @@ export namespace Modes {
     return k >= line.length ? "an unclosed quote" : [w, k];
   }
 
-  // why one command is not read-only; null: it is
-  // gh that only reads (GH_READS; api: a GET sending no fields), else why not
+  // whether an argument is one of the long options named, as git and GNU
+  // take them: abbreviated, with or without =value
+  function long(a: string, names: string[]): boolean {
+    const name = a.split("=")[0]!;
+    return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
+  }
+
+  // why a gh command is not read-only (GH, GH_FLAGS, GH_API); null: it is
   function gh(args: string[]): string | null {
-    const [noun, verb, ...rest] = args;
-    if (noun === "api") {
-      const all = args.slice(1);
-      for (let k = 0; k < all.length; k++) {
-        const a = all[k]!;
-        const method = a === "-X" || a === "--method" ? all[k + 1] : /^--method=(.*)$/.exec(a)?.[1] ?? /^-X(.+)$/.exec(a)?.[1];
-        if (method !== undefined && method.toUpperCase() !== "GET") {
-          return "gh api " + method + " can change things";
+    const [group = "", sub = "", ...rest] = args;
+    if (group === "api") {
+      for (let k = 1; k < args.length; k++) {
+        const a = args[k]!;
+        // a header only to say what it accepts (K10's -H 'Accept: ...'): any
+        // other may change the method (X-HTTP-Method-Override)
+        const header = a === "-H" || a === "--header" ? args[++k] ?? "" : /^(?:-H|--header=)(.+)$/.exec(a)?.[1];
+        if (header !== undefined) {
+          if (!/^\s*accept\s*:/i.test(header)) {
+            return "gh api -H other than Accept (" + header + ")";
+          }
+          continue;
         }
-        if (GH_SENDS.test(a)) {
-          return "gh api with fields sends them (a POST)";
+        const method = a === "-X" || a === "--method" ? args[++k] : /^(-X|--method=)(.*)$/.exec(a)?.[2];
+        if (method !== undefined ? method.toUpperCase() !== "GET" : a.startsWith("-") ? !GH_API.has(a.split("=")[0]!) : a.includes("://")) {
+          return "gh api other than a GET of a path on GitHub (" + a + ")";
         }
       }
       return null;
     }
-    if (noun === undefined || verb === undefined || !Object.hasOwn(GH_READS, noun) || !GH_READS[noun]!.includes(verb)) {
-      return "gh " + [noun, verb].filter((x) => x !== undefined).join(" ") + " is not one that only reads";
+    if (!Object.hasOwn(GH, group) || !GH[group]!.includes(sub)) {
+      return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
     }
-    if (rest.some((a) => a === "--show-token" || a === "-t" || a === "--web" || a === "-w")) {
-      return "gh " + noun + " " + verb + " that prints a token or opens a browser";
+    if (group === "auth" && rest.length > 0) {
+      return "gh auth status takes no flag here (-t prints the token)";
+    }
+    const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]!));
+    if (bad !== undefined) {
+      return "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    }
+    for (let k = 0; k < rest.length; k++) {
+      const a = rest[k]!;
+      const repo = a === "-R" || a === "--repo" ? rest[++k] ?? "" : /^(?:-R|--repo)=(.*)$/.exec(a)?.[1];
+      if (repo !== undefined && !GH_REPO.test(repo)) {
+        return "gh -R takes OWNER/REPO on GitHub, not " + repo;
+      }
     }
     return null;
   }
@@ -268,6 +350,7 @@ export namespace Modes {
     return branch !== undefined && !PROTECTED.test(branch) && !branch.startsWith("-") && !branch.includes("..");
   }
 
+  // why one command is not read-only; null: it is
   function check(words: string[]): string | null {
     const [cmd, ...args] = words as [string, ...string[]];
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
@@ -281,10 +364,13 @@ export namespace Modes {
     }
     switch (cmd) {
       case "sort": {
-        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+        return args.some((a) => long(a, ["--output", "--compress-program"]) || /^-[a-zA-Z]*o/.test(a)) ? "sort -o or --compress-program writes or runs" : null;
       }
       case "tree": {
-        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+        return args.some((a) => long(a, ["--output"]) || /^-[^-]*o/.test(a)) ? "tree -o writes a file" : null;
+      }
+      case "file": {
+        return args.some((a) => long(a, ["--compile"]) || /^-[a-zA-Z]*C/.test(a)) ? "file -C writes a magic file" : null;
       }
       case "uniq": {
         return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
@@ -305,16 +391,19 @@ export namespace Modes {
           return "git with options before its subcommand";
         }
         if (sub === "fetch") {
-          return args.some((a) => a.startsWith("--upload-pack")) ? "git fetch --upload-pack runs another program" : null;
+          return args.some((a) => long(a, ["--upload-pack"])) ? "git fetch --upload-pack runs another program" : null;
         }
         if (!GIT.has(sub)) {
           return "git " + sub + " is not one that only reads";
         }
         const rest = args.slice(1);
-        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+        if (rest.some((a) => long(a, ["--output", "--ext-diff", "--exec", "--open-files-in-pager"]) || (sub === "grep" && /^-[a-zA-Z]*O/.test(a)))) {
           return "git " + sub + " with an option that writes or runs";
         }
-        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+        if (sub === "reflog" && rest[0] !== undefined && rest[0] !== "show" && !rest[0].startsWith("-")) {
+          return "git reflog " + rest[0] + " (only show reads)";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => long(a, GIT_WRITES) || GIT_SHORTS.test(a) || !a.startsWith("-"))) {
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;

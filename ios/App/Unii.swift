@@ -82,6 +82,9 @@ final class Page: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
     web = WKWebView(frame: .zero, configuration: conf)
     super.init()
     web.configuration.userContentController.add(self, name: "unii")
+    // the sign-in once kept in the app group (a plist, in backups) is gone;
+    // it is in the Keychain now (Site.session)
+    Site.group.removeObject(forKey: "session")
     web.navigationDelegate = self
     web.uiDelegate = self
     web.load(URLRequest(url: Site.url))
@@ -94,7 +97,11 @@ final class Page: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
     Task {
       let cookies = await web.configuration.websiteDataStore.httpCookieStore.allCookies()
       let session = cookies.first { $0.name == "unii" && $0.domain == Site.url.host }?.value
-      Site.group.set(session, forKey: "session")
+      // RED ZONE (security review SE, DRAFT awaiting the user's sign-off):
+      // kept in the Keychain; no cookie (signed out) deletes it
+      if Site.session != session {
+        Site.session = session
+      }
       let center = UNUserNotificationCenter.current()
       if session != nil, (try? await center.requestAuthorization(options: [.alert, .sound])) == true {
         UIApplication.shared.registerForRemoteNotifications()
@@ -102,13 +109,17 @@ final class Page: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
     }
   }
 
-  // the site's pages stay; any other opens outside
+  // the site's own https pages stay (and its blobs, and about:blank); any
+  // other opens outside
   func webView(_ web: WKWebView, decidePolicyFor act: WKNavigationAction) async -> WKNavigationActionPolicy {
     guard let url = act.request.url else {
       return .cancel
     }
-    if url.host == Site.url.host || ["about", "blob", "data"].contains(url.scheme) {
+    if Page.own(url) || url.scheme == "blob" || url.absoluteString == "about:blank" {
       return .allow
+    }
+    if url.scheme == "about" || url.scheme == "data" {
+      return .cancel
     }
     _ = await UIApplication.shared.open(url)
     return .cancel
@@ -132,14 +143,26 @@ final class Page: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
   }
 
   func webView(_ web: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-    type == .microphone ? .grant : .deny
+    type == .microphone && Page.own(origin) ? .grant : .deny
   }
 
-  // the bridge: {buy: dollars}
+  // the bridge: {buy: dollars}, heard only from the site's own top page
   func userContentController(_ ucc: WKUserContentController, didReceive msg: WKScriptMessage) {
+    guard msg.frameInfo.isMainFrame, Page.own(msg.frameInfo.securityOrigin) else {
+      return
+    }
     if let usd = (msg.body as? [String: Any])?["buy"] as? Int {
       Task { await Store.buy(usd) }
     }
+  }
+
+  // the site's own origin: https, its host (and port)
+  static func own(_ url: URL) -> Bool {
+    url.scheme == "https" && url.host == Site.url.host && url.port == Site.url.port
+  }
+
+  static func own(_ origin: WKSecurityOrigin) -> Bool {
+    origin.protocol == "https" && origin.host == Site.url.host && origin.port == (Site.url.port ?? 0)
   }
 
   // Download

@@ -7,9 +7,10 @@
 // printed), "@login" goes through GitHub where the billing takes it; both land
 // on /auth?t=<ticket>, where a browser gets a cookie. A terminal posts a token
 // it made and waits (/api/wait) while its link's page asks for the code it
-// shows (in no link). An emailed link works until it expires (mail apps open it
-// first); other tickets once. `legion web`: a signed-in terminal (its Bearer
-// token, never a cookie) gets a one-minute, one-use link for its own account.
+// shows (in no link). An emailed link's GET (mail apps open it first) only
+// shows a button, whose POST signs in, once. `legion web`: a signed-in
+// terminal (its Bearer token, never a cookie) gets a one-minute, one-use
+// link for its own account.
 // Tokens are kept as hashes. With phones on (UNII_PHONE=1), the iOS app's
 // links open it (AASA), its phones get each turn's last message (APNs).
 
@@ -53,9 +54,20 @@ export type Cloud = {
 
 const COOKIE = "unii";
 
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
+// session lasts AGE from its sign-in (a terminal's Bearer one, TERM), and
+// ends IDLE unused; its last use is written at most once a SEEN
+const AGE  = 30 * 864e5;
+const TERM = 90 * 864e5;
+const IDLE = 14 * 864e5;
+const SEEN = 60 * 60 * 1000;
+
 // a session cookie's attributes: Secure only on an https site, as Safari
 // drops a Secure cookie an http one (a server on 127.0.0.1) sets
-const KEEP = "; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000" + (config.SITE.startsWith("https:") ? "; Secure" : "");
+const KEEP = "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + AGE / 1000 + (config.SITE.startsWith("https:") ? "; Secure" : "");
+
+// a session live now, by its row (made, seen, term: Cloud.open's columns)
+const LIVE = "made >= ?1 - (case when term = 1 then " + TERM + " else " + AGE + " end) and seen >= ?1 - " + IDLE;
 
 // how long an act's answer with words is kept (ms)
 const ACTS = 7 * 864e5;
@@ -77,6 +89,9 @@ const SPAN      = 24 * 60 * 60 * 1000;
 const PUSH = { link: null as http2.ClientHttp2Session | null, jwt: "", at: 0 };
 const PUSH_AGE = 40 * 60 * 1000;
 
+// the most a sign-in post may be, read before anyone is signed in
+const SMALL_BODY = 16 * 1024;
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LOGIN = /^@[a-z0-9-]{1,39}$/;
 
@@ -96,6 +111,13 @@ create table if not exists acts     (user text not null, id text not null, ans t
 create index if not exists acts_big on acts (at) where ans <> '{}';
 `;
 
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
+// migration, additive: when a session was made and last used, and whether
+// a terminal's (TERM); a row from before them starts its age as it runs,
+// with a terminal's TERM (terminals' and launchd devices' Bearer sessions
+// can't be told from browsers', whose cookies end by their Max-Age anyway)
+const COLUMNS = ["made integer", "seen integer", "term integer not null default 0"];
+
 // Cloud
 // =====
 
@@ -106,6 +128,16 @@ export namespace Cloud {
     const file = path.join(config.DIR, "cloud.db");
     const db = Disk.db(file);
     db.exec(SCHEMA);
+    for (const col of COLUMNS) {
+      try {
+        db.exec("alter table sessions add column " + col);
+      } catch (err: any) {
+        if (!/duplicate column/.test(String(err?.message))) {
+          throw err;
+        }
+      }
+    }
+    db.query("update sessions set made = ?1, seen = ?1, term = 1 where made is null").run(Date.now());
     const base = { db, wal: file + "-wal", change, signed, post, waits: new Map() };
     return { ...base, billing: Billing.open(base), phone: config.PHONE };
   }
@@ -130,17 +162,50 @@ export namespace Cloud {
   }
 
   export function who(cloud: Cloud, req: Request): User | null {
-    const sql = "select id, name from sessions where hash = ?";
-    return cloud.db.query(sql).get(Cloud.hash(Cloud.token(req))) as User | null;
+    return Cloud.live(cloud, Cloud.hash(Cloud.token(req)));
+  }
+
+  // the user of a session live now (LIVE), its use marked (once a SEEN)
+  export function live(cloud: Cloud, hash: string): User | null {
+    const now = Date.now();
+    const user = cloud.db.query("select id, name from sessions where hash = ?2 and " + LIVE).get(now, hash) as User | null;
+    if (user !== null) {
+      cloud.db.query("update sessions set seen = ?1 where hash = ?2 and seen < ?3").run(now, hash, now - SEEN);
+    }
+    return user;
   }
 
   // one signed in somewhere, by id
   export function user(cloud: Cloud, id: string): User | null {
-    return cloud.db.query("select id, name from sessions where id = ?").get(id) as User | null;
+    return cloud.db.query("select id, name from sessions where id = ?2 and " + LIVE).get(Date.now(), id) as User | null;
   }
 
-  export function ip(req: Request): string | null {
-    return req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? null;
+  // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): the
+  // client's address: behind a proxy (UNII_PROXY=1), the last
+  // X-Forwarded-For entry, the one it appended (those before it the client
+  // may have written); with none, or no proxy (the client may write the
+  // header itself: a server on 127.0.0.1), the socket's, `addr`
+  export function ip(req: Request, addr: string | null = null, proxy = config.PROXY): string | null {
+    return (proxy && req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim()) || addr;
+  }
+
+  // a sign-in post's body, read before anyone is signed in: at most
+  // SMALL bytes (said, or counted as it streams); null: bigger
+  export const SMALL = SMALL_BODY;
+  export async function small(req: Request): Promise<string | null> {
+    if (Number(req.headers.get("content-length") ?? 0) > SMALL) {
+      return null;
+    }
+    const parts: Uint8Array[] = [];
+    let n = 0;
+    for await (const part of req.body ?? []) {
+      n += part.length;
+      if (n > SMALL) {
+        return null;
+      }
+      parts.push(part);
+    }
+    return Buffer.concat(parts).toString("utf8");
   }
 
   export function random(): string {
@@ -187,8 +252,10 @@ export namespace Cloud {
     return null;
   }
 
-  export function login(cloud: Cloud, user: User, hash: string): void {
-    cloud.db.query("insert or ignore into sessions values (?, ?, ?)").run(hash, user.id, user.name);
+  // term: a terminal's session (TERM), not a browser's
+  export function login(cloud: Cloud, user: User, hash: string, term = false): void {
+    const sql = "insert or ignore into sessions (hash, id, name, made, seen, term) values (?1, ?2, ?3, ?4, ?4, ?5)";
+    cloud.db.query(sql).run(hash, user.id, user.name, Date.now(), term ? 1 : 0);
   }
 
   // whether a link not expired still waits for the terminal of a session
@@ -324,20 +391,24 @@ export namespace Cloud {
   // ----
 
   // null: not a request of the accounts' API
-  export async function http(cloud: Cloud, req: Request): Promise<Response | null> {
+  export async function http(cloud: Cloud, req: Request, addr: string | null = null): Promise<Response | null> {
     const db = cloud.db;
     const url = new URL(req.url);
     const user = Cloud.who(cloud, req);
     switch (url.pathname) {
       case "/api/login": {
-        const body = await req.json();
+        const text = await Cloud.small(req);
+        if (text === null) {
+          return Response.json({ error: "Too big." }, { status: 413 });
+        }
+        const body = Cloud.json(text);
         const github = cloud.billing.github;
         const who = Cloud.address(String(body.who ?? ""), github !== null);
         if (who === null) {
           const error = "Type just your email (you@mail.com)" + (github === null ? "." : " or your GitHub handle (@name).");
           return Response.json({ error }, { status: 400 });
         }
-        const refused = Cloud.link_ask(cloud, who, Cloud.net(Cloud.ip(req) ?? ""));
+        const refused = Cloud.link_ask(cloud, who, Cloud.net(Cloud.ip(req, addr) ?? ""));
         if (refused !== null) {
           return Response.json({ error: refused }, { status: 429 });
         }
@@ -368,9 +439,13 @@ export namespace Cloud {
         if (link.session !== null) {
           return Cloud.page_confirm(t, link.who, url.searchParams.get("code") ?? "", "");
         }
-        if (link.who.startsWith("@")) {
-          Cloud.ticket_read(cloud, t, true);
+        // RED ZONE (security review SC, DRAFT awaiting the user's
+        // sign-off): an emailed link's GET (a mail app's preview, a
+        // scanner) only shows a button; its POST signs in (Cloud.confirm)
+        if (!link.who.startsWith("@")) {
+          return Cloud.page_sign(t, link.who);
         }
+        Cloud.ticket_read(cloud, t, true);
         const account = await cloud.billing.account(link.who, url.searchParams.get("code"), req);
         if (account === null) {
           return Cloud.expired();
@@ -400,6 +475,18 @@ export namespace Cloud {
       }
       case "/api/logout": {
         db.query("delete from sessions where hash = ?").run(Cloud.hash(Cloud.token(req)));
+        return Cloud.out();
+      }
+      // RED ZONE (security review SC, DRAFT awaiting the user's sign-off):
+      // signs the user out everywhere (a POST, as every act: Main.http's
+      // guards)
+      case "/api/logout-all": {
+        if (req.method !== "POST") {
+          return new Response(null, { status: 405 });
+        }
+        if (user !== null) {
+          Cloud.leave(cloud, user);
+        }
         return Cloud.out();
       }
     }
@@ -445,8 +532,7 @@ export namespace Cloud {
       return new Response(null, { status: 405 });
     }
     const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
-    const sql = "select id, name from sessions where hash = ?";
-    const user = bearer === "" ? null : cloud.db.query(sql).get(Cloud.hash(bearer)) as User | null;
+    const user = bearer === "" ? null : Cloud.live(cloud, Cloud.hash(bearer));
     if (user === null) {
       return Response.json({ error: "Sign in first: legion login" }, { status: 401 });
     }
@@ -474,11 +560,18 @@ export namespace Cloud {
   // account (the email's, or the GitHub code's: Billing account), the
   // session, and the terminal waiting on /api/wait woken
   export async function confirm(cloud: Cloud, req: Request): Promise<Response> {
-    const form = await req.formData().catch(() => new FormData());
-    const t = String(form.get("t") ?? "");
-    const typed = String(form.get("code") ?? "").replace(/\D/g, "");
-    const github = String(form.get("github") ?? "");
+    const text = await Cloud.small(req);
+    if (text === null) {
+      return new Response("too big", { status: 413 });
+    }
+    const form = new URLSearchParams(text);
+    const t = form.get("t") ?? "";
+    const typed = (form.get("code") ?? "").replace(/\D/g, "");
+    const github = form.get("github") ?? "";
     const link = Cloud.ticket_read(cloud, t, false);
+    if (link !== null && link.session === null && link.user === undefined && !link.who.startsWith("@")) {
+      return Cloud.mailed(cloud, t, req);
+    }
     if (link === null || link.session === null) {
       return Cloud.expired();
     }
@@ -489,10 +582,33 @@ export namespace Cloud {
     if (account === null) {
       return Cloud.expired();
     }
-    Cloud.login(cloud, account, link.session);
+    Cloud.login(cloud, account, link.session, true);
     Cloud.ticket_read(cloud, t, true);
     cloud.signed(link.session);
     return Response.redirect(config.SITE + "/?terminal=1", 302);
+  }
+
+  // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): an
+  // emailed link's button pressed: its ticket used up as read (once), the
+  // email's account gets a browser session
+  export async function mailed(cloud: Cloud, t: string, req: Request): Promise<Response> {
+    const link = Cloud.ticket_read(cloud, t, true);
+    const account = link === null ? null : await cloud.billing.account(link.who, null, req);
+    if (account === null) {
+      return Cloud.expired();
+    }
+    const cookie = COOKIE + "=" + Cloud.session(cloud, account) + KEEP;
+    return new Response(null, { status: 302, headers: { location: config.SITE + "/", "set-cookie": cookie } });
+  }
+
+  // a sign-in post's JSON; {}: none, or not an object
+  export function json(text: string): Record<string, unknown> {
+    try {
+      const got = JSON.parse(text);
+      return got !== null && typeof got === "object" ? got : {};
+    } catch {
+      return {};
+    }
   }
 
   // the site, told the sign-in link expired
@@ -506,6 +622,16 @@ export namespace Cloud {
     const safe = (s: string) => s.replace(/[<>&"]/g, "");
     const note = err === "" ? "" : `<p class="err">${err}</p>`;
     const body = `<h1>Finish signing in</h1><p>Enter the code shown in your terminal to sign in to <b>${safe(who)}</b>.</p>${note}<form method="post" action="/auth"><input type="hidden" name="t" value="${t}"><input type="hidden" name="github" value="${safe(github)}"><input name="code" inputmode="numeric" autocomplete="off" autofocus aria-label="code"><button type="submit">Confirm</button></form>`;
+    return Cloud.page(body);
+  }
+
+  // the page an emailed link opens: one button, whose POST signs in
+  export function page_sign(t: string, who: string): Response {
+    const safe = (s: string) => s.replace(/[<>&"]/g, "");
+    return Cloud.page(`<h1>Sign in</h1><p>Sign in to Legion as <b>${safe(who)}</b>.</p><form method="post" action="/auth"><input type="hidden" name="t" value="${safe(t)}"><button type="submit" autofocus>Sign in</button></form>`);
+  }
+
+  export function page(body: string): Response {
     const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Legion</title><link rel="stylesheet" href="/legal.css"></head><body><main>${body}</main></body></html>`;
     return new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } });
   }

@@ -10,3 +10,10 @@
 - 2026-11-12: The Chat fix wasn't the whole bug: the user still stayed on #crew (no agents). The paint wrote the Crew's hash back whenever it differed, so a paint landing between a click's new hash and its hashchange undid the click. My click tests passed because no server message landed in that gap. Rule: the URL is the one source of a mode: paint reads it, only acts write it; test the gap by changing the URL with no event, painting, then sending the event.
 - 2026-11-12: Bun ran a namespace with two `export async function answer` (the later silently replaced the socket handler), and an act with its own `id` field that `link_send`'s `{ id, ...msg }` would overwrite; the tests passed, only tsc (TS2393, TS2322) caught both. Rule: before naming a new Chat/Tools function, grep `function <name>` in the file; never give an act a field named `id`; read tsc's non-environment errors for every change, not just the counts.
 - 2026-11-12: A new `const SUMMARIES = 50` inside the Chat namespace shadowed the imported SUMMARIES wait ("summaries"), so Chat.waits would have returned 50 and the "compressing earlier messages" banner would have broken; 306 tests passed, only tsc's TS2322 showed it. Rule: before naming any constant or function inside a namespace, grep the file's imports and the namespace for that name (the 2026-11-12 function-name rule covers constants too), and read every non-environment tsc error.
+
+## 2026-11-13: "address all" means close everything closable
+Pattern: I shipped PR #8 with five items "left open, by design", and the user asked why they weren't closed.
+Rule: when asked to address all points, every item I can fix is fixed before the PR; an item stays open only
+when it needs the user's call, and then I ask (with a recommendation) before opening the PR, not after.
+Also: an unsandboxed shell has a different $TMPDIR than a sandboxed one, so mutation backups belong in the
+repo (work-tasks/), never in $TMPDIR across sandbox modes.

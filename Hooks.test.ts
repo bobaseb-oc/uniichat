@@ -120,6 +120,24 @@ test("allowManagedHooksOnly drops user hooks; a user's disableAllHooks can't dro
   expect((await Hooks.pre(off, "Bash", { command: "x" }, DIR, "A", live())).deny).toBe("managed");
 });
 
+// security review M3: an agent may write its project's settings (a shell
+// can), so a project's disableAllHooks drops nothing: the user's hooks
+// and the project's own still run; the user's still drops theirs
+test("a project's disableAllHooks drops no hook; the project's settings are marked as its", async () => {
+  const deny = script("pdeny.sh", `echo user >&2; exit 2`);
+  const proj = script("pown.sh", `echo project >&2; exit 2`);
+  const repo = fs.mkdtempSync(DIR + "/proj-");
+  expect(Hooks.sources(repo).filter((s) => s.project === true).map((s) => s.file)).toEqual([repo + "/.claude/settings.json", repo + "/.claude/settings.local.json"]);
+  expect(Hooks.sources(repo).filter((s) => s.project !== true && !s.managed).map((s) => s.file)).toEqual([os.homedir() + "/.claude/settings.json"]);
+  const src: Source[] = [
+    { file: settings("puser", [group("Bash", deny)]), managed: false },
+    { file: settings("pproj", [], [], { disableAllHooks: true }), managed: false, project: true },
+  ];
+  expect((await Hooks.pre(src, "Bash", { command: "x" }, DIR, "A", live())).deny).toBe("user");
+  const own: Source[] = [{ file: settings("pproj2", [group("Bash", proj)], [], { disableAllHooks: true }), managed: false, project: true }];
+  expect((await Hooks.pre(own, "Bash", { command: "x" }, DIR, "A", live())).deny).toBe("project");
+});
+
 test("PostToolUse hooks get the tool's response; exit 2 gives the model their stderr", async () => {
   const seen = DIR + "/post.json";
   const post = script("post.sh", `cat > ${seen}; echo "lint failed" >&2; exit 2`);
@@ -156,4 +174,30 @@ test.skipIf(!fs.existsSync(GUARD))("the installed OnCorps guard refuses a critic
   const bad = await Hooks.pre(src, "Bash", { command: "rm -rf /" }, DIR, "A", live());
   expect(bad.deny).toContain("OnCorps guard");
   expect((await Hooks.pre(src, "Bash", { command: "ls" }, DIR, "A", live())).deny).toBeNull();
+});
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): Claude Code reads the user's settings from $CLAUDE_CONFIG_DIR
+// when it is set (else ~/.claude): so does Hooks.sources, and write and
+// edit refuse all of it, by its path or real one, in any case
+test("the user's settings come from $CLAUDE_CONFIG_DIR, and write and edit refuse it", async () => {
+  const was = process.env.CLAUDE_CONFIG_DIR;
+  const conf = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-conf-"));
+  fs.symlinkSync(conf, DIR + "/conflink");
+  const repo = fs.mkdtempSync(DIR + "/cproj-");
+  try {
+    process.env.CLAUDE_CONFIG_DIR = DIR + "/conflink";
+    expect(Hooks.sources(repo).filter((s) => s.project !== true && !s.managed).map((s) => s.file)).toEqual([DIR + "/conflink/settings.json"]);
+    for (const p of [conf + "/settings.json", conf.toUpperCase() + "/hooks/x.sh", DIR + "/conflink/agents/x.md", os.homedir() + "/.claude/x.md"]) {
+      expect([p, Machine.gating(p)]).toEqual([p, true]);
+    }
+    const run = await Machine.run({ name: "write", input: { path: conf + "/Settings.json", content: "{}" }, cwd: "C" }, DIR, live(), undefined, undefined, []);
+    expect(run.fail).toBe(true);
+    expect(fs.readdirSync(conf)).toEqual([]);
+    expect(Machine.gating(repo + "/notes.md")).toBe(false);
+    process.env.CLAUDE_CONFIG_DIR = "";
+    expect(Hooks.sources(repo).filter((s) => s.project !== true && !s.managed).map((s) => s.file)).toEqual([os.homedir() + "/.claude/settings.json"]);
+  } finally {
+    was === undefined ? delete process.env.CLAUDE_CONFIG_DIR : (process.env.CLAUDE_CONFIG_DIR = was);
+  }
 });

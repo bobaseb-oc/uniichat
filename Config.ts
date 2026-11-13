@@ -4,7 +4,8 @@
 // config.json, the lock and users/<id>. Each key of config.json (README)
 // may be set as UNII_<KEY> instead; a path may start with "~/". The keys
 // are read from the environment and removed from it, so no program an
-// agent runs inherits them, and put back for the workers.
+// agent runs inherits them, and put back for the workers. Behind a reverse
+// proxy set UNII_PROXY=1 (PROXY), else X-Forwarded-For is ignored.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -21,8 +22,16 @@ const FILE: Record<string, string> = fs.existsSync(PATH) ? JSON.parse(fs.readFil
 
 export const SITE    = config_get("site", "http://127.0.0.1:8788").replace(/\/$/, "");
 
-// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM)
-export const ANTHROPIC_URL = config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, "");
+// RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
+// reverse proxy in front (UNII_PROXY=1), whose X-Forwarded-For entry is
+// the client's address the sign-in limits count (Cloud.ip); off, the
+// default, the socket's, as a client reaching the server itself may
+// write the header
+export const PROXY   = config_get("proxy", "") === "1";
+
+// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM);
+// https, or http on this computer only (the key goes to it)
+export const ANTHROPIC_URL = config_origin("anthropic_url", config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, ""));
 
 export const OFFER: Offer = {
   vendors : config_vendors(config_get("vendors", "claude-api")),
@@ -57,6 +66,11 @@ export const SEARXNG    = config_get("searxng_url", "");
 // the MCP servers the agents may use (Mcp.ts; "": none)
 export const MCP        = config_path(config_get("mcp", ""));
 
+// RED ZONE (security review U3, DRAFT awaiting the user's sign-off): the
+// MCP tools auto mode lets by unreviewed besides Modes.MCP_READS, each by
+// its whole name, mcp__<server>__<tool>, comma-separated; else no start
+export const MCP_READS  = config_reads(config_get("mcp_reads", ""));
+
 // the iOS app (ios/, Cloud.ts): its App ID, the team's then the bundle's
 // ("TEAM.com.example.uniichat"), whose app sign-in links open; and
 // the id of the key its pushes are signed with (APNS_KEY holds the key)
@@ -86,6 +100,20 @@ function config_path(path: string): string {
   return path.startsWith("~/") ? os.homedir() + path.slice(1) : path;
 }
 
+// a URL a key is sent to, if https or (a local gateway) http on
+// 127.0.0.1, localhost or [::1]; else the server doesn't start
+function config_origin(key: string, text: string): string {
+  let url: URL | null = null;
+  try {
+    url = new URL(text);
+  } catch {}
+  const local = ["127.0.0.1", "localhost", "[::1]"].includes(url?.hostname ?? "");
+  if (url?.protocol !== "https:" && !(url?.protocol === "http:" && local)) {
+    throw new Error("config: " + key + " is no https URL (http only on 127.0.0.1, localhost or [::1]): " + (url?.origin ?? "not a URL"));
+  }
+  return text;
+}
+
 function config_run(key: string, text: string): Pick {
   const [vendor, model, effort, speed] = text.split(":");
   const pick = Pick.read({ vendor, model, effort, speed }, OFFER);
@@ -100,6 +128,15 @@ function config_vendors(text: string): Vendor[] {
   const bad = list.find((v) => !VENDORS.includes(v));
   if (bad !== undefined) {
     throw new Error("config: vendors can't offer " + bad);
+  }
+  return list;
+}
+
+function config_reads(text: string): string[] {
+  const list = String(text).split(",").map((t) => t.trim()).filter((t) => t !== "");
+  const bad = list.find((t) => !/^mcp__[a-zA-Z0-9_-]+__[a-zA-Z0-9_-]+$/.test(t));
+  if (bad !== undefined) {
+    throw new Error("config: mcp_reads has no exact mcp__<server>__<tool> name: " + bad);
   }
   return list;
 }

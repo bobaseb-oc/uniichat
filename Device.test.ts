@@ -4,7 +4,10 @@
 // terminal's jobs too) against a fake server: it signs in by its Bearer
 // and names itself; a job runs once and its output goes back; a computer
 // job is refused where computer use is off; an output too large is
-// refused by its size; a job the server drops is stopped.
+// refused by its size; a job the server drops is stopped. RED ZONE
+// (security review U1, DRAFT awaiting the user's sign-off): the fake
+// server listens on a unix socket in a 0700 dir, as Server.ts does: the
+// device reaches it only there, never over TCP.
 
 import { afterAll, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -15,12 +18,18 @@ import * as View from "./View.ts";
 type Sock = { send: (s: string) => void };
 const got: any[] = [];
 let sock: Sock | null = null;
-let hello: { auth: string | null; query: string } | null = null;
+let hello: { auth: string | null; query: string; host: string | null } | null = null;
+// a fresh 0700 dir, as the server's (Server.ts Main.private)
+const dir0700 = () => {
+  const d = fs.mkdtempSync(os.tmpdir() + "/legion-dev-");
+  fs.chmodSync(d, 0o700);
+  return d;
+};
+const DIR = dir0700();
 const server = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
+  unix: DIR + "/server.sock",
   fetch(req, srv) {
-    hello = { auth: req.headers.get("authorization"), query: new URL(req.url).search };
+    hello = { auth: req.headers.get("authorization"), query: new URL(req.url).search, host: req.headers.get("host") };
     return srv.upgrade(req) ? undefined : new Response("no", { status: 400 });
   },
   websocket: {
@@ -54,13 +63,14 @@ const run = async (job: any, work: string, signal: AbortSignal, _away?: AbortSig
   return { text: "ran " + job.input, fail: false };
 };
 
-const v = Device.device_open("http://127.0.0.1:" + server.port, { authorization: "Bearer tok" }, "&device=box", { work: "~/w", home: "/h", computer: false, run }, () => {});
+const v = Device.device_open(Device.device_wire("http://127.0.0.1:8788", DIR), { authorization: "Bearer tok" }, "&device=box", { work: "~/w", home: "/h", computer: false, run }, () => {});
 const outs = () => got.filter((m) => m.$ === "out");
 
 test("a device signs in by its Bearer and names itself", async () => {
   expect(await until(() => v.up)).toBe(true);
   expect(hello?.auth).toBe("Bearer tok");
   expect(hello?.query).toContain("&device=box");
+  expect(hello?.host).toBe("127.0.0.1:8788");
 });
 
 test("a job runs once, its output answered, in the device's work dir and home repo", async () => {
@@ -101,6 +111,96 @@ test("a job the server no longer lists is stopped", async () => {
   expect(runs.find((r) => r.job.input === "slow")!.signal.aborted).toBe(true);
 });
 
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): any
+// process may take 127.0.0.1:<port>, so a device never speaks TCP to its
+// server: its session goes over <dir>/server.sock only. A squatter on the
+// port (one relaying the real server's answers, the old proof's hole)
+// gets nothing; no socket: it says so and tries again, never over TCP;
+// the server restarted, it connects again
+test("a device sends its session only over the server's unix socket: never to the TCP port, again after a restart", async () => {
+  const squat: string[] = [];
+  const squatter = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, s) {
+      squat.push(req.method + " " + new URL(req.url).pathname + " " + String(req.headers.get("authorization")));
+      return s.upgrade(req) ? undefined : new Response("ok");
+    },
+    websocket: { open: (ws) => ws.send(JSON.stringify({ $: "view", parts: [], turn: 0 })), message: () => {} },
+  });
+  const dir = dir0700();
+  const auths: string[] = [];
+  const real = () => Bun.serve({
+    unix: dir + "/server.sock",
+    fetch(req, s) {
+      auths.push(req.method + " " + new URL(req.url).pathname + " " + String(req.headers.get("authorization")));
+      return s.upgrade(req) ? undefined : Response.json({ ok: true });
+    },
+    websocket: {
+      open(ws) {
+        ws.send(JSON.stringify({ $: "view", parts: [], turn: 0 }));
+      },
+      message(ws, data) {
+        ws.send(JSON.stringify({ $: "ack", id: JSON.parse(String(data)).id }));
+      },
+    },
+  });
+  let srv: ReturnType<typeof real> | null = null;
+  try {
+    const wire = Device.device_wire("http://127.0.0.1:" + squatter.port, dir);
+    const logs: string[] = [];
+    const d = Device.device_open(wire, { authorization: "Bearer sec" }, "&device=p", { work: "~/w", computer: false, run, spaces: [] }, (l) => logs.push(l));
+    await Bun.sleep(1500);
+    expect(d.up).toBe(false);
+    expect(logs.join("\n")).toContain(Device.NO_SOCKET);
+    expect(logs.filter((l) => l === Device.NO_SOCKET)).toHaveLength(1);
+    // the real server up: its socket gets the session, the port nothing
+    srv = real();
+    expect(await until(() => d.up)).toBe(true);
+    expect(auths.some((a) => a.startsWith("GET /ws Bearer sec"))).toBe(true);
+    // a post goes over the socket too
+    expect((await Device.device_fetch(wire, "/api/act", { method: "POST", headers: { authorization: "Bearer sec" }, body: "{}" })).ok).toBe(true);
+    expect(auths).toContain("POST /api/act Bearer sec");
+    // restarted: down, then up again on the socket
+    srv.stop(true);
+    fs.rmSync(dir + "/server.sock", { force: true });
+    expect(await until(() => !d.up)).toBe(true);
+    auths.length = 0;
+    srv = real();
+    expect(await until(() => d.up)).toBe(true);
+    expect(auths.some((a) => a.startsWith("GET /ws Bearer sec"))).toBe(true);
+    expect(squat).toEqual([]);
+  } finally {
+    srv?.stop(true);
+    squatter.stop(true);
+  }
+}, 20_000);
+
+// RED ZONE U1: a socket path Bun can't open as is (a ':' is read as its
+// end; past macOS's 104 bytes) is refused, not opened elsewhere; with no
+// socket a fetch fails, never falling back to TCP
+test("device_wire refuses a socket path with ':' or too long; device_fetch with no socket fails", async () => {
+  expect(() => Device.device_wire("http://127.0.0.1:8788", "/tmp/a:b")).toThrow();
+  expect(() => Device.device_wire("http://127.0.0.1:8788", "/tmp/" + "x".repeat(100))).toThrow();
+  expect(() => Device.device_wire("http://example.com:8788", "/tmp/ok")).toThrow();
+  const squat: string[] = [];
+  const squatter = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => (squat.push(String(req.headers.get("authorization"))), new Response("ok")) });
+  try {
+    const wire = Device.device_wire("http://127.0.0.1:" + squatter.port, dir0700());
+    expect(await Device.device_fetch(wire, "/api/me", { headers: { authorization: "Bearer sec" } }).then(() => "answered", () => "failed")).toBe("failed");
+    // a redirect off the socket (to the port) is refused, not followed
+    const away = Bun.serve({ unix: wire.sock, fetch: () => new Response(null, { status: 307, headers: { location: wire.url + "/api/me" } }) });
+    try {
+      expect(await Device.device_fetch(wire, "/api/me", { headers: { authorization: "Bearer sec" } }).then(() => "answered", () => "failed")).toBe("failed");
+    } finally {
+      away.stop(true);
+    }
+    expect(squat).toEqual([]);
+  } finally {
+    squatter.stop(true);
+  }
+});
+
 // a device's report for the web's status line (Device.device_status): the
 // folder Unii works in (its home repo, else <work>/main), its branch
 test("a device reports the folder Unii works in and its branch", () => {
@@ -121,6 +221,11 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   const pr = { number: 3, title: "T", url: "https://github.com/o/r/pull/3", isDraft: false, updatedAt: "", additions: 1, deletions: 0, changedFiles: 1, body: "", headRefName: "b",
     repository: { nameWithOwner: "o/r" }, author: { __typename: "User", login: "me" }, reviewDecision: null, mergeable: "MERGEABLE", reviewRequests: { nodes: [] }, commits: { nodes: [] } };
   const ran: string[][] = [];
+  // the space and its worktrees: real dirs, this user's (git runs only in such)
+  const S = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-inbox-")) + "/s";
+  for (const w of ["", "/.wt/x", "/.wt/y", "/.wt/z"]) {
+    fs.mkdirSync(S + w, { recursive: true });
+  }
   const exec: Device.Exec = async (cmd) => {
     ran.push(cmd);
     const line = cmd.join(" ");
@@ -134,10 +239,10 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
       return { code: 1, out: "✗ Error: unauthorized: use 'acli jira auth login' to authenticate" };
     }
     if (line.includes("worktree list")) {
-      return { code: 0, out: "worktree /s\nbranch refs/heads/main\n\nworktree /s/.wt/x\nbranch refs/heads/x\n\nworktree /s/.wt/y\nbranch refs/heads/y\n\nworktree /s/.wt/z\nbranch refs/heads/z\n" };
+      return { code: 0, out: `worktree ${S}\nbranch refs/heads/main\n\nworktree ${S}/.wt/x\nbranch refs/heads/x\n\nworktree ${S}/.wt/y\nbranch refs/heads/y\n\nworktree ${S}/.wt/z\nbranch refs/heads/z\n` };
     }
     if (line.includes("remote get-url upstream")) {
-      return cmd.includes("/s") ? { code: 0, out: "git@github.com:up/s.git\n" } : { code: 2, out: "error: No such remote 'upstream'" };
+      return cmd.includes(S) ? { code: 0, out: "git@github.com:up/s.git\n" } : { code: 2, out: "error: No such remote 'upstream'" };
     }
     if (line.includes("remote get-url")) {
       return { code: 0, out: "git@github.com:o/s.git\n" };
@@ -152,13 +257,13 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
       return { code: 0, out: "main\ny\n" };
     }
     if (line.includes("status --porcelain")) {
-      return { code: 0, out: cmd.includes("/s/.wt/x") ? " M a\n?? b\n" : "" };
+      return { code: 0, out: cmd.includes(S + "/.wt/x") ? " M a\n?? b\n" : "" };
     }
     return { code: 1, out: "" };
   };
   // no Google here (Google's own test below; never the real Keychain)
   const nog: Device.Reads = { events: async () => [], docs: async () => [], text: async () => "" };
-  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: ["/s"] }, exec, new Date(2026, 10, 12), nog) as any;
+  const msg = await Device.device_inbox({ work: "/w", computer: false, spaces: [S] }, exec, new Date(2026, 10, 12), nog) as any;
   expect(msg.$).toBe("inbox");
   const inbox = msg.inbox;
   expect(inbox.login).toBe("me");
@@ -171,8 +276,8 @@ test("a device reads its inbox with gh, acli and git; what fails is said, not th
   expect(inbox.errors).toEqual(["acli: ✗ Error: unauthorized: use 'acli jira auth login' to authenticate"]);
   // x has changes, y is merged and clean, z is clean and not merged (left out)
   expect(inbox.clean).toEqual([
-    { repo: "s", path: "/s/.wt/x", branch: "x", changes: 2, merged: false },
-    { repo: "s", path: "/s/.wt/y", branch: "y", changes: 0, merged: true },
+    { repo: "s", path: S + "/.wt/x", branch: "x", changes: 2, merged: false },
+    { repo: "s", path: S + "/.wt/y", branch: "y", changes: 0, merged: true },
   ]);
   // what it ran reads only: no write, no push
   expect(ran.every((c) => ["gh", "acli", "git"].includes(c[0]))).toBe(true);
@@ -319,6 +424,13 @@ test("device_look: files and git under the device's roots only, read-only", asyn
   expect((await look({ kind: "file", path: "x", agent: "../../etc" })).error).toBe("Not an agent's name.");
   expect((await look({ kind: "file", path: repo + "/cfg.txt" })).error).toContain("secret");
   expect((await look({ kind: "file", path: repo + "/.env.local" })).error).toContain("secret");
+  // security review L: a repo's git config, a token, service-account keys
+  for (const f of ["token", "sa-key.json", "my-service-account.json", "gcp-credentials.json"]) {
+    fs.writeFileSync(repo + "/" + f, "{}");
+  }
+  for (const p of [repo + "/.git/config", repo + "/token", repo + "/sa-key.json", repo + "/my-service-account.json", repo + "/gcp-credentials.json"]) {
+    expect([p, String((await look({ kind: "file", path: p })).error)]).toEqual([p, expect.stringContaining("secret")]);
+  }
   // git: status, log, a commit, the working tree's diff; a bad rev refused
   fs.writeFileSync(repo + "/a.ts", "export const a = 2;\n");
   expect((await look({ kind: "git", repo, op: "status" })).text).toContain("a.ts");
@@ -334,4 +446,84 @@ test("device_look: files and git under the device's roots only, read-only", asyn
   // a file's own repo; the home repo by @home
   expect((await look({ kind: "git", repo: repo + "/a.ts", op: "log" })).path).toBe(repo);
   expect((await Device.device_look({ ...rules, home: repo }, "r2", { kind: "git", repo: "@home", op: "log" }) as any).text).toContain("first");
+});
+
+// security review L: every git a device runs is hardened (no fsmonitor,
+// hooks, external diff, pager; no textconv where a diff shows), and runs
+// only in a repo of this user's whose own config names no filter or
+// textconv driver. A crafted repo's drivers would write a marker: none does
+test("device git: a crafted repo's fsmonitor, textconv and filter never run", async () => {
+  const top = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-git-"));
+  const mark = (k: string) => top + "/ran-" + k;
+  const repo = (name: string, setup: (r: string) => void) => {
+    const r = top + "/" + name;
+    Bun.spawnSync(["git", "init", "-q", "-b", "trunk", r]);
+    fs.writeFileSync(r + "/a.txt", "one\n");
+    const g = (...a: string[]) => Bun.spawnSync(["git", "-C", r, "-c", "user.name=t", "-c", "user.email=t@t", ...a]);
+    setup(r);
+    g("add", "-A");
+    g("commit", "-q", "-m", "first");
+    // a worktree with a change, for the inbox's cleanup (its status)
+    g("worktree", "add", "-q", "-b", "wt", r + "-wt");
+    fs.writeFileSync(r + "-wt/a.txt", "two\n");
+    fs.writeFileSync(r + "/a.txt", "two\n");
+    return r;
+  };
+  const hook = (k: string) => {
+    const f = top + "/hook-" + k + ".sh";
+    fs.writeFileSync(f, "#!/bin/sh\ntouch '" + mark(k) + "'\ncat \"$@\" 2>/dev/null\n");
+    fs.chmodSync(f, 0o755);
+    return f;
+  };
+  const cfg = (r: string, k: string, v: string) => Bun.spawnSync(["git", "-C", r, "config", k, v]);
+  // fsmonitor: in the repo's own config, which hardening overrides
+  const fsm = repo("fsm", () => {});
+  cfg(fsm, "core.fsmonitor", hook("fsm"));
+  // textconv and a clean filter: the repo's own config names them: refused
+  const evil = repo("evil", (r) => fs.writeFileSync(r + "/.gitattributes", "*.txt diff=evil filter=evil\n"));
+  cfg(evil, "diff.evil.textconv", hook("textconv"));
+  cfg(evil, "filter.evil.clean", hook("clean"));
+  // a textconv of the user's own global config: trusted, yet no textconv
+  // shown (its own process: Bun's spawns keep the environment they began with)
+  const glob = repo("glob", (r) => fs.writeFileSync(r + "/.gitattributes", "*.txt diff=mine\n"));
+  const global = top + "/gitconfig";
+  fs.writeFileSync(global, "[diff \"mine\"]\n\ttextconv = " + hook("global") + "\n");
+  // a worktree whose own config (config.worktree) names a filter: that
+  // worktree refused, its repo not
+  const wtc = repo("wtc", (r) => fs.writeFileSync(r + "/.gitattributes", "*.txt filter=evil\n"));
+  cfg(wtc, "extensions.worktreeConfig", "true");
+  Bun.spawnSync(["git", "-C", wtc + "-wt", "config", "--worktree", "filter.evil.clean", hook("wtclean")]);
+  const genv = { ...process.env, GIT_CONFIG_GLOBAL: global };
+  // the crafted repos are live: plain git runs their drivers
+  Bun.spawnSync(["git", "-C", fsm, "status"]);
+  Bun.spawnSync(["git", "-C", evil, "diff", "HEAD"]);
+  Bun.spawnSync(["git", "-C", glob, "diff", "HEAD"], { env: genv });
+  Bun.spawnSync(["git", "-C", wtc + "-wt", "status"]);
+  expect(["fsm", "textconv", "clean", "global", "wtclean"].map((k) => fs.existsSync(mark(k)))).toEqual([true, true, true, true, true]);
+  ["fsm", "textconv", "clean", "global", "wtclean"].forEach((k) => fs.rmSync(mark(k)));
+  const rules = { work: top, computer: false, spaces: [fsm, evil, glob, wtc] };
+  const look = (what: any) => Device.device_look(rules, "g", what) as Promise<any>;
+  expect((await look({ kind: "git", repo: fsm, op: "status" })).text).toContain("a.txt");
+  expect((await look({ kind: "git", repo: fsm, op: "diff" })).text).toContain("+two");
+  for (const op of ["status", "diff", "show", "log"]) {
+    expect((await look({ kind: "git", repo: evil, op })).error).toContain("filter or textconv");
+  }
+  const code = `import * as Device from "./Device.ts"; const r = { work: "${top}", computer: false, spaces: ["${glob}"] };
+    console.log(JSON.stringify([(await Device.device_look(r, "g", { kind: "git", repo: "${glob}", op: "diff" })).text, (await Device.device_look(r, "g", { kind: "git", repo: "${glob}", op: "show" })).text]));`;
+  const shown = JSON.parse(Bun.spawnSync([process.execPath, "-e", code], { cwd: import.meta.dir, env: genv }).stdout.toString());
+  expect(shown[0]).toContain("+two");
+  expect(shown[1]).toContain("+one");
+  // the inbox's git (worktrees, status) too
+  const nog: Device.Reads = { events: async () => [], docs: async () => [], text: async () => "" };
+  const gits: string[][] = [];
+  const gitonly: Device.Exec = async (cmd) => (cmd[0] === "git" ? (gits.push(cmd), Device.exec(cmd)) : { code: 1, out: "" });
+  const inbox = await Device.device_inbox(rules, gitonly, new Date(), nog) as any;
+  expect(inbox.inbox.clean.map((c: any) => c.path).sort()).toEqual([fsm + "-wt", glob + "-wt"]);
+  // a refused repo: no git there but the trust check (and its remote, read for the digest)
+  expect(gits.filter((c) => c[2] === evil && !c.includes("config") && !c.includes("remote"))).toEqual([]);
+  expect(["fsm", "textconv", "clean", "global", "wtclean"].map((k) => fs.existsSync(mark(k)))).toEqual([false, false, false, false, false]);
+  // a dir not this user's: git never runs there
+  expect(await Device.device_trusted("/", Device.exec)).toBe(false);
+  expect(await Device.device_trusted(fsm, Device.exec)).toBe(true);
+  expect(await Device.device_trusted(evil, Device.exec)).toBe(false);
 });

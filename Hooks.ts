@@ -22,8 +22,9 @@ import type { Job } from "./Machine.ts";
 // Types
 // =====
 
-// a settings file, and whether it is the org's (managed)
-export type Source = { file: string; managed: boolean };
+// a settings file, whether it is the org's (managed), whether a project's
+// (its .claude/settings*.json, which an agent working there can write)
+export type Source = { file: string; managed: boolean; project?: boolean };
 
 // a tool call as Claude Code names it: its tool, its input
 export type Call = { tool: string; input: Record<string, unknown> };
@@ -74,10 +75,19 @@ export namespace Hooks {
     return [
       { file: MANAGED + "/managed-settings.json", managed: true },
       ...drops,
-      { file: os.homedir() + "/.claude/settings.json", managed: false },
-      { file: project + "/.claude/settings.json", managed: false },
-      { file: project + "/.claude/settings.local.json", managed: false },
+      { file: Hooks.home() + "/settings.json", managed: false },
+      { file: project + "/.claude/settings.json", managed: false, project: true },
+      { file: project + "/.claude/settings.local.json", managed: false, project: true },
     ];
+  }
+
+  // RED ZONE (security review follow-up, DRAFT awaiting the user's
+  // sign-off): the user's Claude Code dir, as Claude Code finds it:
+  // $CLAUDE_CONFIG_DIR when set, else ~/.claude (Machine.gating refuses
+  // writes to both)
+  export function home(): string {
+    const dir = process.env.CLAUDE_CONFIG_DIR;
+    return dir ? path.resolve(dir) : os.homedir() + "/.claude";
   }
 
   // the project of a dir: the nearest one up holding .git, else the dir
@@ -189,7 +199,9 @@ export namespace Hooks {
   // the hooks of an event matching a tool, from every source in order;
   // broken: why the gate can't be known (a managed source unreadable).
   // allowManagedHooksOnly (managed) or disableAllHooks drop the user's and
-  // the project's; only a managed disableAllHooks drops managed ones.
+  // the project's; only a managed disableAllHooks drops managed ones, and a
+  // project's drops none (RED ZONE, security review SB, DRAFT awaiting
+  // the user's sign-off, M3: an agent can write its project's settings)
   function load(src: Source[], event: Event, tool: string): { hooks: Hook[]; broken: string | null } {
     const read: { s: Source; json: any }[] = [];
     for (const s of src) {
@@ -206,7 +218,7 @@ export namespace Hooks {
     }
     const managed = read.filter((r) => r.s.managed);
     const off_all = managed.some((r) => r.json?.disableAllHooks === true);
-    const off_own = off_all || managed.some((r) => r.json?.allowManagedHooksOnly === true) || read.some((r) => !r.s.managed && r.json?.disableAllHooks === true);
+    const off_own = off_all || managed.some((r) => r.json?.allowManagedHooksOnly === true) || read.some((r) => !r.s.managed && r.s.project !== true && r.json?.disableAllHooks === true);
     const hooks: Hook[] = [];
     for (const { s, json } of read) {
       if (s.managed ? off_all : off_own) {

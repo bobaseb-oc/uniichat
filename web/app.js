@@ -167,6 +167,8 @@ var PRICE = { base: 187, byte: 735, depth: 628 };
 var PART = 2 ** 20;
 var OLD = "Nothing new: these chats are in Unii's memory already.";
 var NOT_EXPORT = "Not a Claude or ChatGPT export.";
+var ZIP_CAP = 256 * 1024 * 1024;
+var THREAD = 1e5;
 var MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 var DONE = "Your past chats are in Unii's memory: ask about them any time.";
 var DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" });
@@ -329,9 +331,12 @@ function chat_session(chat) {
 }
 function chat_openai(chat) {
   const nodes = [];
-  for (let id = chat.current_node;id; id = chat.mapping[id]?.parent) {
-    nodes.unshift(chat.mapping[id]?.message);
+  const seen = new Set;
+  for (let id = chat.current_node;id && !seen.has(id) && seen.size < THREAD; id = chat.mapping[id]?.parent) {
+    seen.add(id);
+    nodes.push(chat.mapping[id]?.message);
   }
+  nodes.reverse();
   let date = import_date(chat.create_time, "");
   return nodes.flatMap((m) => {
     const role = m?.author?.role;
@@ -352,7 +357,7 @@ function chat_claude(chat) {
     return blocks_msgs(kind, [...blocks, ...files], date);
   });
 }
-async function zip_file(zip, name) {
+async function zip_file(zip, name, cap = ZIP_CAP) {
   const view = async (at, n) => new DataView(await zip.slice(at, at + n).arrayBuffer());
   const back = Math.min(zip.size, 65577);
   const tail = await view(zip.size - back, back);
@@ -375,11 +380,25 @@ async function zip_file(zip, name) {
     if (entry === name || entry.endsWith("/" + name)) {
       const head = await view(at, 30);
       const data = zip.slice(at + 30 + head.getUint16(26, true) + head.getUint16(28, true)).slice(0, packed);
-      return dir.getUint16(p + 10, true) === 8 ? new Response(data.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob() : data;
+      return dir.getUint16(p + 10, true) === 8 ? zip_inflate(data, cap) : data;
     }
     p += 46 + dir.getUint16(p + 28, true) + dir.getUint16(p + 30, true) + dir.getUint16(p + 32, true);
   }
   return null;
+}
+async function zip_inflate(data, cap) {
+  const parts = [];
+  let n = 0;
+  const reader = data.stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  for (let r = await reader.read();!r.done; r = await reader.read()) {
+    n += r.value.length;
+    if (n > cap) {
+      await reader.cancel();
+      throw new Error("The zip's file is over " + cap + " bytes inflated.");
+    }
+    parts.push(r.value);
+  }
+  return new Blob(parts);
 }
 function zip_sizes(dir, p) {
   const short = [p + 24, p + 20, p + 42].map((at) => dir.getUint32(at, true));
@@ -501,11 +520,100 @@ function look_css(kind, look) {
 var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
 var READS = ["read", "glob", "grep", "google", "harvest"];
-var REVIEWED = ["shell", "write", "edit"];
-var SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
-var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
+var REVIEWED = ["shell", "write", "edit", "computer"];
+var DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.claude\.json`;
+var DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
+var SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
+var SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
+var SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
+var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
-var GIT_WRITES = new Set(["-d", "-D", "-m", "-M", "-c", "-C", "-f", "--delete", "--move", "--copy", "--force", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "-a", "-s", "--annotate", "--sign"]);
+var GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
+var GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
+var GH = {
+  pr: ["view", "list", "diff", "checks", "status"],
+  issue: ["view", "list", "status"],
+  repo: ["view", "list"],
+  run: ["view", "list"],
+  workflow: ["view", "list"],
+  release: ["view", "list"],
+  search: ["prs", "issues", "repos", "code", "commits"],
+  auth: ["status"]
+};
+var HOME_WIDE = /^(~\/?|\$HOME\/?|\$\{HOME\}\/?|\/|\/Users(\/[^\/]+)?\/?)$/;
+var GH_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+var GH_FLAGS = new Set([
+  "--repo",
+  "-R",
+  "--json",
+  "--jq",
+  "-q",
+  "--template",
+  "-t",
+  "--comments",
+  "-c",
+  "--name-only",
+  "--patch",
+  "--color",
+  "--limit",
+  "-L",
+  "--state",
+  "-s",
+  "--author",
+  "-A",
+  "--label",
+  "-l",
+  "--base",
+  "-B",
+  "--head",
+  "-H",
+  "--search",
+  "-S",
+  "--assignee",
+  "-a",
+  "--branch",
+  "-b",
+  "--required",
+  "--draft",
+  "-d",
+  "--app",
+  "--mention",
+  "--milestone",
+  "-m",
+  "--log",
+  "--log-failed",
+  "--job",
+  "-j",
+  "--exit-status",
+  "--attempt",
+  "--verbose",
+  "--workflow",
+  "--event",
+  "--status",
+  "--user",
+  "--commit",
+  "--created",
+  "--owner",
+  "--language",
+  "--sort",
+  "--order",
+  "--match",
+  "--updated",
+  "--visibility",
+  "--topic",
+  "--archived",
+  "--no-archived",
+  "--fork",
+  "--source",
+  "--exclude-drafts",
+  "--exclude-pre-releases",
+  "--all",
+  "--yaml",
+  "--ref"
+]);
+var GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
+var PROTECTED = /^(main|master|develop|trunk|HEAD|gh-pages|release(\/.*)?|\d+(\.\d+)*\.x)$/;
+var PUSH_FLAGS = new Set(["-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose"]);
 var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 var Modes;
 ((Modes2) => {
@@ -529,12 +637,28 @@ var Modes;
     return why + ": " + tool + " can change things. " + AFTER;
   }
   Modes2.allows = allows;
-  function reviews(mode, tool, input) {
-    if (mode !== "auto" || !REVIEWED.includes(tool)) {
+  const MCP_FILE = /file|path|dir/i;
+  Modes2.MCP_READS = [
+    ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
+    ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
+    ...["list_pages", "take_snapshot", "list_console_messages", "get_console_message", "list_network_requests", "get_network_request"].map((t) => "mcp__chrome-devtools__" + t)
+  ];
+  function reviews(mode, tool, input, reads = []) {
+    if (mode !== "auto") {
+      return false;
+    }
+    if (tool.startsWith("mcp__")) {
+      return /_[0-9a-f]{8}$/.test(tool) || Object.keys(input ?? {}).some((k) => MCP_FILE.test(k)) || !(Modes2.MCP_READS.includes(tool) || reads.includes(tool));
+    }
+    if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    return command === null || SECRETS.test(command) || Modes.readonly(command) !== null;
+    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || Modes.readonly(command) !== null && !Modes.feature_push(command)) {
+      return true;
+    }
+    const lexed = lex(command);
+    return typeof lexed === "string" || lexed.flat().some((w) => SECRETS.test(w) || HOME_WIDE.test(w));
   }
   Modes2.reviews = reviews;
   function readonly(command) {
@@ -595,6 +719,8 @@ var Modes;
         return "a command substitution";
       } else if (c === "<") {
         return "a redirect or process substitution (<)";
+      } else if ("{}()*?[]".includes(c) || c === "=" && word === null || c === "$" && "~=^{[".includes(line[k + 1] ?? " ")) {
+        return "an unquoted " + c + " (the shell expands it: glob, brace, paren or =cmd)";
       } else if (c === ">") {
         const to = stderr(line, k, word);
         if (typeof to === "string") {
@@ -633,6 +759,9 @@ var Modes;
       if (line[k] === "`" || line[k] === "$" && line[k + 1] === "(") {
         return "a command substitution";
       }
+      if (line[k] === "$" && (line[k + 1] === "{" || line[k + 1] === "[")) {
+        return "a ${...} or $[...] (zsh's flags can run code)";
+      }
       if (line[k] === "\\") {
         k += 1;
       }
@@ -640,6 +769,66 @@ var Modes;
     }
     return k >= line.length ? "an unclosed quote" : [w, k];
   }
+  function long(a, names) {
+    const name = a.split("=")[0];
+    return name.startsWith("--") && name.length > 2 && names.some((n) => n.startsWith(name));
+  }
+  function gh(args) {
+    const [group = "", sub = "", ...rest] = args;
+    if (group === "api") {
+      for (let k = 1;k < args.length; k++) {
+        const a = args[k];
+        const header = a === "-H" || a === "--header" ? args[++k] ?? "" : /^(?:-H|--header=)(.+)$/.exec(a)?.[1];
+        if (header !== undefined) {
+          if (!/^\s*accept\s*:/i.test(header)) {
+            return "gh api -H other than Accept (" + header + ")";
+          }
+          continue;
+        }
+        const method = a === "-X" || a === "--method" ? args[++k] : /^(-X|--method=)(.*)$/.exec(a)?.[2];
+        if (method !== undefined ? method.toUpperCase() !== "GET" : a.startsWith("-") ? !GH_API.has(a.split("=")[0]) : a.includes("://")) {
+          return "gh api other than a GET of a path on GitHub (" + a + ")";
+        }
+      }
+      return null;
+    }
+    if (!Object.hasOwn(GH, group) || !GH[group].includes(sub)) {
+      return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
+    }
+    if (group === "auth" && rest.length > 0) {
+      return "gh auth status takes no flag here (-t prints the token)";
+    }
+    const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]));
+    if (bad !== undefined) {
+      return "gh " + group + " " + sub + " " + bad + " (not a flag that only reads)";
+    }
+    for (let k = 0;k < rest.length; k++) {
+      const a = rest[k];
+      const repo = a === "-R" || a === "--repo" ? rest[++k] ?? "" : /^(?:-R|--repo)=(.*)$/.exec(a)?.[1];
+      if (repo !== undefined && !GH_REPO.test(repo)) {
+        return "gh -R takes OWNER/REPO on GitHub, not " + repo;
+      }
+    }
+    return null;
+  }
+  function feature_push(command) {
+    const lexed = lex(command);
+    if (typeof lexed === "string" || lexed.length !== 1) {
+      return false;
+    }
+    const [git, push, ...rest] = lexed[0];
+    if (git !== "git" || push !== "push") {
+      return false;
+    }
+    const flags = rest.filter((a) => a.startsWith("-"));
+    const places = rest.filter((a) => !a.startsWith("-"));
+    if (flags.some((f) => !PUSH_FLAGS.has(f)) || places.length !== 2 || places[0] !== "origin") {
+      return false;
+    }
+    const branch = /^(?:HEAD:)?([\w./-]+)$/.exec(places[1])?.[1];
+    return branch !== undefined && !PROTECTED.test(branch) && !branch.startsWith("-") && !branch.includes("..");
+  }
+  Modes2.feature_push = feature_push;
   function check(words) {
     const [cmd, ...args] = words;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
@@ -653,16 +842,22 @@ var Modes;
     }
     switch (cmd) {
       case "sort": {
-        return args.some((a) => a === "-o" || a.startsWith("--output") || /^-[a-zA-Z]*o/.test(a)) ? "sort -o writes a file" : null;
+        return args.some((a) => long(a, ["--output", "--compress-program"]) || /^-[a-zA-Z]*o/.test(a)) ? "sort -o or --compress-program writes or runs" : null;
       }
       case "tree": {
-        return args.some((a) => a === "-o" || a.startsWith("--output")) ? "tree -o writes a file" : null;
+        return args.some((a) => long(a, ["--output"]) || /^-[^-]*o/.test(a)) ? "tree -o writes a file" : null;
+      }
+      case "file": {
+        return args.some((a) => long(a, ["--compile"]) || /^-[a-zA-Z]*C/.test(a)) ? "file -C writes a magic file" : null;
       }
       case "uniq": {
         return args.filter((a) => !a.startsWith("-")).length > 1 ? "uniq with an output file" : null;
       }
       case "rg": {
         return args.some((a) => a === "--pre" || a.startsWith("--pre=") || a === "--pre-glob" || a.startsWith("--pre-glob=")) ? "rg --pre runs another program" : null;
+      }
+      case "gh": {
+        return gh(args);
       }
       case "find": {
         const act = args.find((a) => FIND_WRITES.has(a));
@@ -673,14 +868,20 @@ var Modes;
         if (sub === undefined || sub.startsWith("-")) {
           return "git with options before its subcommand";
         }
+        if (sub === "fetch") {
+          return args.some((a) => long(a, ["--upload-pack"])) ? "git fetch --upload-pack runs another program" : null;
+        }
         if (!GIT.has(sub)) {
           return "git " + sub + " is not one that only reads";
         }
         const rest = args.slice(1);
-        if (rest.some((a) => a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--exec"))) {
+        if (rest.some((a) => long(a, ["--output", "--ext-diff", "--exec", "--open-files-in-pager"]) || sub === "grep" && /^-[a-zA-Z]*O/.test(a))) {
           return "git " + sub + " with an option that writes or runs";
         }
-        if ((sub === "branch" || sub === "tag") && rest.some((a) => GIT_WRITES.has(a) || !a.startsWith("-"))) {
+        if (sub === "reflog" && rest[0] !== undefined && rest[0] !== "show" && !rest[0].startsWith("-")) {
+          return "git reflog " + rest[0] + " (only show reads)";
+        }
+        if ((sub === "branch" || sub === "tag") && rest.some((a) => long(a, GIT_WRITES) || GIT_SHORTS.test(a) || !a.startsWith("-"))) {
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
@@ -2234,12 +2435,14 @@ function account_html(a, app) {
   const item = (what, note, act) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
   const closes = a.bills ? `<p>This also closes your BendAI account (same sign-in). Credit you bought and didn't use goes back to your card.</p>` : "";
   const kill = `<form class="kill" hidden>${closes}<p>Type <b>${esc(a.name)}</b> to confirm.</p><input name="name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(a.name)}"><p class="why"></p><div><button type="button" class="chip keep">Cancel</button><button class="chip red" disabled>Delete for good</button></div></form>`;
+  const ends = `<form class="kill ends" hidden><p>Sign out of every browser and app?</p><div><button type="button" class="chip keep">Cancel</button><button class="chip red">Sign out everywhere</button></div></form>`;
   const acts = [
     item(esc(a.name), "", `<button class="chip out">Sign out</button>`),
+    item("Sign out everywhere", "Every browser and app signed in as you, this one too.", `<button class="chip outs">Sign out everywhere</button>`),
     item("Export memory", "Chat and account, in one file.", `<a class="chip" href="/export">Download</a>`),
     item("Delete account", "Erases chat and memory for good.", `<button class="chip red del">Delete</button>`)
   ];
-  const account = section_html("Sign-in and data", acts.join("") + kill);
+  const account = section_html("Sign-in and data", acts.join("") + kill + ends);
   const links = a.bills ? `<p class="foot"><a href="/pricing" target="_blank">Prices</a> · <a href="/terms.html" target="_blank">Terms</a> · <a href="/privacy.html" target="_blank">Privacy</a> · <a href="mailto:contact@higherorderco.com">Help</a></p>` : "";
   return `<a class="back" href="/" data-go="/">← Chat</a><h1>Account</h1>` + money + account + links;
 }
@@ -4103,7 +4306,7 @@ async function account() {
     return;
   }
   el.innerHTML = account_html(a, APP !== null);
-  const kill = $("#account .kill");
+  const kill = $("#account .kill:not(.ends)");
   const del = $("#account .del");
   const name = kill.querySelector("input");
   const sure = (open2) => {
@@ -4114,9 +4317,21 @@ async function account() {
     sure(true);
     name.focus();
   };
-  $("#account .keep").onclick = () => sure(false);
+  kill.querySelector(".keep").onclick = () => sure(false);
   name.oninput = () => kill.querySelector(".red").disabled = name.value.trim().toLowerCase() !== a.name.toLowerCase();
   $("#account .out").onclick = signout;
+  const ends = $("#account .ends");
+  const outs = $("#account .outs");
+  const ending = (open2) => {
+    ends.hidden = !open2;
+    outs.hidden = open2;
+  };
+  outs.onclick = () => ending(true);
+  ends.querySelector(".keep").onclick = () => ending(false);
+  ends.onsubmit = (ev) => {
+    ev.preventDefault();
+    signout_all();
+  };
   kill.onsubmit = (ev) => {
     ev.preventDefault();
     account_delete(kill);
@@ -4124,6 +4339,10 @@ async function account() {
 }
 async function signout() {
   await post("/api/logout", {});
+  location.href = "/";
+}
+async function signout_all() {
+  await post("/api/logout-all", {});
   location.href = "/";
 }
 async function account_delete(kill) {

@@ -176,6 +176,9 @@ type Limit = { rate: number; most: number; keys: Map<string, { n: number; at: nu
 // =========
 
 const LOCK       = config.DIR + "/lock";
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// unix socket devices and terminals reach this server on (Main.unix)
+const SOCK       = config.DIR + "/server.sock";
 // where worker k's successor reaches it, HAND + k (Main.listen); how
 // often one that gave its chats looks whether its last requests ended
 const HAND       = config.DIR + "/hand";
@@ -213,9 +216,6 @@ const BODIES     = ["say", "import", "voice"];
 
 // a read of a body: a buffer, no limit
 const READ       = 2 ** 20;
-
-// what a socket may hold unsent (Bun's default, 16 MiB, drops the rest)
-const BUFFER     = 2 ** 31 - 1;
 
 // a piece of a long answer (Main.stream)
 const PIECE      = 2 ** 16;
@@ -487,7 +487,7 @@ export namespace Chat {
       const all = cut(rest + dec.decode(buf, { stream: at < body.size }));
       rest = at < body.size ? all.pop()! : "";
       if (rest.length > READ) {
-        throw new Error("A line over " + READ + " characters: no import sends it.");
+        throw Chat.told("A line over " + READ + " characters: no import sends it.");
       }
       yield [all, at < body.size];
     } while (at < body.size);
@@ -931,10 +931,10 @@ export namespace Chat {
   export function imported(x: any): Log {
     const kinds: Kind[] = ["user", "unii", "tool", "echo", "note"];
     if (!kinds.includes(x?.kind)) {
-      throw new Error("An import has no kind " + x?.kind + ".");
+      throw Chat.told("An import has no kind " + x?.kind + ".");
     }
     if (typeof x.text !== "string") {
-      throw new Error("An import has a " + x.kind + " message with no text.");
+      throw Chat.told("An import has a " + x.kind + " message with no text.");
     }
     const date = Number.isNaN(Date.parse(x.date)) ? undefined : new Date(x.date).toISOString();
     return { kind: x.kind, text: x.text, date, more: x.more === true };
@@ -1218,9 +1218,21 @@ export namespace Chat {
     Chat.free(chat);
   }
 
-  // what a message or act that threw answers
+  // what a message or act that threw answers: an error meant for the user
+  // (Chat.told) as it is; any other (a bug's, a library's: paths, a
+  // query) logged here, the client told only that it failed (security
+  // review SC)
   export function fail(err: any): Answer {
-    return { error: String(err?.message ?? err) };
+    if (err?.told === true) {
+      return { error: String(err.message) };
+    }
+    console.error("unii: failed: " + (err?.stack ?? err));
+    return { error: "Something went wrong on the server; it was logged." };
+  }
+
+  // an error whose words are for the user (Chat.fail tells them)
+  export function told(text: string): Error {
+    return Object.assign(new Error(text), { told: true });
   }
 
   // a read, answered by what it sends; null: no read
@@ -1839,8 +1851,8 @@ const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
       }
       for (const p of mine.filter((x) => !seen.includes(x.url)).slice(0, Chat.AUTOS)) {
         const label = Chat.pr_label(p, "review");
-        const task = Chat.review_task(p, "review", false) + (r.task === "" ? "" : "\n\nAlso: " + r.task);
-        const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, task, true, label);
+        const task = Chat.review_task(p, "review", false, true) + (r.task === "" ? "" : "\n\nAlso: " + r.task);
+        const name = Tools.start(chat.tools, "main", { $: "sub", tier: r.tier, effort: null, model: null }, task, true, label, true);
         Chat.note(chat, "Routine " + JSON.stringify(r.name) + " started " + name + ": " + label.title + ".");
         r.last = Date.now();
       }
@@ -1894,12 +1906,16 @@ const SUMMARIES_KEPT = 50; // not SUMMARIES: View's wait (Chat.waits)
   export const REVIEWS = 10;
 
   // what an agent is told for a PR it reviews or fixes (claude: it's a
-  // manager, to run a Claude Code worker for it); nothing goes to GitHub
-  export function review_task(p: Inbox.Pr, how: "review" | "fix", claude: boolean): string {
+  // manager, to run a Claude Code worker for it); nothing goes to GitHub.
+  // unattended (a routine started it, on anyone's PR, no one watching):
+  // it only reads, as a PR's code may be an attacker's (security review
+  // H4; forcing it plan mode waits on an agent's own mode in Tools.ts)
+  export function review_task(p: Inbox.Pr, how: "review" | "fix", claude: boolean, unattended = false): string {
     const it = p.repo + "#" + p.number + " " + JSON.stringify(p.title) + " (" + p.url + "), branch " + p.branch;
     const why = p.state === "failing" ? "failing checks: " + p.failing.join(", ") : p.state === "conflicts" ? "conflicts with its base" : "changes requested in review";
+    const run = unattended ? ". Run nothing from it (no tests, builds or scripts): only read" : ", and run its tests if you can";
     const task = how === "review"
-      ? "Review " + it + ". Read it with `gh pr view` and `gh pr diff` in a checkout of " + p.repo + ", and run its tests if you can. Report: approve, or the blocking findings, each with file:line and why. Post nothing to GitHub: the user posts."
+      ? "Review " + it + ". Read it with `gh pr view` and `gh pr diff` in a checkout of " + p.repo + run + ". Report: approve, or the blocking findings, each with file:line and why. Post nothing to GitHub: the user posts."
       : "Fix " + it + ": " + why + ". Work in its own worktree of " + p.repo + " on that branch; make the checks pass, or resolve the conflicts, or answer the review, with tests. Commit there. Don't push or comment on GitHub: report what you changed and the command to push.";
     return claude ? "Start one Claude Code worker (spawn as: \"claude\") on the user's device to do this, in a checkout of " + p.repo + ", and report what it did: " + task : task;
   }
@@ -2108,6 +2124,20 @@ export namespace Main {
   export let next    : Peer | null = null;
   export let given   = false;
   export let onward  = "";
+
+  // the security review's (SC) limits: what a socket may hold unsent,
+  // twice the largest message (a FRAME, JSON-escaped), past which it's
+  // closed (its client opens again and catches up), so no slow reader
+  // holds the worker's memory; the most a request's body may be, an
+  // import's (streamed to disk: Chat.post), the largest a person sends
+  export const BUFFER = 2 * FRAME;
+  export const BODY   = 2 ** 32;
+
+  // the headers every answer goes with, and an HTML one's policy: its
+  // scripts and styles the site's own (a page's style attributes too),
+  // images and recordings its own or made in the page, no frame of it
+  export const HEADERS: Record<string, string> = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
+  export const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
   // the sockets open here, by user (SOCKETS; Bun opens one inside
   // server.upgrade, so none is opened past it)
   export const sockets = new Map<string, number>();
@@ -2147,6 +2177,41 @@ export namespace Main {
     }
   }
 
+  // RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+  // devices' socket at path made ready to listen on. Any process may take
+  // 127.0.0.1:<port>, so devices and terminals send their session only
+  // here: its dir is this user's, 0700, so only this user's processes bind
+  // or open what's in it. A socket of this user nothing answers on (a
+  // crash left it) is removed; anything else there (a file, a link,
+  // another's, one that answers) is refused: the server ends (Main.lock:
+  // one server per dir, so nothing else should hold it)
+  export async function unix(path: string): Promise<void> {
+    const dir = path.slice(0, path.lastIndexOf("/"));
+    const uid = process.getuid?.();
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    const d = fs.statSync(dir);
+    if (!d.isDirectory() || d.uid !== uid || (d.mode & 0o077) !== 0) {
+      throw new Error(dir + ": must be a directory of this user, mode 0700");
+    }
+    const st = fs.lstatSync(path, { throwIfNoEntry: false });
+    if (st === undefined) {
+      return;
+    }
+    if (!st.isSocket() || st.uid !== uid) {
+      throw new Error(path + ": not a socket of this user: remove it");
+    }
+    const live = await new Promise<boolean>((done) => {
+      const sock = net.connect(path);
+      sock.on("connect", () => (sock.destroy(), done(true)));
+      sock.on("error", () => done(false));
+    });
+    if (live) {
+      throw new Error(path + ": another process answers on it");
+    }
+    fs.rmSync(path);
+  }
+
   // a site's file
   export function file(pathname: string): Response {
     const file = WEB[pathname];
@@ -2160,7 +2225,11 @@ export namespace Main {
   export async function close(req: Request): Promise<Response> {
     const cloud = Chat.cloud;
     const user = Cloud.who(cloud, req);
-    const confirm = String((await req.json().catch(() => ({}))).confirm ?? "").trim().toLowerCase();
+    const text = await Cloud.small(req);
+    if (text === null) {
+      return Response.json({ error: "Too big." }, { status: 413 });
+    }
+    const confirm = String(Cloud.json(text).confirm ?? "").trim().toLowerCase();
     if (user === null || confirm !== user.name.toLowerCase()) {
       const name = user === null ? "you are signed out." : "type \"" + user.name + "\".";
       const error = "Deleting your account erases your chat and Unii's memory for good" + cloud.billing.closes + ". To confirm, " + name;
@@ -2242,12 +2311,37 @@ export namespace Main {
   // the process ends
   export async function reply(req: Request, server: Bun.Server<Sock["data"]>): Promise<Response | undefined> {
     const res = await Main.http(req, server);
-    if (res === undefined || !Main.given) {
+    if (res === undefined) {
       return res;
     }
     const headers = new Headers(res.headers);
-    headers.set("connection", "close");
+    for (const [k, v] of Object.entries(Main.HEADERS)) {
+      headers.set(k, v);
+    }
+    if ((headers.get("content-type") ?? "").startsWith("text/html")) {
+      headers.set("content-security-policy", Main.CSP);
+    }
+    if (Main.given) {
+      headers.set("connection", "close");
+    }
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
+
+  // RED ZONE (security review SC, DRAFT awaiting the user's sign-off): a
+  // request this server should answer: its Host one it is (the site's,
+  // or loopback on its port: no other name rebound to 127.0.0.1 reaches
+  // it), and a post's or socket's Origin, if said, the site's (a terminal
+  // or device says none: its Bearer token is no cookie a page can send)
+  export function ours(req: Request, p: string): boolean {
+    const site = new URL(config.SITE);
+    const loop = ["127.0.0.1:" + Main.port, "localhost:" + Main.port];
+    const host = req.headers.get("host") ?? "";
+    if (host !== site.host && !loop.includes(host)) {
+      return false;
+    }
+    const origin = req.headers.get("origin");
+    const acts = (req.method !== "GET" && req.method !== "HEAD") || p === "/ws";
+    return !acts || origin === null || origin === site.origin || loop.some((h) => origin === "http://" + h);
   }
 
   export async function http(req: Request, server: Bun.Server<Sock["data"]>): Promise<Response | undefined> {
@@ -2257,12 +2351,15 @@ export namespace Main {
     if (away && (req.method !== "GET" || p.startsWith("/api/") || p === "/ws")) {
       return new Response("not from another site", { status: 403 });
     }
+    if (!Main.ours(req, p)) {
+      return new Response("not this site", { status: 403 });
+    }
     try {
       const user = Cloud.who(cloud, req);
       if (user !== null && Main.shard(user.id) !== Main.index) {
         return new Response("this user's worker is another", { status: 421 });
       }
-      const api = await Cloud.http(cloud, req);
+      const api = await Cloud.http(cloud, req, server.requestIP?.(req)?.address ?? null);
       if (api !== null) {
         return api;
       }
@@ -2299,7 +2396,7 @@ export namespace Main {
       Chat.free(chat);
       return res;
     } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+      return Response.json(Chat.fail(err), { status: 500 });
     }
   }
 
@@ -2371,6 +2468,13 @@ export namespace Main {
     const hand = HAND + Main.index;
     Mcp.sweep(config.DIR + "/children." + Main.index + ".pids");
     Main.port = port;
+    // RED ZONE (security review U1, DRAFT awaiting the user's sign-off):
+    // alone (no supervisor: no handover, Main.lock holds the dir), the
+    // devices' socket is made ready first, or the server ends
+    const alone = process.env.UNII_WORKER === undefined;
+    if (alone) {
+      await Main.unix(SOCK);
+    }
     Chat.cloud = Cloud.open(change, signed, post);
     Main.back = await Main.dial(hand);
     if (Main.back === null) {
@@ -2383,16 +2487,17 @@ export namespace Main {
     process.on("message", Main.heard);
     process.on("disconnect", () => process.exit(0));
     process.on("unhandledRejection", Main.unowned);
-    Main.server = Bun.serve<Sock["data"]>({
-      port               : port,
-      hostname           : "127.0.0.1",
-      reusePort          : true,
+    // the TCP port's handlers (the browser, the iOS app) and the devices'
+    // socket's, the same; alone, the port is held by this process only
+    // (no SO_REUSEPORT: none other binds it beside this one), workers share
+    // theirs with their successor (a handover)
+    const serves = {
       idleTimeout        : 0,
-      maxRequestBodySize : Infinity,
+      maxRequestBodySize : Main.BODY,
       fetch              : Main.reply,
       websocket          : {
         maxPayloadLength         : FRAME,
-        backpressureLimit        : BUFFER,
+        backpressureLimit        : Main.BUFFER,
         closeOnBackpressureLimit : true,
         idleTimeout              : PING / 1000,
         open(ws: Sock) {
@@ -2431,7 +2536,12 @@ export namespace Main {
           });
         },
       },
-    });
+    };
+    Main.server = Bun.serve<Sock["data"]>({ ...serves, port, hostname: "127.0.0.1", reusePort: !alone });
+    if (alone) {
+      Bun.serve<Sock["data"]>({ ...serves, unix: SOCK });
+      fs.chmodSync(SOCK, 0o600);
+    }
     setInterval(() => {
       for (const chat of Chat.chats.values()) {
         chat.socks.forEach((sock) => sock.send(TICK));
@@ -2442,6 +2552,9 @@ export namespace Main {
     }
     process.on("exit", () => {
       fs.rmSync(Main.addr, { force: true });
+      if (alone) {
+        fs.rmSync(SOCK, { force: true });
+      }
       Mcp.end();
       for (const chat of Chat.chats.values()) {
         Chat.stop(chat, null);
@@ -2835,8 +2948,8 @@ export namespace Main {
     Bun.serve({
       port     : port,
       hostname : "127.0.0.1",
-      fetch    : (req) => {
-        if (!Main.spend(NETS, Cloud.net(Cloud.ip(req) ?? ""))) {
+      fetch    : (req, srv) => {
+        if (!Main.spend(NETS, Cloud.net(Cloud.ip(req, srv.requestIP(req)?.address ?? null) ?? ""))) {
           return new Response("too many requests", { status: 429 });
         }
         const user = Cloud.who(cloud, req);
@@ -2854,6 +2967,7 @@ export namespace Main {
     }
     process.on("SIGHUP", () => workers.forEach((_, k) => start(k)));
     console.log("unii: " + config.SITE + ", " + config.WORKERS + " workers on 127.0.0.1:" + (port + 1) + "-" + (port + config.WORKERS) + ", routes on " + port);
+    console.log("unii: no device socket with workers: devices and terminals on this computer connect only over " + SOCK + ", which a lone server (workers 0) opens");
   }
 
   // a worker ended (`now`: worker k's, the last that started): as the

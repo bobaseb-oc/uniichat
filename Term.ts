@@ -80,7 +80,7 @@ type Cmd = [use: string, keys: string, text: string, run: (t: Term, arg: string)
 
 // this unii's version: each release ships one, a new one for every
 // change to Term.ts or what it imports
-const VERSION = "1.0.143";
+const VERSION = "1.0.144";
 
 const ARGS   = process.argv.slice(2);
 const LOGIN  = ARGS.includes("login");
@@ -98,13 +98,23 @@ const HOME   = process.env.UNII_HOME || os.homedir() + "/.unii";
 const OURS   = "http://127.0.0.1:8788";
 const SERVER = (ARGS.find((a) => WEB.test(a)) ?? process.env.UNII_URL ?? OURS).replace(/\/$/, "");
 const TOKEN  = HOME + "/" + new URL(SERVER).host + "/token";
-
-// this build talks to a server on this computer only (upstream's may be
-// any, by default the hosted one): a job it is sent runs here
-const LOOPBACK = ["127.0.0.1", "localhost", "[::1]"];
-if (!LOOPBACK.includes(new URL(SERVER).hostname)) {
-  console.error("legion: " + SERVER + " refused: this build opens servers on this computer only (" + LOOPBACK.join(", ") + ")");
+// RED ZONE (security review U1, DRAFT awaiting the user's sign-off): the
+// server's own dir, as Config.DIR reads it ($UNII_DIR, default ~/.unii),
+// where its socket is; every request and socket to the server goes over
+// it only (Device.device_wire), never TCP. This build talks to a server
+// on this computer only (upstream's may be any, by default the hosted
+// one): a job it is sent runs here
+const SOCKDIR = (process.env.UNII_DIR ?? "~/.unii").replace(/^~(?=\/|$)/, os.homedir());
+try {
+  Device.device_wire(SERVER, SOCKDIR);
+} catch (err: any) {
+  console.error("legion: refused: " + err.message + " (this build opens servers on this computer only, over their socket)");
   process.exit(1);
+}
+
+// the wire to the server at url (its socket in SOCKDIR)
+function term_wire(url: string): Device.Wire {
+  return Device.device_wire(url, SOCKDIR);
 }
 
 const USAGE = `Usage: legion [url]         the chat (url: $UNII_URL, else http://127.0.0.1:8788)
@@ -292,14 +302,9 @@ function term_device(): string {
   return "&device=" + encodeURIComponent(DEVICE) + "&computer=" + (COMPUTER ? 1 : 0) + "&work=" + encodeURIComponent(WORK) + (HOME_REPO ? "&home=" + encodeURIComponent(HOME_REPO) : "");
 }
 
+// (RED ZONE U1: over the server's socket only, Device.device_link)
 function term_connect(t: Term): void {
-  const dev = term_device();
-  View.link_open(t.v, {
-    open : (query) => new WebSocket(t.url.replace(/^http/, "ws") + "/ws" + query + dev, { headers: term_auth() } as any),
-    post : (path, body) => fetch(t.url + path, { method: "POST", headers: term_auth(), body }),
-    hear : (msg) => term_hear(t, msg),
-    lost : (up) => term_lost(t, up),
-  });
+  Device.device_link(t.v, term_wire(t.url), term_auth, term_device(), (line) => term_note(t, "Legion: " + line + "."), (msg) => term_hear(t, msg), (up) => term_lost(t, up));
 }
 
 // a socket lost (up: it had opened): the footer says offline; one that
@@ -887,8 +892,9 @@ async function term_logout(t: Term): Promise<void> {
 }
 
 // a GET of the server; failing, a note says it could not do `what`
+// (RED ZONE U1: over the server's socket only, Device.device_fetch)
 async function term_get(t: Term, path: string, what: string): Promise<Response | null> {
-  const res = await fetch(t.url + path, { headers: term_auth() }).catch(() => null);
+  const res = await Device.device_fetch(term_wire(t.url), path, { headers: term_auth() }).catch(() => null);
   if (res === null || !res.ok) {
     term_note(t, "Could not " + what + ": " + (res === null ? "no connection" : "HTTP " + res.status) + ".");
     return null;
@@ -896,9 +902,13 @@ async function term_get(t: Term, path: string, what: string): Promise<Response |
   return res;
 }
 
-// a JSON POST to the server (View.post)
-function term_post(t: Term, path: string, body: object): Promise<any> {
-  return View.post(t.url + path, body, term_auth());
+// a JSON POST to the server, answered as View.post's, over its socket
+// only (RED ZONE U1, Device.device_fetch; View.post's fetch is TCP's)
+async function term_post(t: Term, path: string, body: object): Promise<any> {
+  const headers = { ...term_auth(), "content-type": "application/json" };
+  const res = await Device.device_fetch(term_wire(t.url), path, { method: "POST", headers, body: JSON.stringify(body) }).catch(() => null);
+  const out = res === null ? { error: "Can't reach the server (no socket?): nothing sent." } : await res.json().catch(() => (res.ok ? {} : { error: "HTTP " + res.status }));
+  return { ...out, ok: res?.ok === true, status: res?.status ?? 0 };
 }
 
 // a refusal's text; one for want of credit (402) says how to add some
@@ -1189,7 +1199,13 @@ function term_bg(t: Term): void {
 // A server that says nothing of itself (/api/hello) bills, as one of
 // before it did
 async function login_run(url: string): Promise<void> {
-  const hello = await fetch(url + "/api/hello").then((res) => res.json()).catch(() => ({}));
+  // RED ZONE U1: the new session's key, and the link it opens, over the
+  // server's socket only (Device.device_fetch); none: nothing is sent
+  const res = await Device.device_fetch(term_wire(url), "/api/hello").catch(() => null);
+  if (res === null) {
+    login_fail("no server at " + term_wire(url).sock + " (none up): start it with legion");
+  }
+  const hello = await res.json().catch(() => ({}));
   const { bills = true, github = true } = hello;
   if (bills) {
     console.log("Signing in, you accept the terms (" + url + "/terms.html) and the privacy policy (" + url + "/privacy.html).");
@@ -1205,7 +1221,7 @@ async function login_run(url: string): Promise<void> {
   // or the link gone (410); a wait that fails is asked again
   const wait = { headers: { authorization: "Bearer " + key }, timeout: false } as RequestInit;
   while (true) {
-    const done = await fetch(url + "/api/wait", wait).catch(() => null);
+    const done = await Device.device_fetch(term_wire(url), "/api/wait", wait).catch(() => null);
     const ans  = await done?.json().catch(() => ({})) ?? {};
     if (done?.status === 410) {
       login_fail("the link expired: run legion again");
@@ -1229,7 +1245,7 @@ async function login_ask(url: string, key: string, github: boolean): Promise<{ w
     process.stdout.write(github ? "Email or @github: " : "Email: ");
     const who  = (await login_line()).trim();
     const init = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ who, key }) };
-    const res  = await fetch(url + "/api/login", init).catch(() => null);
+    const res  = await Device.device_fetch(term_wire(url), "/api/login", init).catch(() => null);
     if (res === null) {
       login_fail("no connection to " + url);
     }
@@ -1280,17 +1296,20 @@ function term_auth(): Record<string, string> {
 }
 
 // whether this terminal is signed in: it holds a session the server
-// doesn't refuse (one it can't reach may: the chat waits for it)
+// doesn't refuse (one it can't reach may: the chat waits for it). The
+// session goes over the server's socket only (RED ZONE U1); with none
+// up it can't tell, as one not reached (the link waits for it)
 async function term_signed(url: string): Promise<boolean> {
   if (!fs.existsSync(TOKEN)) {
     return false;
   }
-  const res = await fetch(url + "/api/me", { headers: term_auth() }).catch(() => null);
+  const res = await Device.device_fetch(term_wire(url), "/api/me", { headers: term_auth() }).catch(() => null);
   return res === null || res.status !== 401;
 }
 
 // `legion device`: this computer runs the server's jobs with no screen
-// (Device.ts), signed in as this terminal is; signed out, it stops
+// (Device.ts), signed in as this terminal is, over the server's socket
+// only (RED ZONE U1, Device.device_link); signed out, it stops
 async function device_run(url: string): Promise<void> {
   if (!await term_signed(url)) {
     login_fail("sign in first: legion login");
@@ -1302,7 +1321,7 @@ async function device_run(url: string): Promise<void> {
     console.error("legion device: offline, trying again");
     return true;
   };
-  Device.device_open(url, term_auth(), term_device(), RULES, (line) => console.error("legion device: " + line), lost);
+  Device.device_open(term_wire(url), term_auth(), term_device(), RULES, (line) => console.error("legion device: " + line), lost);
   console.log("legion device: " + DEVICE + " runs the agents' jobs from " + url + " in " + WORK + (COMPUTER ? ", computer use on" : "") + ". Ctrl+C stops.");
 }
 
@@ -1312,7 +1331,7 @@ async function web_run(url: string): Promise<void> {
   if (!await term_signed(url)) {
     await login_run(url);
   }
-  const res = await fetch(url + "/api/web-link", { method: "POST", headers: term_auth() }).catch(() => null);
+  const res = await Device.device_fetch(term_wire(url), "/api/web-link", { method: "POST", headers: term_auth() }).catch(() => null);
   const body = (await res?.json().catch(() => ({})) ?? {}) as { url?: string; error?: string };
   if (res === null || !res.ok || body.url === undefined) {
     login_fail(body.error ?? (res === null ? "no server at " + url + ": start it with unii" : "the server refused (" + res.status + ")"));

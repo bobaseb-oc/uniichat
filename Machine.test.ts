@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { Machine } from "./Machine.ts";
+import { ENV, Machine } from "./Machine.ts";
 
 const DIR = fs.mkdtempSync(os.tmpdir() + "/unii-machine-");
 
@@ -162,4 +162,174 @@ test("glob and grep run as device tools, in the agent's dir", async () => {
   const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
   expect(await run("glob", { pattern: "**/*.ts" })).toEqual({ text: "deep/b.ts\na.ts", fail: false });
   expect(await run("grep", { pattern: "gamma" })).toEqual({ text: "deep/b.ts", fail: false });
+});
+
+// Security review (M2, M3, M4): what a job may reach on this device
+// ================================================================
+
+// M2: a job's shell and a claude worker get an allowlisted environment:
+// none of this unii's secrets (its gateway key, the vendors', a token)
+test("a job's shell and a claude worker get none of this unii's secrets", async () => {
+  const fake = { LITELLM_API_KEY: "fake-1", ANTHROPIC_API_KEY: "fake-2", OPENAI_API_KEY: "fake-3", GH_TOKEN: "fake-4", RESEND_API_KEY: "fake-5", ANTHROPIC_BASE_URL: "http://gw.example" };
+  const was = Object.fromEntries(Object.keys(fake).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, fake);
+  const bin = fs.mkdtempSync(os.tmpdir() + "/unii-bin-");
+  const seen = bin + "/env";
+  fs.writeFileSync(bin + "/claude", "#!/bin/sh\nenv | cut -d= -f1 > " + seen + "\n");
+  fs.chmodSync(bin + "/claude", 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = bin + ":" + path;
+  try {
+    const live = new AbortController().signal;
+    // names only: a value is never printed
+    const out = await Machine.run({ name: "shell", input: { command: "env | cut -d= -f1" }, cwd: "Env" }, DIR + "/work", live, undefined, undefined, []);
+    const names = out.text.split("\n").slice(0, -1).filter((n) => !["PWD", "OLDPWD", "SHLVL", "_"].includes(n)); // the shell's own
+    for (const k of ["LITELLM_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "RESEND_API_KEY", "ANTHROPIC_BASE_URL"]) {
+      expect([k, names.includes(k)]).toEqual([k, false]);
+    }
+    expect(names).toEqual(expect.arrayContaining(["PATH", "HOME", "UNII_RUN"]));
+    expect(names.every((n) => ENV.test(n))).toBe(true);
+    await Machine.run({ name: "claude", input: { task: "x" }, cwd: "Env" }, DIR + "/work", live);
+    const told = fs.readFileSync(seen, "utf8").split("\n").filter((n) => n !== "");
+    for (const k of ["LITELLM_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "RESEND_API_KEY"]) {
+      expect([k, told.includes(k)]).toEqual([k, false]);
+    }
+    // the gateway's address (not a secret) it may need; its key comes from Claude Code's apiKeyHelper
+    expect(told).toEqual(expect.arrayContaining(["PATH", "HOME", "UNII_RUN", "ANTHROPIC_BASE_URL"]));
+  } finally {
+    process.env.PATH = path;
+    for (const [k, v] of Object.entries(was)) {
+      v === undefined ? delete process.env[k] : (process.env[k] = v);
+    }
+  }
+});
+
+// M4: read, grep and glob refuse a secret's path (a key, credentials, a
+// token, ~/.ssh, ~/.aws, a repo's .git/config), its real path too (a
+// symlink); a grep over a dir leaves secrets' files out
+test("read, grep and glob refuse secrets' paths; a grep over a dir leaves them out", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-secret-"));
+  fs.mkdirSync(root + "/Ann/.ssh", { recursive: true });
+  fs.mkdirSync(root + "/Ann/.aws");
+  fs.mkdirSync(root + "/Ann/repo/.git", { recursive: true });
+  fs.writeFileSync(root + "/Ann/.ssh/id_ed25519", "PRIVATE pass\n");
+  fs.writeFileSync(root + "/Ann/.aws/credentials", "aws pass\n");
+  fs.writeFileSync(root + "/Ann/repo/.git/config", "[remote] url = https://u:pass@h\n");
+  fs.writeFileSync(root + "/Ann/token", "pass\n");
+  fs.writeFileSync(root + "/Ann/sa-key.json", "{\"pass\": 1}\n");
+  fs.writeFileSync(root + "/Ann/my-service-account.json", "{\"pass\": 1}\n");
+  fs.writeFileSync(root + "/Ann/credentials.json", "{\"pass\": 1}\n");
+  fs.writeFileSync(root + "/Ann/notes.md", "pass\n");
+  fs.writeFileSync(root + "/Ann/keyboard.json", "{\"pass\": 1}\n");
+  fs.symlinkSync(root + "/Ann/.ssh/id_ed25519", root + "/Ann/innocent.txt");
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [".ssh/id_ed25519", root + "/Ann/.aws/credentials", "repo/.git/config", "token", "sa-key.json", "my-service-account.json", "credentials.json", "innocent.txt"]) {
+    const r = await run("read", { path: p });
+    expect([p, r.fail, r.text]).toEqual([p, true, expect.stringContaining("secret")]);
+  }
+  expect((await run("read", { path: "notes.md" })).text).toContain("pass");
+  expect((await run("read", { path: "keyboard.json" })).fail).toBe(false);
+  expect((await run("grep", { pattern: "pass", path: ".ssh" })).text).toContain("secret");
+  expect((await run("glob", { pattern: "*", path: root + "/Ann/.aws" })).text).toContain("secret");
+  for (const rg of [Bun.which("rg"), null]) {
+    for (const mode of ["files", "content", "count"]) {
+      const g = await Machine.grep(root + "/Ann", { pattern: "pass", mode }, live, rg);
+      expect([rg, mode, g.text.includes("notes.md"), g.text.includes("keyboard.json"), /token|sa-key|service-account|credentials|innocent/.test(g.text)]).toEqual([rg, mode, true, true, false]);
+    }
+  }
+  // content mode keeps grep's own separators
+  expect((await Machine.grep(root + "/Ann", { pattern: "pass", mode: "content", glob: "notes.md" }, live, Bun.which("rg"))).text).toBe("notes.md:1:pass");
+});
+
+// M3: write and edit refuse the files that gate the hooks: any
+// .claude/settings*.json (a project's: its hooks, disableAllHooks) and
+// anything under ~/.claude, by the path given or its real one
+test("write and edit refuse Claude Code's settings files and ~/.claude", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-guard-"));
+  fs.mkdirSync(root + "/Ann/.claude", { recursive: true });
+  fs.writeFileSync(root + "/Ann/.claude/settings.local.json", "{}");
+  fs.symlinkSync(root + "/Ann/.claude", root + "/Ann/cfg");
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  const off = "{\"disableAllHooks\":true}";
+  expect((await run("write", { path: ".claude/settings.json", content: off })).text).toContain("hooks");
+  expect((await run("write", { path: "cfg/settings.json", content: off })).fail).toBe(true);
+  expect(fs.existsSync(root + "/Ann/.claude/settings.json")).toBe(false);
+  expect((await run("edit", { edits: [{ path: "notes", old: "a", new: "b" }, { path: ".claude/settings.local.json", old: "{}", new: off }] })).fail).toBe(true);
+  expect(fs.readFileSync(root + "/Ann/.claude/settings.local.json", "utf8")).toBe("{}");
+  const mine = os.homedir() + "/.claude/legion-guard-" + crypto.randomUUID();
+  try {
+    expect((await run("write", { path: mine + "/x.md", content: "x" })).fail).toBe(true);
+    expect(fs.existsSync(mine)).toBe(false);
+  } finally {
+    fs.rmSync(mine, { recursive: true, force: true });
+  }
+  expect((await run("write", { path: ".claude/notes.md", content: "ok" })).fail).toBe(false);
+});
+
+// RED ZONE (security review follow-up, DRAFT awaiting the user's
+// sign-off): macOS's disk is case-insensitive, so .claude/SETTINGS.json,
+// .Claude/settings.local.json and ~/.CLAUDE are the same files: refused
+// too, made or not
+test("write and edit refuse the settings files and ~/.claude in any case", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-case-"));
+  fs.mkdirSync(root + "/Ann/.claude", { recursive: true });
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [".claude/SETTINGS.LOCAL.JSON", ".Claude/settings.local.json", "newproj/.CLAUDE/Settings.json", os.homedir() + "/.CLAUDE/legion-case-" + crypto.randomUUID() + "/x.md"]) {
+    expect([p, (await run("write", { path: p, content: "{}" })).fail]).toEqual([p, true]);
+  }
+  expect(fs.readdirSync(root + "/Ann/.claude")).toEqual([]);
+  expect(fs.existsSync(root + "/Ann/newproj")).toBe(false);
+});
+
+// one secret list (Modes.ts) for read, grep, glob, the files pane and the
+// shell: the dotfiles that hold a login, in any case
+test("read refuses every dotfile that holds a login, in any case", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-dots-"));
+  const files = [".git-credentials", ".pgpass", ".claude.json", ".npmrc", ".pypirc", ".kube/config", ".docker/config.json", ".config/gh/hosts.yml"];
+  for (const f of files) {
+    fs.mkdirSync(root + "/Ann/" + f.split("/").slice(0, -1).join("/"), { recursive: true });
+    fs.writeFileSync(root + "/Ann/" + f, "pass\n");
+  }
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [...files, ".GIT-CREDENTIALS", ".Kube/config", ".SSH/id_rsa", ".config/GH/hosts.yml"]) {
+    expect([p, Machine.secret(root + "/Ann/" + p), (await run("read", { path: p })).fail]).toEqual([p, true, true]);
+  }
+  // not made yet: no real path to canonicalize its case
+  for (const p of ["/nowhere/.KUBE/config", "/nowhere/.Ssh/known", "/nowhere/repo/.GIT/Config", "/nowhere/.GIT-Credentials"]) {
+    expect([p, Machine.secret(p)]).toEqual([p, true]);
+  }
+});
+
+// M2: a job keeps the proxy and CA settings it needs to reach the
+// network (none a secret, but a proxy's URL may hold its login)
+test("a job's environment keeps proxies, CA bundles and CLAUDE_CONFIG_DIR", () => {
+  for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CLAUDE_CONFIG_DIR"]) {
+    expect([k, ENV.test(k)]).toEqual([k, true]);
+  }
+  for (const k of ["GH_TOKEN", "HTTPS_PROXY_PASSWORD", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_SECRET_ACCESS_KEY"]) {
+    expect([k, ENV.test(k)]).toEqual([k, false]);
+  }
+});
+
+// the Mac's disk folds Unicode lookalikes too (ſ is s, K is K): a
+// settings file spelled with them is still refused (round-2 check)
+test("write refuses a settings file spelled with Unicode lookalikes", async () => {
+  const root = fs.realpathSync(fs.mkdtempSync(os.tmpdir() + "/legion-fold-"));
+  fs.mkdirSync(root + "/Ann/.claude", { recursive: true });
+  const live = new AbortController().signal;
+  const run = (name: string, input: object) => Machine.run({ name, input, cwd: "Ann" }, root, live, undefined, undefined, []);
+  for (const p of [".claude/ſettings.local.json", ".claude/ＳＥＴＴＩＮＧＳ.json", ".claude/settings.local.json".normalize("NFD")]) {
+    expect([p, (await run("write", { path: p, content: "{}" })).fail]).toEqual([p, true]);
+  }
+  expect(fs.readdirSync(root + "/Ann/.claude")).toEqual([]);
+});
+
+test("read refuses a secret path spelled with Unicode lookalikes", () => {
+  for (const p of [os.homedir() + "/.ſsh/github_ed25519", os.homedir() + "/.pgpaſſ", os.homedir() + "/.ＡＷＳ/credentials"]) {
+    expect([p, Machine.secret(p)]).toEqual([p, true]);
+  }
 });

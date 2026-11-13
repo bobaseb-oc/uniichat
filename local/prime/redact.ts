@@ -7,7 +7,8 @@
 // `/import` through CLAUDE_CONFIG_DIR). A secret is a key of a known
 // shape, a token or password assigned a literal, a private key, or the
 // exact value of a secret-named environment variable; each becomes
-// [REDACTED:<name>]. The report names files and counts, never values.
+// [REDACTED:<name>] (a URL's password too). The report names files and
+// counts, never values.
 
 import * as fs from "node:fs";
 import { manifest_read, OUT } from "./collect.ts";
@@ -21,16 +22,38 @@ const CAP = 64 * 1024;
 // shapes of secrets, by name, most specific first; a pattern with a
 // group keeps it (what names the secret) and redacts the rest
 const SHAPES: Array<[string, RegExp]> = [
-  ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
+  ["private-key", /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]{0,30}PRIVATE KEY-----/g],
   ["anthropic", /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
   ["openai", /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}/g],
   ["aws", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
   ["github", /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g],
   ["slack", /\bxox[abposr]-[A-Za-z0-9-]{10,}/g],
   ["databricks", /\bdapi[0-9a-f]{32}(?:-\d+)?\b/g],
-  ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
+  ["google-token", /\bya29\.[A-Za-z0-9_-]{20,}/g],
+  ["google-refresh", /(?<![A-Za-z0-9/:.])1\/\/0[A-Za-z0-9_-]{20,}/g],
+  ["google-key", /\bAIza[0-9A-Za-z_-]{35}/g],
+  ["google-secret", /\bGOCSPX-[A-Za-z0-9_-]{20,}/g],
+  ["stripe", /\b[sr]k_live_[A-Za-z0-9]{20,}/g],
+  ["gitlab", /\bglpat-[A-Za-z0-9_-]{20,}/g],
+  ["npm", /\bnpm_[A-Za-z0-9]{36}\b/g],
+  ["huggingface", /\bhf_[A-Za-z0-9]{30,}/g],
+  ["harvest", /\b\d{4,}\.pt\.[A-Za-z0-9_-]{20,}/g],
+  ["jwt", /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
   ["bearer", /(\bBearer\s+)(?![$<{])[A-Za-z0-9._~+/-]{16,}=*/g],
-  ["assigned", /(\b(?:api[_-]?key|secret|token|password|passwd|pwd)\b["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
+  ["basic", /(\bAuthorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/]{8,}={0,2}/gi],
+  // the password up to the authority's last @ (one may be in it); the
+  // user may be empty
+  ["url-password", /(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s:/@]*:)(?![$<{]|\[REDACTED)[^\s/?#]+(?=@)/gi],
+  // a name with one as a part (GITHUB_TOKEN, "access_token", X_API_KEY,
+  // client_secret_value) but not a file's, a URL's, an id's...: `_` is a
+  // word character, so no \b around the parts; each run bounded (no
+  // line is slow, however made)
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){0,16}(?:api[_-]?key|secret|token|password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,64}){0,8}(?<![_-](?:file|path|dir|name|url|uri|id|type|count))(?![A-Za-z0-9])["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
+  // a name ending in _KEY (LITELLM_MASTER_KEY), its value unless an
+  // identifier: lowercase snake_case (primary_key = account_id) but a
+  // key's own (rk_live_...), a dotted name (settings.KEY, os.environ) or
+  // a $VAR; case kept, so no i
+  ["assigned", /((?<![A-Za-z0-9_-])(?:[A-Za-z0-9]{0,64}[_-]){1,16}[Kk][Ee][Yy]["']?\s*[:=]\s*["']?)(?!\$|<|\{|\[REDACTED|[A-Za-z_]{1,64}\.[A-Za-z_]|(?![a-z]{1,5}_(?:live|test)_)[a-z]{1,64}(?:_[a-z]{1,64}){0,16}(?![^\s"'\\,;)]))[^\s"'\\,;)]{8,}/g],
 ];
 
 // name segments of a variable that holds a secret (PATH is not PAT)

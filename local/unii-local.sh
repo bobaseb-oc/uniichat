@@ -98,9 +98,13 @@ logs_make() {
 }
 
 # the terminal: its /import reads only the redacted copy of Claude Code's
-# logs (local/prime/redact.ts), never ~/.claude or ~/.codex themselves
+# logs (local/prime/redact.ts), never ~/.claude or ~/.codex themselves.
+# RED ZONE (security review SB, DRAFT awaiting the user's sign-off) M2:
+# it runs the agents' jobs, so it gets no gateway, vendor, mail or push
+# key (the status line's spend reads LiteLLM's key from the Keychain)
 term_exec() {
-  exec env UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" UNII_IMPORT_ASK="${UNII_IMPORT_ASK:-}" bun "$ROOT/Term.ts" "$@"
+  exec env -u LITELLM_API_KEY -u LITELLM_KEY -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u OPENAI_API_KEY -u RESEND_API_KEY -u APNS_KEY \
+    UNII_IMPORT_DIRS="${UNII_IMPORT_DIRS:-$HOME/.unii-prime/claude/projects}" UNII_IMPORT_ASK="${UNII_IMPORT_ASK:-}" bun "$ROOT/Term.ts" "$@"
 }
 
 # `legion device --install`: a launchd agent (at login, kept alive) that
@@ -166,8 +170,11 @@ skills_make() {
   bun "$ROOT/local/skills.ts" "$DIR/skills.md" >&2 || echo "legion: no skills index" >&2
 }
 
+# RED ZONE (security review U1, DRAFT awaiting the user's sign-off): up
+# means answering on its unix socket (only this user's processes can bind
+# it), so a process squatting the TCP port is not taken for the server
 server_up() {
-  curl -fsS --max-time 2 -o /dev/null "$URL/" 2>/dev/null
+  curl -fsS --max-time 2 -o /dev/null --unix-socket "$DIR/server.sock" "$URL/" 2>/dev/null
 }
 
 server_start() {

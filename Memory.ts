@@ -291,11 +291,12 @@ export namespace Memory {
     view.batch = kept?.batch ?? false;
   }
 
-  // written whole, then moved in place; flushed soon (Disk.ts)
+  // written whole (0600: the user's alone), then moved in place; flushed
+  // soon (Disk.ts)
   export function save(mem: Memory): void {
     const file = mem.dir + "/view.json";
     const [chat, seen] = [mem.view, mem.seen].map((view): Kept => ({ parts: view.parts.map((part) => [part.l, part.i]), batch: view.batch }));
-    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, questions: mem.questions, asked: mem.asked, mode: mem.mode, plan: mem.plan, routines: mem.routines, routined: mem.routined, drafts: mem.drafts, drafted: mem.drafted, summaries: mem.summaries, work: mem.work, ...mem.ends }));
+    fs.writeFileSync(file + ".new", JSON.stringify({ ...chat, seen, pick: mem.pick, goal: mem.goal, questions: mem.questions, asked: mem.asked, mode: mem.mode, plan: mem.plan, routines: mem.routines, routined: mem.routined, drafts: mem.drafts, drafted: mem.drafted, summaries: mem.summaries, work: mem.work, ...mem.ends }), { mode: 0o600 });
     fs.renameSync(file + ".new", file);
     Disk.wrote(file);
   }
@@ -1194,7 +1195,9 @@ ${Memory.cut(line)}| ← LIMIT`;
     yield "}}\n";
   }
 
-  // /tree: a section for the view, the messages and each level
+  // /tree: a section for the view, the messages and each level; VIEW
+  // shown till another is picked, by CSS: no script, as the site's CSP
+  // runs none inline (Server.ts Main.CSP)
   export function* page(mem: Memory): Generator<string> {
     const esc  = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const item = (head: string[], text: string) => "<h4>" + esc(head.join(" · ")) + "</h4><pre>" + esc(text) + "</pre>";
@@ -1210,10 +1213,9 @@ ${Memory.cut(line)}| ← LIMIT`;
     yield `<!doctype html><meta charset="utf-8"><title>Legion memory</title>
 <style>
 body { font: 13px/1.4 ui-monospace, monospace; margin: 2em; } nav a { margin-right: 1em; }
-section { display: none; } section:target { display: block; }
+section { display: none; } section:target, #VIEW { display: block; } body:has(section:target) #VIEW:not(:target) { display: none; }
 h4 { margin: .8em 0 .2em; color: #888; font-weight: normal; } pre { margin: 0; white-space: pre-wrap; font: inherit; }
 </style>
-<script>location.hash = location.hash || "VIEW";</script>
 <nav>${menu.join("")}</nav>
 <section id="VIEW">`;
     yield mem.view.parts.map((part) => node(part, Memory.text(mem, part))).join("");

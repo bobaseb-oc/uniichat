@@ -76,6 +76,53 @@ export namespace Auth {
     };
   }
 
+  // RED ZONE (security review SD, DRAFT awaiting the user's sign-off):
+  // a key every read of which the user allows. Bun.secrets trusts the
+  // program that made the item (bun), so any `bun -e` an agent runs could
+  // read it unasked. Here a key is the login keychain's generic password
+  // of service "<prefix>-<name>", account "oauth", made by `security`
+  // with no application trusted (-T ""): every read, whoever asks (this
+  // program, or an agent's `security` or `bun`), shows a macOS prompt the
+  // user must allow ("Always Allow" would trust `security` from then on,
+  // so: Allow). The value goes on security's stdin (interactive mode),
+  // never an argument (`ps` shows those); so it is a token, [\w.-] only.
+  // Made again (deleted, then added) so no older item's trust is kept.
+  export type Run = (args: string[], input?: string) => Promise<{ code: number; out: string }>;
+
+  export async function security(args: string[], input?: string): Promise<{ code: number; out: string }> {
+    const p = Bun.spawn(["/usr/bin/security", ...args], { stdin: input === undefined ? "ignore" : new Blob([input]), stdout: "pipe", stderr: "ignore" });
+    const out = await new Response(p.stdout).text();
+    return { code: await p.exited, out };
+  }
+
+  export function asking(prefix: string, run: Run = Auth.security): Store {
+    const at = (name: string) => ["-s", prefix + "-" + name, "-a", "oauth"];
+    const refused = (what: string) => new Error("the Keychain refused to " + what + " (was it allowed?).");
+    return {
+      get: async (name) => {
+        const r = await run(["find-generic-password", ...at(name), "-w"]);
+        if (r.code === 44) {
+          return null;
+        }
+        if (r.code !== 0) {
+          throw refused("read the " + name);
+        }
+        return r.out.replace(/\n$/, "");
+      },
+      set: async (name, value) => {
+        if (!/^[\w.-]{1,400}$/.test(value)) {
+          throw new Error("not a token: kept nowhere.");
+        }
+        await run(["delete-generic-password", ...at(name)]);
+        const r = await run(["-i"], "add-generic-password " + at(name).join(" ") + ' -T "" -w ' + value + "\n");
+        if (r.code !== 0) {
+          throw refused("keep the " + name);
+        }
+      },
+      delete: async (name) => (await run(["delete-generic-password", ...at(name)])).code === 0,
+    };
+  }
+
   // an endpoint, if allowed: https, or (insecure) http on 127.0.0.1
   export function safe(text: string, o: Opts): URL {
     let url: URL;

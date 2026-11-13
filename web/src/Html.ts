@@ -297,7 +297,8 @@ export function fine_html(app: boolean): string {
 
 // the account page (/account): where the server bills, the balance and
 // credit to add, the use by day and the purchases; then the account's
-// own acts; deleting asks first, in place (main.ts)
+// own acts; deleting and signing out everywhere ask first, in place
+// (main.ts)
 export function account_html(a: View.Account, app: boolean): string {
   const tops    = a.topups ?? [];
   const days    = View.account_days(a);
@@ -308,12 +309,14 @@ export function account_html(a: View.Account, app: boolean): string {
   const item    = (what: string, note: string, act: string) => `<div class="item"><p>${what}${note === "" ? "" : `<small>${note}</small>`}</p>${act}</div>`;
   const closes  = a.bills ? `<p>This also closes your BendAI account (same sign-in). Credit you bought and didn't use goes back to your card.</p>` : "";
   const kill    = `<form class="kill" hidden>${closes}<p>Type <b>${esc(a.name)}</b> to confirm.</p><input name="name" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(a.name)}"><p class="why"></p><div><button type="button" class="chip keep">Cancel</button><button class="chip red" disabled>Delete for good</button></div></form>`;
+  const ends    = `<form class="kill ends" hidden><p>Sign out of every browser and app?</p><div><button type="button" class="chip keep">Cancel</button><button class="chip red">Sign out everywhere</button></div></form>`;
   const acts    = [
     item(esc(a.name), "", `<button class="chip out">Sign out</button>`),
+    item("Sign out everywhere", "Every browser and app signed in as you, this one too.", `<button class="chip outs">Sign out everywhere</button>`),
     item("Export memory", "Chat and account, in one file.", `<a class="chip" href="/export">Download</a>`),
     item("Delete account", "Erases chat and memory for good.", `<button class="chip red del">Delete</button>`),
   ];
-  const account = section_html("Sign-in and data", acts.join("") + kill);
+  const account = section_html("Sign-in and data", acts.join("") + kill + ends);
   const links   = a.bills ? `<p class="foot"><a href="/pricing" target="_blank">Prices</a> · <a href="/terms.html" target="_blank">Terms</a> · <a href="/privacy.html" target="_blank">Privacy</a> · <a href="mailto:contact@higherorderco.com">Help</a></p>` : "";
   return `<a class="back" href="/" data-go="/">← Chat</a><h1>Account</h1>` + money + account + links;
 }
