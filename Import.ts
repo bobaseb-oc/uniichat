@@ -85,6 +85,11 @@ export const OLD = "Nothing new: these chats are in Unii's memory already.";
 // a file given as a site's export that is none (import_export)
 const NOT_EXPORT = "Not a Claude or ChatGPT export.";
 
+// the most a zip's file is inflated to (a zip bomb stops there), and
+// the most messages a ChatGPT thread is read back (its parents may loop)
+export const ZIP_CAP = 256 * 1024 * 1024;
+const THREAD = 100_000;
+
 // what a message sent while an import runs does (Memory.settle)
 export const MIDWAY = "Meanwhile, Legion can answer with a partial tree.";
 
@@ -356,9 +361,12 @@ function chat_session(chat: any): Promise<Session | null> {
 // as an echo; never thoughts, nor a hidden one
 function chat_openai(chat: any): Msg[] {
   const nodes: any[] = [];
-  for (let id = chat.current_node; id; id = chat.mapping[id]?.parent) {
-    nodes.unshift(chat.mapping[id]?.message);
+  const seen = new Set<unknown>();
+  for (let id = chat.current_node; id && !seen.has(id) && seen.size < THREAD; id = chat.mapping[id]?.parent) {
+    seen.add(id);
+    nodes.push(chat.mapping[id]?.message);
   }
+  nodes.reverse();
   let date = import_date(chat.create_time, "");
   return nodes.flatMap((m) => {
     const role = m?.author?.role;
@@ -391,8 +399,9 @@ function chat_claude(chat: any): Msg[] {
 // in the central directory at the zip's end, then its data, inflated
 // (DecompressionStream) if deflated; null: none such. A ZIP64 (over 4 GB,
 // or 65,535 files) says where its directory is in its own end record,
-// found by the locator right before the classic one
-export async function zip_file(zip: Blob, name: string): Promise<Blob | null> {
+// found by the locator right before the classic one. Inflating stops
+// past cap bytes, refused (whatever size the zip says)
+export async function zip_file(zip: Blob, name: string, cap = ZIP_CAP): Promise<Blob | null> {
   const view = async (at: number, n: number) => new DataView(await zip.slice(at, at + n).arrayBuffer());
   const back = Math.min(zip.size, 65577);
   const tail = await view(zip.size - back, back);
@@ -415,11 +424,27 @@ export async function zip_file(zip: Blob, name: string): Promise<Blob | null> {
     if (entry === name || entry.endsWith("/" + name)) {
       const head = await view(at, 30);
       const data = zip.slice(at + 30 + head.getUint16(26, true) + head.getUint16(28, true)).slice(0, packed);
-      return dir.getUint16(p + 10, true) === 8 ? new Response(data.stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob() : data;
+      return dir.getUint16(p + 10, true) === 8 ? zip_inflate(data, cap) : data;
     }
     p += 46 + dir.getUint16(p + 28, true) + dir.getUint16(p + 30, true) + dir.getUint16(p + 32, true);
   }
   return null;
+}
+
+// deflated data inflated, read until cap bytes and no further
+async function zip_inflate(data: Blob, cap: number): Promise<Blob> {
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  const reader = data.stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    n += r.value.length;
+    if (n > cap) {
+      await reader.cancel();
+      throw new Error("The zip's file is over " + cap + " bytes inflated.");
+    }
+    parts.push(r.value);
+  }
+  return new Blob(parts);
 }
 
 // a directory entry's size, size packed and local header's place, each

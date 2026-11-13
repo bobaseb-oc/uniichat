@@ -8,9 +8,14 @@
 // - Sign-in: `legion harvest-login` takes the token (Harvest → Developers
 //   → Personal access tokens) and the account id (OnCorps': ACCOUNT),
 //   checks them with Harvest (GET /users/me), then keeps them in the
-//   Keychain only (Auth.keychain, services "legion-harvest-token",
+//   Keychain only (services "legion-harvest-token",
 //   "legion-harvest-account"): never a file, an argument, the
-//   environment, a log, an error, the server or a model.
+//   environment, a log, an error, the server or a model. The token
+//   (RED ZONE, security review SD, DRAFT awaiting the user's sign-off)
+//   with no application trusted (Auth.asking): each read, the Submit's
+//   or the harvest tool's or an agent's shell's, shows a macOS prompt the
+//   user allows (Allow, never Always Allow); a prompt they didn't expect
+//   is one to deny.
 // - Reads (the agents' harvest tool, read-only): the user's active
 //   project and task assignments; their own entries for a range.
 // - The one write: post, a new time entry, checked whole (entry_check).
@@ -50,8 +55,29 @@ const PAGES = 10;
 
 export namespace Harvest {
 
-  export function store(): Store {
-    return Auth.keychain("legion-harvest");
+  // RED ZONE (security review SD, DRAFT awaiting the user's sign-off):
+  // the token where every read asks the user (Auth.asking), the account
+  // id (no secret) where it was (old: Auth.keychain). A token kept by
+  // Bun.secrets before is deleted when one is kept, and on logout.
+  export function store(run: Auth.Run = Auth.security, old: Store = Auth.keychain("legion-harvest")): Store {
+    const asked = Auth.asking("legion-harvest", run);
+    return {
+      get    : (name) => (name === "token" ? asked : old).get(name),
+      set    : async (name, value) => {
+        if (name === "token") {
+          await old.delete(name).catch(() => false);
+          return asked.set(name, value);
+        }
+        return old.set(name, value);
+      },
+      delete : async (name) => {
+        if (name !== "token") {
+          return old.delete(name);
+        }
+        const was = await old.delete(name).catch(() => false);
+        return (await asked.delete(name)) || was;
+      },
+    };
   }
 
   // the token and account checked with Harvest, then kept; who they are

@@ -16,7 +16,14 @@ const args = process.argv.slice(2);
 const store = Google.store();
 try {
   if (args.includes("--logout")) {
-    console.log((await Google.logout(store)) ? "legion: signed out of Google (revoked)" : "legion: not signed in to Google");
+    // RED ZONE (security review SD, DRAFT awaiting the user's sign-off):
+    // "revoked" only when Google said so
+    const out = await Google.logout(store);
+    if (out.had && !out.revoked) {
+      console.error("legion: signed out of Google: deleted locally; revoke failed — revoke at https://myaccount.google.com/permissions");
+      process.exit(1);
+    }
+    console.log(out.had ? "legion: signed out of Google (revoked)" : "legion: not signed in to Google");
     process.exit(0);
   }
   const file = args.find((a: string) => !a.startsWith("--"));

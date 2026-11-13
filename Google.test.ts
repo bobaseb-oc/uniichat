@@ -35,7 +35,7 @@ const google = Bun.serve({
       return refresh_ok ? Response.json({ access_token: "at2", expires_in: 3600, token_type: "Bearer" }) : Response.json({ error: "invalid_grant" }, { status: 400 });
     }
     if (url.pathname === "/revoke") {
-      return new Response("");
+      return form.token === "rt-unrevokable" ? Response.json({ error: "invalid_token" }, { status: 400 }) : new Response("");
     }
     if (url.pathname.startsWith("/calendar/")) {
       return Response.json({ items: [{ id: "e1", summary: "Weekly", start: { dateTime: "2026-11-12T13:30:00Z" }, end: { dateTime: "2026-11-12T14:00:00Z" }, hangoutLink: "https://meet.google.com/abc", attendees: [{ responseStatus: "accepted" }, { responseStatus: "needsAction" }] }] });
@@ -135,10 +135,23 @@ test("logout: revoked at Google, then deleted, the client too", async () => {
   const store = memory();
   store.all.set("client", JSON.stringify(CLIENT));
   store.all.set("grant", JSON.stringify({ access_token: "at1", refresh_token: "rt1", expires_at: Date.now() + 3600e3 }));
-  expect(await Google.logout(store, O)).toBe(true);
+  expect(await Google.logout(store, O)).toEqual({ had: true, revoked: true });
   expect(sent.at(-1)).toMatchObject({ path: "/revoke", form: { token: "rt1" } });
   expect(store.all.size).toBe(0);
-  expect(await Google.logout(store, O)).toBe(false);
+  expect(await Google.logout(store, O)).toEqual({ had: false, revoked: false });
+});
+
+// security review L: a failed revoke is said, never "revoked"; the grant
+// is deleted here all the same
+test("logout: a revoke Google refuses, or can't be reached, is said; deleted all the same", async () => {
+  const store = memory();
+  store.all.set("grant", JSON.stringify({ access_token: "at1", refresh_token: "rt-unrevokable", expires_at: Date.now() + 3600e3 }));
+  expect(await Google.logout(store, O)).toEqual({ had: true, revoked: false });
+  expect(store.all.size).toBe(0);
+  store.all.set("grant", JSON.stringify({ access_token: "at1", refresh_token: "rt1", expires_at: Date.now() + 3600e3 }));
+  const gone = { ...O, ends: { ...O.ends!, revoke: "http://127.0.0.1:1/revoke" } };
+  expect(await Google.logout(store, gone)).toEqual({ had: true, revoked: false });
+  expect(store.all.size).toBe(0);
 });
 
 test("reads: events without attendees' addresses, Meet links only; transcript Docs with Docs links only; a text cut, a bad id refused", async () => {

@@ -21,8 +21,9 @@ const FILE: Record<string, string> = fs.existsSync(PATH) ? JSON.parse(fs.readFil
 
 export const SITE    = config_get("site", "http://127.0.0.1:8788").replace(/\/$/, "");
 
-// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM)
-export const ANTHROPIC_URL = config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, "");
+// the Claude API's origin: Anthropic's, or a proxy of it (e.g. LiteLLM);
+// https, or http on this computer only (the key goes to it)
+export const ANTHROPIC_URL = config_origin("anthropic_url", config_get("anthropic_url", "https://api.anthropic.com").replace(/\/$/, ""));
 
 export const OFFER: Offer = {
   vendors : config_vendors(config_get("vendors", "claude-api")),
@@ -84,6 +85,20 @@ export function config_get(key: string, def: string): string {
 
 function config_path(path: string): string {
   return path.startsWith("~/") ? os.homedir() + path.slice(1) : path;
+}
+
+// a URL a key is sent to, if https or (a local gateway) http on
+// 127.0.0.1, localhost or [::1]; else the server doesn't start
+function config_origin(key: string, text: string): string {
+  let url: URL | null = null;
+  try {
+    url = new URL(text);
+  } catch {}
+  const local = ["127.0.0.1", "localhost", "[::1]"].includes(url?.hostname ?? "");
+  if (url?.protocol !== "https:" && !(url?.protocol === "http:" && local)) {
+    throw new Error("config: " + key + " is no https URL (http only on 127.0.0.1, localhost or [::1]): " + (url?.origin ?? "not a URL"));
+  }
+  return text;
 }
 
 function config_run(key: string, text: string): Pick {

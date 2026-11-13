@@ -7,7 +7,8 @@
 // `/import` through CLAUDE_CONFIG_DIR). A secret is a key of a known
 // shape, a token or password assigned a literal, a private key, or the
 // exact value of a secret-named environment variable; each becomes
-// [REDACTED:<name>]. The report names files and counts, never values.
+// [REDACTED:<name>] (a URL's password too). The report names files and
+// counts, never values.
 
 import * as fs from "node:fs";
 import { manifest_read, OUT } from "./collect.ts";
@@ -28,9 +29,22 @@ const SHAPES: Array<[string, RegExp]> = [
   ["github", /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})/g],
   ["slack", /\bxox[abposr]-[A-Za-z0-9-]{10,}/g],
   ["databricks", /\bdapi[0-9a-f]{32}(?:-\d+)?\b/g],
+  ["google-token", /\bya29\.[A-Za-z0-9_-]{20,}/g],
+  ["google-refresh", /(?<![A-Za-z0-9/:.])1\/\/0[A-Za-z0-9_-]{20,}/g],
+  ["google-key", /\bAIza[0-9A-Za-z_-]{35}/g],
+  ["google-secret", /\bGOCSPX-[A-Za-z0-9_-]{20,}/g],
+  ["stripe", /\b[sr]k_live_[A-Za-z0-9]{20,}/g],
+  ["gitlab", /\bglpat-[A-Za-z0-9_-]{20,}/g],
+  ["npm", /\bnpm_[A-Za-z0-9]{36}\b/g],
+  ["huggingface", /\bhf_[A-Za-z0-9]{30,}/g],
+  ["harvest", /\b\d{4,}\.pt\.[A-Za-z0-9_-]{20,}/g],
   ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
   ["bearer", /(\bBearer\s+)(?![$<{])[A-Za-z0-9._~+/-]{16,}=*/g],
-  ["assigned", /(\b(?:api[_-]?key|secret|token|password|passwd|pwd)\b["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
+  ["basic", /(\bAuthorization["']?\s*[:=]\s*["']?Basic\s+)[A-Za-z0-9+/]{8,}={0,2}/gi],
+  ["url-password", /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)(?![$<{]|\[REDACTED)[^\s/@]+(?=@)/gi],
+  // a name ending in one (GITHUB_TOKEN, "access_token", X_API_KEY): `_` is
+  // a word character, so no \b before the name
+  ["assigned", /((?<![A-Za-z0-9_])(?:[A-Za-z0-9]*_)*(?:api[_-]?key|secret|token|password|passwd|pwd)\b["']?\s*[:=]\s*["']?)(?!os\.|process\.|\$|<|\{|\[REDACTED)[^\s"'\\,;)]{8,}/gi],
 ];
 
 // name segments of a variable that holds a secret (PATH is not PAT)

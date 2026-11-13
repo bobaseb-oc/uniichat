@@ -33,6 +33,59 @@ test("bearer tokens, assigned secrets and private keys are redacted", () => {
   expect(redact("x\n" + pem + "\ny", []).text).toBe("x\n[REDACTED:private-key]\ny");
 });
 
+// security review M5: synthetic values, each a shape of a real key
+const MORE: Array<[string, string]> = [
+  ["google-token", "ya29." + "a0AfB_byC1d2E3f4G5h6I7j8K9l0M1n2O3p4"],
+  ["google-refresh", "1//0" + "gAbCdEfGhIjKlMnOpQrStUvWxYz0123456"],
+  ["google-key", "AIza" + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q"],
+  ["google-secret", "GOCSPX-" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4"],
+  ["stripe", "sk_live_" + "51H8a1B2c3D4e5F6g7H8i9J0k1L2"],
+  ["stripe", "rk_live_" + "51H8a1B2c3D4e5F6g7H8i9J0k1L2"],
+  ["gitlab", "glpat-" + "a1B2c3D4e5F6g7H8i9J0"],
+  ["npm", "npm_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"],
+  ["huggingface", "hf_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7"],
+  ["harvest", "1234567" + ".pt." + "AbC1dEf2GhI3jKl4MnO5pQr6StU7vWx8"],
+];
+
+test("more kinds of key are redacted, by name (Google, Stripe, GitLab, npm, Hugging Face, Harvest)", () => {
+  for (const [name, key] of MORE) {
+    const out = redact("before " + key + " after", []);
+    expect(out.text).toBe("before [REDACTED:" + name + "] after");
+    expect(out.hits[name]).toBe(1);
+  }
+});
+
+test("secrets assigned to longer names, Basic auth and a URL's password are redacted", () => {
+  const v = "q7Rz0plain0value0042";
+  expect(redact("GITHUB_TOKEN=" + v, []).text).toBe("GITHUB_TOKEN=[REDACTED:assigned]");
+  expect(redact('{"access_token": "' + v + '"}', []).text).toBe('{"access_token": "[REDACTED:assigned]"}');
+  expect(redact('{"refresh_token":"' + v + '"}', []).text).toBe('{"refresh_token":"[REDACTED:assigned]"}');
+  expect(redact("export GOOGLE_CLIENT_SECRET=" + v, []).text).toBe("export GOOGLE_CLIENT_SECRET=[REDACTED:assigned]");
+  expect(redact("X_API_KEY: " + v, []).text).toBe("X_API_KEY: [REDACTED:assigned]");
+  expect(redact("_token=" + v, []).text).toBe("_token=[REDACTED:assigned]");
+  expect(redact("Authorization: Basic dXNlcjpodW50ZXIyaHVudGVyMg==", []).text).toBe("Authorization: Basic [REDACTED:basic]");
+  expect(redact("postgres://admin:" + v + "@db.internal:5432/x", []).text).toBe("postgres://admin:[REDACTED:url-password]@db.internal:5432/x");
+});
+
+test("names, URLs and prose like secrets' stay as they are", () => {
+  const keep = [
+    "token = os.environ['GITHUB_TOKEN']",
+    "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}",
+    "access_token = process.env.ACCESS_TOKEN",
+    "mytoken=abcdefgh12345678",
+    "TOKEN_FILE=/etc/thing/abcdefgh",
+    "https://example.com:8080/path?q=1",
+    "https://user@example.com/repo.git",
+    "postgres://admin:${DB_PASSWORD}@db/x",
+    "git@github.com:org/repo.git",
+    "Basic configuration steps follow.",
+    "see https://docs.example.com/1//0 and ya29 notes",
+  ];
+  for (const text of keep) {
+    expect(redact(text, []).text).toBe(text);
+  }
+});
+
 test("an environment secret's exact value is redacted wherever it is", () => {
   const value = "q7Rz-plain-looking-value-0042";
   const out = redact("the proxy key is " + value + ", again: " + value, [value]);

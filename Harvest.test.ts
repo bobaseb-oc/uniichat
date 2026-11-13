@@ -62,6 +62,51 @@ test("sign-in: the token checked with Harvest, then kept in the store only; a ba
   await expect(Harvest.login(memory(), "good-token-1", "540457", { api: "http://example.com/v2" })).rejects.toThrow("not https");
 });
 
+// security review H5 (RED ZONE): the token in the login keychain with no
+// application trusted (-T ""), so each read asks the user; given on
+// security's stdin, never its arguments; the old Bun.secrets item deleted.
+// A fake `security` here: no real Keychain is touched.
+test("the token's store: no app trusted, so each read asks; never an argument; the old item deleted", async () => {
+  const calls: { args: string[]; input?: string }[] = [];
+  let kept: string | null = null;
+  const run = async (args: string[], input?: string) => {
+    calls.push({ args, input });
+    if (args[0] === "-i") {
+      kept = input!.match(/ -w (\S+)/)![1];
+      return { code: 0, out: "" };
+    }
+    if (args[0] === "find-generic-password") {
+      return kept === null ? { code: 44, out: "" } : { code: 0, out: kept + "\n" };
+    }
+    if (args[0] === "delete-generic-password") {
+      const had = kept !== null;
+      kept = null;
+      return { code: had ? 0 : 44, out: "" };
+    }
+    return { code: 1, out: "" };
+  };
+  const old = memory();
+  old.all.set("token", "old-token-123");
+  const store = Harvest.store(run, old);
+  expect(await store.get("token")).toBeNull();
+  await store.set("token", "1234567.pt.synthetic-value_0");
+  expect(old.all.has("token")).toBe(false);
+  expect(calls.find((c) => c.args[0] === "-i")).toEqual({ args: ["-i"], input: 'add-generic-password -s legion-harvest-token -a oauth -T "" -w 1234567.pt.synthetic-value_0\n' });
+  expect(calls.every((c) => !c.args.join(" ").includes("synthetic"))).toBe(true);
+  expect(await store.get("token")).toBe("1234567.pt.synthetic-value_0");
+  expect(calls.at(-1)!.args).toEqual(["find-generic-password", "-s", "legion-harvest-token", "-a", "oauth", "-w"]);
+  await store.set("account", "540457");
+  expect(old.all.get("account")).toBe("540457");
+  expect(await store.get("account")).toBe("540457");
+  await expect(store.set("token", 'x" -A -w y')).rejects.toThrow("not a token");
+  expect(await store.get("token")).toBe("1234567.pt.synthetic-value_0");
+  expect(await store.delete("token")).toBe(true);
+  expect(await store.get("token")).toBeNull();
+  const denied = Harvest.store(async () => ({ code: 128, out: "" }), memory());
+  await expect(denied.get("token")).rejects.toThrow("the Keychain refused");
+  await expect(denied.set("token", "1234567.pt.synthetic-value_0")).rejects.toThrow("the Keychain refused");
+});
+
 test("reads: the user's active assignments and active tasks; their entries for a range", async () => {
   const c = { token: "good-token-1", account: "540457" };
   expect(await Harvest.projects(c, O)).toEqual([{ project_id: 7, project: "PIMCO recon", code: "PIM-01", client: "PIMCO", tasks: [{ task_id: 70, task: "Development" }] }]);

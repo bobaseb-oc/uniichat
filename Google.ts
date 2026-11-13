@@ -20,9 +20,17 @@
 // - Keys: the client and the grant in the Keychain only (Auth.keychain,
 //   services "legion-google-client", "legion-google-grant"), never a file,
 //   an argument, the environment, a log, an error, the server or a model.
+//   Residual risk (RED ZONE, security review SD H5, DRAFT awaiting the
+//   user's sign-off): Bun.secrets trusts bun, the program that made the
+//   items, so any `bun -e` an agent's shell job runs as the user can read
+//   the grant unasked (read-only Calendar, Drive, Gmail and Chat). Not
+//   kept as Harvest's token is (Auth.asking, a prompt each read): the
+//   inbox loop reads it every few minutes. Sign out (legion
+//   google-logout) when it isn't needed.
 // - Refresh: 2 minutes before expiry, once however many ask; any failure
 //   throws (fail closed: the device reports nothing from Google).
-// - Logout revokes the grant at Google, then deletes it.
+// - Logout revokes the grant at Google, then deletes it; a revoke that
+//   fails is said (revoke at myaccount.google.com/permissions).
 // - Reads: today's and tomorrow's events (title, times, Meet link,
 //   attendee count: no attendee's address); the last 14 days' transcript
 //   Docs (title, date, id, link); a transcript's text only when the user
@@ -231,16 +239,20 @@ export namespace Google {
   }
 
   // the grant revoked at Google (its refresh token, else its access token),
-  // then deleted with the client; whether there was one
-  export async function logout(store: Store, o: Opts = {}): Promise<boolean> {
+  // then deleted with the client; whether there was one, whether Google
+  // said it revoked it (RED ZONE (security review SD, DRAFT awaiting the
+  // user's sign-off): a failed revoke is said, never taken for one)
+  export async function logout(store: Store, o: Opts = {}): Promise<{ had: boolean; revoked: boolean }> {
     const g = await read<Grant>(store, GRANT).catch(() => null);
+    let revoked = false;
     if (g !== null) {
       const form = new URLSearchParams({ token: g.refresh_token ?? g.access_token });
-      await fetch(ends(o).revoke, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "error", signal: AbortSignal.timeout(20e3) }).catch(() => null);
+      const res = await fetch(ends(o).revoke, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form, redirect: "error", signal: AbortSignal.timeout(20e3) }).catch(() => null);
+      revoked = res?.ok === true;
     }
     const had = await store.delete(GRANT);
     await store.delete(CLIENT);
-    return had;
+    return { had, revoked };
   }
 
   // a GET of Google's API with the token, its JSON; a failure said by its
