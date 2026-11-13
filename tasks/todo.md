@@ -679,3 +679,14 @@ a shell command that isn't plain ASCII, or greps the whole home or disk, goes to
 takes only OWNER/REPO, never another host. Suite 382 pass, the same 3 fails; 5/5 mutants killed.
 Still open, by design: MCP review by name is a deny-list (an allowlist of read-only servers is the
 sound version); a *_KEY value with no digit isn't redacted.
+
+Round 4 (close what was left open, user's ask 2026-11-13):
+- [x] U1 devices link to the server over a unix socket in the 0700 dir (no TCP proof to relay)
+- [x] U2 Google grant behind a Keychain prompt, read once per device start and kept in memory
+- [x] U3 MCP review by an exact read-only allowlist; a sign-out-everywhere button; *_KEY values
+      redacted unless they look like identifiers
+Round 4 proof: Proof.ts and /api/proof deleted (the 0700 dir's unix socket is the proof; a lone server
+binds TCP without reusePort); the Harvest guarded token got its own item (it had shared the old,
+bun-readable one, so the move never ran: found while doing U2); suite 393 pass, the same 3 fails;
+mutants U1 20/20, U2 13/13, U3 12/12. Left: launchd start order on a real login, the prompts, and
+iOS on a device are the user's checks; the K10 conflict is resolved when the second PR merges.

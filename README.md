@@ -71,7 +71,10 @@ search through a local SearXNG).
 
 The header of local/unii-local.sh lists the rest (device, knowledge,
 mcp-login). Symlink it onto your PATH as `legion`. The server only
-listens on 127.0.0.1:8788, and the terminal only opens loopback servers.
+listens on 127.0.0.1:8788 (the browser and the iOS app) and on
+~/.unii/server.sock ($UNII_DIR/server.sock: 0600, in a 0700 dir). The
+terminal and `legion device` reach it only over that socket, never over
+TCP, so a process that took the port first never gets their session.
 
     bun run test              # the tests, each file on its own
     bun run web               # rebuilds web/app.js from web/src
@@ -101,6 +104,11 @@ also be set as `UNII_<KEY>`. The ones that matter here:
 - `searches`: 0 turns off the vendor's web search (Bedrock behind
   LiteLLM rejects it); `searxng_url` is the local search instead.
 - `after`: a shell command run after each turn.
+- `mcp_reads`: exact MCP tool names (`mcp__server__tool`, a list or
+  comma-separated) that only read, so auto mode skips reviewing them.
+  Every other MCP call is reviewed; a shipped list covers Atlassian,
+  Playwright and Chrome DevTools reads (Modes.MCP_READS). A malformed
+  entry stops the server.
 - `UNII_PROXY=1`: the server sits behind a reverse proxy, so the client's
   address is the last `X-Forwarded-For` entry. Off (the default), the
   header is ignored, since a client reaching the server directly could
