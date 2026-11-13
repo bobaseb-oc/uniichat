@@ -757,3 +757,9 @@ client-named repo path, or any redact.ts hit. Refused gaps stay local and are li
 mkdocs --strict, and opens a DRAFT PR from the user's fork with every gap cited (repo@commit).
 It never merges and never self-approves (PLP-2853). 4) Stale side: list_stale_records.py --as-of
 today feeds the same path.
+
+## Files pane: highlighting, Markdown, HTML preview (2026-11-13, feat/files-render)
+- [x] Hl.ts: in-house highlighter (comments, strings, numbers, keywords; ts/js, py, sh, json, yaml, sql, css, toml), escaped → verify: Hl.test.ts red then green
+- [x] .md rendered via md_parse/block_html, "source" toggle → verify: Pages.test.ts
+- [x] .html previewed in `<iframe sandbox srcdoc>` (no scripts, opaque origin), "source" toggle → verify: Pages.test.ts (sandbox attr, srcdoc escaped)
+- Proof: Hl 2/2, Pages 15/15; mutants 4/4 killed (no sandbox, srcdoc unescaped, toggle not reset, no highlight); suite 419 pass, 3 known fails (link_ask, two log-staging).
