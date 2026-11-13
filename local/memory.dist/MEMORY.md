@@ -1,0 +1,4 @@
+- [Native subagents first](native-subagents-first.md) — Legion features start native Legion agents; Claude Code workers only as an opt-in
+- [Tests need local port binding](tests-need-local-binding.md) — run `bun run test` with the sandbox off (or local binding allowed); 2 known `logs.test.ts` failures
+- [PRs go to your fork](prs-go-to-your-fork.md) — this repo is a fork of VictorTaelin/uniichat: always pass `--repo <your fork>` to gh
+- [Check a change like this](check-a-change.md) — tests first, mutants, tsc on added lines, an end-to-end run for web routing; Red Zone work is a signed-off draft

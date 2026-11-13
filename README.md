@@ -105,6 +105,17 @@ also be set as `UNII_<KEY>`. The ones that matter here:
 Today's LiteLLM spend shows in the status line when a cost cache is
 kept (Cost.ts reads it; it never calls the gateway itself).
 
+Working on Legion with Claude Code: local/memory.dist holds generic
+project memories (native subagents first, how the tests run, PRs to
+your fork, how a change is checked). Copy them into Claude Code's
+memory for your checkout, then fill in your fork's name:
+
+    m=~/.claude/projects/$(pwd | tr / -)/memory
+    mkdir -p "$m" && cp -n local/memory.dist/*.md "$m"/
+
+`-n` keeps any memory you already have; merge MEMORY.md by hand if
+you have one.
+
 Gaps
 ----
 
