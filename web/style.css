@@ -700,3 +700,15 @@ pre.code .hunk { color: var(--accent); }
 pre.code .sha { font: inherit; color: var(--accent); padding: 0; text-decoration: underline; }
 #log :not(pre) > code { cursor: pointer; }
 @media (max-width: 900px) { .tcols { grid-template-columns: 1fr; } .tlist { border-right: 0; } }
+
+/* the Timesheet page (K5) */
+.tday { margin-bottom: 14px; }
+.tday h3 { margin: 6px 0; font-size: 14px; }
+.trow { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 8px; border-radius: 8px; background: var(--block); margin-bottom: 4px; }
+.trow .h { font-weight: 600; grid-row: span 3; }
+.trow .n { grid-column: 2; }
+.trow .why { grid-column: 2; font-size: 11.5px; }
+.trow > :last-child { grid-column: 3; grid-row: 1; }
+.trow.sent { opacity: .7; }
+.trow .tag.ok { color: #2da44e; }
+.trow .tag.bad { color: #cf222e; }

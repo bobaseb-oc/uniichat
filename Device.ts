@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as Cost from "./Cost.ts";
 import { Google } from "./Google.ts";
+import { Harvest, type Creds, type New } from "./Harvest.ts";
 import * as Inbox from "./Inbox.ts";
 import { Machine, type Job } from "./Machine.ts";
 import * as View from "./View.ts";
@@ -345,6 +346,39 @@ export function device_open(url: string, auth: Record<string, string>, query: st
   return v;
 }
 
+// The timesheet's Submit (K5, RED ZONE)
+// =====================================
+// The entries the server sent for the user's Submit (Chat.timesheet),
+// each checked again (Harvest.entry_check) and posted once, in order,
+// with the token kept in the Keychain; each one's Harvest id or why not.
+
+export type Posts = { creds: () => Promise<Creds>; post: (c: Creds, e: New) => Promise<{ id: number }> };
+export const posts: Posts = { creds: () => Harvest.creds(Harvest.store()), post: (c, e) => Harvest.post(c, e) };
+
+export async function device_harvest(id: string, entries: unknown, h: Posts = posts): Promise<View.Client> {
+  const list = (Array.isArray(entries) ? entries : []).filter((e: any) => e !== null && typeof e === "object" && Number.isInteger(e.n)) as (New & { n: number })[];
+  let c: Creds;
+  try {
+    c = await h.creds();
+  } catch (err: any) {
+    return { $: "harvested", id, results: list.map((e) => ({ n: e.n, error: String(err?.message ?? err).slice(0, 300) })) };
+  }
+  const results: View.Harvested[] = [];
+  for (const e of list) {
+    const ok = Harvest.entry_check(e);
+    if (typeof ok === "string") {
+      results.push({ n: e.n, error: "not posted: " + ok });
+      continue;
+    }
+    try {
+      results.push({ n: e.n, id: (await h.post(c, ok)).id });
+    } catch (err: any) {
+      results.push({ n: e.n, error: String(err?.message ?? err).slice(0, 300) });
+    }
+  }
+  return { $: "harvested", id, results };
+}
+
 // The files pane and git tab (K4, Terax-like, read-only)
 // ======================================================
 // What a view asks to see: a file (an agent's relative path from its own
@@ -468,6 +502,9 @@ export function device_reads(rules: Rules, send: (msg: View.Client) => void, run
     }
     if (msg.$ === "look") {
       void device_look(rules, msg.id, msg.what).then(send);
+    }
+    if (msg.$ === "harvest") {
+      void device_harvest(msg.id, msg.entries).then(send);
     }
   };
 }

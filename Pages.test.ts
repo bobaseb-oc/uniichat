@@ -230,3 +230,35 @@ test("files: agents' files, a file's lines, git's views, diffs marked, commits o
   View.view_hear(v, { $: "looked", id: "w", kind: "file", error: ".env may hold a secret: not shown." });
   expect(Pages.files_html(v).join("")).toContain(".env may hold a secret");
 });
+
+// the Timesheet page (K5, RED ZONE): drafts by day with each day's hours,
+// each escaped with its why and a Drop; Submit names exactly the drafts
+// not sent nor sending; sent ones show Harvest's id, failed ones why; a
+// routine to draft each workday offered when none drafts
+test("timesheet: drafts by day, totals, Submit only the unsent, sent and failed shown, the routine offered", async () => {
+  const View = await import("./View.ts");
+  const v = View.view_new();
+  expect(View.view_route("#timesheet")).toEqual({ mode: "timesheet", name: null });
+  expect(View.view_act(v, { $: "Timesheet", op: "submit", ns: [1, 2] })).toEqual([{ $: "timesheet", op: "submit", ns: [1, 2] }]);
+  expect(View.view_act(v, { $: "Timesheet", op: "submit", ns: [] })).toEqual([]);
+  const d = (n: number, date: string, hours: number, state: string, more = {}) => ({ n, project_id: 7, task_id: 70, project: "PIMCO <recon>", task: "Dev", date, hours, notes: "PR #" + n, why: "calendar: standup", by: "main", state, ...more });
+  View.view_hear(v, { $: "state", ...v, drafts: [d(1, "2026-11-12", 1.5, "draft"), d(2, "2026-11-12", 2, "failed", { error: "Harvest: HTTP 422." }), d(3, "2026-11-13", 1, "sent", { harvest: 555 }), d(4, "2026-11-13", 0.5, "sending")] } as any);
+  const html = Pages.timesheet_html(v).join("");
+  expect(html).toContain("PIMCO &lt;recon&gt;");
+  expect(html).toContain("calendar: standup");
+  expect(html).toContain("3.5 h");
+  expect(html).toContain(act({ $: "Timesheet", op: "submit", ns: [1, 2] }));
+  expect(html).toContain(act({ $: "Timesheet", op: "drop", ns: [1] }));
+  expect(html).not.toContain(act({ $: "Timesheet", op: "drop", ns: [3] }));
+  expect(html).toContain("Harvest #555");
+  expect(html).toContain("Harvest: HTTP 422.");
+  expect(html).toContain("sending");
+  expect(html).not.toContain('"$":"Routine"');
+  const empty = View.view_new();
+  const none = Pages.timesheet_html(empty).join("");
+  expect(none).toContain("No drafts");
+  expect(none).toContain(act({ $: "Routine", op: "add", routine: Pages.TIMESHEET_ROUTINE }));
+  expect(Pages.TIMESHEET_ROUTINE.when).toEqual({ $: "daily", at: "17:30" });
+  const Routines = await import("./Routines.ts");
+  expect(typeof Routines.routine_check(Pages.TIMESHEET_ROUTINE)).toBe("object");
+});

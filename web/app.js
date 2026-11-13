@@ -500,7 +500,7 @@ function look_css(kind, look) {
 // Modes.ts
 var MODES = ["plan", "auto", "full"];
 var AFTER = "Say what you would change instead: in your report, or, for Unii, in the plan it files (plan).";
-var READS = ["read", "glob", "grep", "google"];
+var READS = ["read", "glob", "grep", "google", "harvest"];
 var REVIEWED = ["shell", "write", "edit"];
 var SECRETS = /printenv|\benv\b|\bset\b|\.env|\.ssh|\.aws|\.gnupg|\.netrc|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+/i;
 var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "file", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
@@ -1217,7 +1217,7 @@ var PACE = 0.0001;
 var email_ask = (github) => "First, what's your email" + (github ? " or @github" : "") + "? I'll send you a quick sign-up link.";
 var OPENING = 3;
 var SUMMARIES = "summaries";
-var PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files"];
+var PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files", "timesheet"];
 var MAIN = "Legion";
 var TURN = "Unii's turn";
 var WIRE = 2;
@@ -1311,7 +1311,8 @@ function view_hear(v, msg) {
       v.looked = msg;
       return [];
     }
-    case "look": {
+    case "look":
+    case "harvest": {
       return [];
     }
     case "summary": {
@@ -1505,6 +1506,9 @@ function view_act(v, act) {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Timesheet": {
+      return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1764,7 +1768,7 @@ function view_path(text) {
   return pathy && (p.includes("/") ? /[\w-]\.[\w]+$|\/$/.test(p) || PATH_EXT.test(p) : PATH_EXT.test(p)) ? p : null;
 }
 function view_route(hash) {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files|timesheet)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }
@@ -2554,6 +2558,7 @@ var PAGE_ITEMS = [
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
   { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
   { label: "Files", hint: "page · g f", go: { href: "#files" } },
+  { label: "Timesheet", hint: "page · g s", go: { href: "#timesheet" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
@@ -2801,6 +2806,33 @@ function shown_html(looked) {
   };
   return `<pre class="code git">${lines.map(line).join(`
 `)}</pre>`;
+}
+var TIMESHEET_ROUTINE = {
+  name: "Timesheet drafts",
+  task: "Draft today's Harvest timesheet for the user, for their review. Read harvest projects and today's harvest entries (don't draft time already logged); read today's calendar (google calendar), their merged and open PRs and today's commits in their spaces, and their Jira tickets in progress. Map each piece of work to one of their Harvest projects and tasks by id, in hundredths of an hour, a day at most 8 hours unless the calendar shows more. File them with timesheet (each with notes as the user would write them and why: the evidence). Skip weekends and days with no evidence. Then say in a line what you drafted.",
+  when: { $: "daily", at: "17:30" },
+  tier: "worker"
+};
+function timesheet_html(v) {
+  const drafts = v.drafts ?? [];
+  const open2 = drafts.filter((d) => d.state === "draft" || d.state === "failed").map((d) => d.n);
+  const submit = open2.length === 0 ? "" : `<button class="pbtn go"${act_html2({ $: "Timesheet", op: "submit", ns: open2 })} title="posts them to Harvest from your device">Submit ${open2.length} to Harvest</button>`;
+  const routine = (v.routines ?? []).some((r) => r.name === TIMESHEET_ROUTINE.name) ? "" : `<button class="pbtn"${act_html2({ $: "Routine", op: "add", routine: TIMESHEET_ROUTINE })} title="a worker drafts each day at 17:30; you submit">Draft daily at 17:30</button>`;
+  const head = `<div class="phead"><h2>Timesheet</h2><p class="meta">Drafts for Harvest: nothing is sent until you submit</p>${submit}${routine}</div>`;
+  if (drafts.length === 0) {
+    return [head, `<p class="meta">No drafts yet. Agents draft with the timesheet tool (they need legion harvest-login on your device): ask in the chat, or add the routine.</p>`];
+  }
+  const days = [...new Set(drafts.map((d) => d.date))].sort().reverse();
+  const row = (d) => {
+    const state = d.state === "sent" ? `<span class="tag ok">Harvest #${esc(String(d.harvest ?? ""))}</span>` : d.state === "failed" ? `<span class="tag bad">${esc(d.error ?? "failed")}</span>` : d.state === "sending" ? `<span class="tag">sending</span>` : `<button class="x" title="drop"${act_html2({ $: "Timesheet", op: "drop", ns: [d.n] })}>×</button>`;
+    return `<div class="trow ${esc(d.state)}"><span class="h">${esc(String(d.hours))} h</span><span class="p">${esc(d.project)} · ${esc(d.task)}</span><span class="n">${esc(d.notes)}</span><span class="meta why">${esc(d.why)} · by ${esc(d.by)}</span>${state}</div>`;
+  };
+  const body = days.map((day) => {
+    const of = drafts.filter((d) => d.date === day);
+    const total = Math.round(of.reduce((t, d) => t + d.hours, 0) * 100) / 100;
+    return `<div class="tday"><h3>${esc(day)} <span class="meta">${total} h</span></h3>${of.map(row).join("")}</div>`;
+  }).join("");
+  return [head, body];
 }
 
 // web/src/main.ts
@@ -3740,7 +3772,7 @@ function crew_keys(ev) {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files" }[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? { c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files", s: "#timesheet" }[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -3764,6 +3796,10 @@ function page_bars(mode) {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180000).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "timesheet") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), timesheet_html(v));
   } else if (mode === "files") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

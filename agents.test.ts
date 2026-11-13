@@ -567,6 +567,34 @@ test("notify: the orchestrator's notes go to the pane beside questions, capped a
   Memory.stop(mem);
 }));
 
+// the timesheet's drafts (K5, RED ZONE): any agent files them, each checked
+// whole (Harvest.entry_check) with why; kept with the chat across a reload;
+// clear drops the agent's own drafts not yet sent; nothing reaches Harvest
+// (only the user's Submit does: Chat.timesheet)
+test("timesheet: agents file checked drafts, kept across a reload; clear drops their own unsent ones", () => faked(async () => {
+  const dir = DIR + "/timesheet";
+  const mem = Memory.load(dir, () => SHARE);
+  const tools = served(mem, []);
+  const call = (who: string, args: object) => Tools.call(tools, who, "timesheet", args, new AbortController().signal, "t");
+  expect(Tools.list(tools, "main").map((t) => t.name)).toContain("timesheet");
+  const e = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1.5, notes: "PR #3 review", project: "PIMCO recon", task: "Development", why: "merged PR #3; 1.5h on the calendar" };
+  const one = await call("main", { entries: [e, { ...e, hours: 30 }] });
+  expect(one.fail).toBe(true);
+  expect(one.text).toContain("hours");
+  expect(mem.drafts).toEqual([]);
+  expect((await call("main", { entries: [e, { ...e, date: "2026-11-13", hours: 2 }] })).text).toContain("Filed 2 drafts");
+  expect(mem.drafts.map((d: any) => [d.n, d.date, d.hours, d.state, d.by, d.why])).toEqual([[1, "2026-11-12", 1.5, "draft", "main", e.why], [2, "2026-11-13", 2, "draft", "main", e.why]]);
+  mem.drafts[0].state = "sent";
+  expect((await call("main", { clear: true })).fail).toBe(false);
+  expect(mem.drafts.map((d: any) => d.n)).toEqual([1]);
+  expect((await call("main", { entries: Array(101).fill(e) })).fail).toBe(true);
+  Tools.close(tools);
+  Memory.stop(mem);
+  const again = Memory.load(dir, () => SHARE);
+  expect(again.drafts.map((d: any) => [d.n, d.state])).toEqual([[1, "sent"]]);
+  Memory.stop(again);
+}));
+
 // plan mode's way out: the orchestrator files its plan (plan), kept with
 // the chat till the user answers; only in plan mode, only the orchestrator
 test("plan: the orchestrator files its plan in plan mode, kept across a reload; not otherwise, not agents", () => faked(async () => {

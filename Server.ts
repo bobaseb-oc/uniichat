@@ -41,6 +41,7 @@ import { Disk } from "./Disk.ts";
 import { Mail } from "./Mail.ts";
 import * as Import from "./Import.ts";
 import { Mcp } from "./Mcp.ts";
+import { Harvest } from "./Harvest.ts";
 import { JOBS, Memory, type Given, type Msg as Log, type Share } from "./Memory.ts";
 import { ABOUT, MODES, type Mode } from "./Modes.ts";
 import { OpenAI, TRANSCRIBER } from "./OpenAI.ts";
@@ -134,6 +135,7 @@ type Chat = {
   wallet: Wallet;
   tick?: ReturnType<typeof setInterval>; // the routines' (Chat.ticked)
   looks?: Set<string>; // the looks asked of the devices, not yet answered (Chat.look)
+  harvests?: Map<string, number[]>; // the timesheet's submits sent to a device, not yet answered: their drafts (Chat.timesheet)
 };
 
 // a chat as it moves to another process (Chat.move): its user (an id:
@@ -1134,7 +1136,7 @@ export namespace Chat {
     const why = chat.mem.hold[1];
     const importing = batch && { done: batch.all - Chat.time(batch), total: batch.all, spent: batch.spent, left: batch.left / 1e6, why, msgs: batch.b - batch.a, open: batch.open };
     const billing = Chat.cloud.billing;
-    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines };
+    return { $: "state", busy: chat.busy, wait: Chat.waits(chat), agents, crew, pick: chat.pick, ...config.OFFER, bills: billing.bills, credits: billing.credits(chat.acct.user), importing, questions: chat.mem.questions, mode: chat.mem.mode, plan: chat.mem.plan, status: chat.status ?? null, calls: Tools.consents(chat.tools), trouble: chat.mem.trouble, routines: chat.mem.routines, drafts: chat.mem.drafts };
   }
 
   export function waits(chat: Chat): Wait {
@@ -1390,6 +1392,12 @@ export namespace Chat {
       case "look": {
         return Chat.look(chat, id, msg.what);
       }
+      case "timesheet": {
+        return Chat.timesheet(chat, id, msg);
+      }
+      case "harvested": {
+        return Chat.harvested(chat, device, msg);
+      }
       case "looked": {
         return Chat.looked(chat, device, msg);
       }
@@ -1580,6 +1588,68 @@ export namespace Chat {
     }
     looks.add(id);
     Chat.all(chat, { $: "look", id, what });
+    return {};
+  }
+
+  // the timesheet (K5, RED ZONE): the user's Submit of drafts (only those
+  // not sent nor sending), checked again, sent to ONE device's terminal
+  // (each that got them would post them: billed twice), marked sending;
+  // or their drop (unsent ones only)
+  export function timesheet(chat: Chat, id: string, msg: any): Answer {
+    const ns = new Set((Array.isArray(msg?.ns) ? msg.ns : []).filter((n: unknown) => Number.isInteger(n)));
+    const mem = chat.mem;
+    if (msg?.op === "drop") {
+      mem.drafts = mem.drafts.filter((d) => !ns.has(d.n) || d.state === "sent" || d.state === "sending");
+      Memory.save(mem);
+      Chat.change(chat);
+      return {};
+    }
+    if (msg?.op !== "submit") {
+      return { error: "Submit or drop drafts." };
+    }
+    const asked = mem.drafts.filter((d) => ns.has(d.n) && (d.state === "draft" || d.state === "failed") && typeof Harvest.entry_check(d) !== "string");
+    if (asked.length === 0) {
+      return { error: "No draft of those waits to be submitted." };
+    }
+    const link = Tools.opened(chat.tools).flatMap(([, d]) => [...d.terms.values()]).find((l) => l.live?.() !== false);
+    if (link === undefined) {
+      return { error: "No device is up to submit to Harvest: open a terminal (legion), or run legion device." };
+    }
+    for (const d of asked) {
+      d.state = "sending";
+      delete d.error;
+    }
+    (chat.harvests ??= new Map()).set(id, asked.map((d) => d.n));
+    link.send({ $: "harvest", id, entries: asked.map((d) => ({ n: d.n, project_id: d.project_id, task_id: d.task_id, date: d.date, hours: d.hours, notes: d.notes })) });
+    Memory.save(mem);
+    Chat.change(chat);
+    return {};
+  }
+
+  // a device's answer to a submit: each of its drafts sent (Harvest's id)
+  // or failed (why); only a device's, once
+  export function harvested(chat: Chat, device: string, msg: any): Answer {
+    const id = String(msg?.id ?? "");
+    const ns = chat.harvests?.get(id);
+    if (device === "" || ns === undefined) {
+      return { error: "No submit " + id.slice(0, 40) + " waits for a device's answer." };
+    }
+    chat.harvests!.delete(id);
+    const results: any[] = Array.isArray(msg?.results) ? msg.results : [];
+    for (const d of chat.mem.drafts.filter((x) => ns.includes(x.n) && x.state === "sending")) {
+      const r = results.find((x) => x?.n === d.n);
+      if (r !== undefined && Number.isInteger(r.id)) {
+        d.state = "sent";
+        d.harvest = r.id;
+      } else {
+        d.state = "failed";
+        d.error = String(r?.error ?? "no answer for it").slice(0, 300);
+      }
+    }
+    Memory.save(chat.mem);
+    Chat.change(chat);
+    const sent = chat.mem.drafts.filter((d) => ns.includes(d.n) && d.state === "sent").length;
+    Chat.note(chat, "Timesheet: " + sent + " of " + ns.length + " entries submitted to Harvest" + (sent < ns.length ? "; the rest failed (the Timesheet page says why)." : "."));
     return {};
   }
 

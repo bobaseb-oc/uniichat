@@ -365,6 +365,52 @@ test("a view's look goes to the devices; a device's answer, once, to the views",
   });
 });
 
+// the timesheet's Submit (K5, RED ZONE): the user's act sends the drafts
+// asked (only those not sent nor sending) to ONE device's terminal, never
+// to every socket (each would post them: billed twice); a device's answer
+// (only a device's, for that submit, once) marks each sent or failed;
+// drop removes an unsent draft only
+const HARVEST = `
+const { Chat } = await import(${JSON.stringify(import.meta.dir + "/Server.ts")});
+const { Cloud } = await import(${JSON.stringify(import.meta.dir + "/Cloud.ts")});
+Chat.cloud = Cloud.open(() => {}, () => {}, async () => null);
+const chat = Chat.open({ id: "u1", name: "a@b.c" });
+Chat.chats.set("u1", chat);
+const views = [], one = [], two = [];
+chat.socks.add({ send: (s) => views.push(JSON.parse(s)), data: { watch: new Set(), seen: new Set() } });
+const d = (n, state) => ({ n, project_id: 7, task_id: 70, project: "P", task: "T", date: "2026-11-12", hours: 1, notes: "x", why: "w", by: "main", state });
+chat.mem.drafts = [d(1, "draft"), d(2, "draft"), d(3, "sent"), d(4, "failed")];
+const none = await Chat.act(chat, "h0", { $: "timesheet", op: "submit", ns: [1] }, "");
+chat.tools.devices.set("mac", { terms: new Map([["t1", { send: (m) => one.push(m) }], ["t2", { send: (m) => two.push(m) }]]) });
+const bad = await Chat.act(chat, "h1", { $: "timesheet", op: "submit", ns: [3] }, "");
+const ok = await Chat.act(chat, "h2", { $: "timesheet", op: "submit", ns: [1, 3, 4, 99] }, "");
+const again = await Chat.act(chat, "h3", { $: "timesheet", op: "submit", ns: [1] }, "");
+const states = chat.mem.drafts.map((x) => x.state);
+const forged = await Chat.act(chat, "h4", { $: "harvested", id: "h2", results: [{ n: 1, id: 5 }] }, "");
+const done = await Chat.act(chat, "h5", { $: "harvested", id: "h2", results: [{ n: 1, id: 555 }, { n: 4, error: "Harvest: HTTP 422." }, { n: 2, id: 9 }] }, "mac");
+const twice = await Chat.act(chat, "h6", { $: "harvested", id: "h2", results: [{ n: 1, id: 6 }] }, "mac");
+const dropped = await Chat.act(chat, "h7", { $: "timesheet", op: "drop", ns: [2, 1] }, "");
+console.log(JSON.stringify({ none: none.error ?? null, bad: bad.error ?? null, ok, again: again.error ?? null, states, forged: "error" in forged, done, twice: "error" in twice, dropped,
+  after: chat.mem.drafts.map((x) => [x.n, x.state, x.harvest ?? null, x.error ?? null]), one, two, toViews: views.some((m) => m.$ === "harvest"), shown: Chat.state(chat).drafts.length }));
+process.exit(0);
+`;
+
+test("timesheet: Submit sends the user's drafts to one device; its answer marks them; drop removes unsent ones", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/unii-server-");
+  fs.writeFileSync(dir + "/harvest.ts", HARVEST);
+  const proc = Bun.spawn([process.execPath, dir + "/harvest.ts"], { env: { ...process.env, UNII_DIR: dir }, stdout: "pipe", stderr: "inherit" });
+  const out = JSON.parse((await new Response(proc.stdout).text()).trim().split("\n").at(-1) ?? "{}");
+  expect(out.none).toMatch(/legion device/);
+  expect(out.bad).toMatch(/No draft/);
+  expect(out.again).toMatch(/No draft/);
+  const entry = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1, notes: "x" };
+  expect(out).toMatchObject({
+    ok: {}, states: ["sending", "draft", "sent", "sending"], forged: true, done: {}, twice: true, dropped: {},
+    after: [[1, "sent", 555, null], [3, "sent", null, null], [4, "failed", null, "Harvest: HTTP 422."]],
+    one: [{ $: "harvest", id: "h2", entries: [{ n: 1, ...entry }, { n: 4, ...entry }] }], two: [], toViews: false, shown: 3,
+  });
+});
+
 // PRs of the inbox reviewed or fixed (the cockpit's Review / Fix): a native
 // Legion worker each, labelled by its PR and repo, started by the user (its
 // report takes no turn); with claude, a manager told to run a Claude Code

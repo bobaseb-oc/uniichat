@@ -39,7 +39,8 @@ import PROMPT from "./prompt.txt" with { type: "text" };
 import { EFFORTS, LABELS, Pick } from "./Pick.ts";
 import { Price } from "./Price.ts";
 import { Search } from "./Search.ts";
-import type { Crew, Live, Pulse, Question, Status, Todo, Waiting } from "./View.ts";
+import { Harvest } from "./Harvest.ts";
+import type { Crew, Draft, Live, Pulse, Question, Status, Todo, Waiting } from "./View.ts";
 
 export type { Live };
 
@@ -372,6 +373,7 @@ const TODO = spec("todo", "Set your checklist, the whole list each time, in orde
 // ASK_TEXT, with at most ASK_OPTIONS answers offered
 const ASKS = 20;
 const NOTES = 30;
+const DRAFTS = 100;
 const ASK_TEXT = 2000;
 const ASK_OPTIONS = 6;
 const ASK = spec("ask", "File a question for the user in their backlog of questions, where they answer it in due course without scrolling the chat: only a decision that is theirs (Red Zone, outward or hard to undo, money or credentials, a real fork in what they want); one question each, said in full as a short brief with your pick (it is read apart from the chat). options: short answers to offer, if it has a few. Their answer reaches you as a message quoting it. close: the number of a question of yours no longer needed, to withdraw it. Ask in the chat instead only what the turn can't go on without.", {
@@ -379,6 +381,9 @@ const ASK = spec("ask", "File a question for the user in their backlog of questi
 }, []);
 // the orchestrator's notes for the user, beside its questions (notify;
 // user's ask 2026-11-13): no answer awaited, the oldest dropped past NOTES
+// the timesheet's drafts (K5, RED ZONE): filed by any agent, sent to
+// Harvest only by the user's Submit; at most DRAFTS kept
+const TIMESHEET = spec("timesheet", "File drafts of the user's Harvest time entries for their review on the Timesheet page; only the user submits them to Harvest. entries: each with project_id and task_id (from harvest's projects), project and task (their names), date (YYYY-MM-DD), hours (in hundredths, at most 24 a day), notes (what was done, as the user would write it) and why (your evidence: calendar events, PRs, commits, tickets). Read harvest's entries first and don't draft time already logged. clear: true drops your drafts not yet sent.", { entries: { type: "array", items: { type: "object" } }, clear: { type: "boolean" } }, []);
 const NOTIFY = spec("notify", "Put a short note in the user's pane beside their questions, to keep them in the loop without asking anything: a decision you made and why, a milestone done or an agent's result worth knowing, a risk or a change of plan, something they should look at when they can. One thing per note, said in full in a few lines (it is read apart from the chat). No answer is awaited; they may dismiss it or reply. Don't note routine progress the chat already shows.", { text: STR }, ["text"]);
 // plan mode's way out (Modes.ts), as Claude Code's ExitPlanMode
 const PLAN = spec("plan", "In plan mode: file your plan for the user's approval, once you (and your managers, reading) know enough. Say it whole: the steps, who does each, what changes where, how it will be checked. The user approves it (the mode they pick comes next, and you go ahead) or sends it back with their feedback.", { plan: STR }, ["plan"]);
@@ -535,7 +540,7 @@ export namespace Tools {
 
   export function list(tools: Tools, who: string): Spec[] {
     if (who === "main") {
-      return [...OWN, ASK, NOTIFY, PLAN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
+      return [...OWN, ASK, NOTIFY, TIMESHEET, PLAN, ...BOSS, ...kit(who), HAND, ...CODE, ...Mcp.cached(MCP)];
     }
     const role = tools.agents.get(who)?.role;
     if (role?.$ === "hands") {
@@ -544,7 +549,7 @@ export namespace Tools {
     if (role?.$ === "cli") {
       return [];
     }
-    return [...OWN, TODO, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
+    return [...OWN, TODO, TIMESHEET, ...(role?.tier === "manager" ? MANAGES : []), ...kit(who), ...CODE, ...Mcp.cached(MCP)];
   }
 
   // auto mode's check of a call: the reviewer's refusal; when it can't
@@ -698,6 +703,9 @@ export namespace Tools {
       }
       case "notify": {
         return Tools.notify(tools, who, args);
+      }
+      case "timesheet": {
+        return Tools.timesheet(tools, who, args);
       }
       case "todo": {
         return Tools.todo(tools, who, args.items);
@@ -1182,6 +1190,41 @@ export namespace Tools {
     Memory.save(mem);
     tools.hooks.change();
     return { text: "Filed as question " + q.id + "; the user's answer will reach you as a message.", fail: false };
+  }
+
+  // an agent's timesheet drafts filed (each checked whole: Harvest.entry_check),
+  // or its unsent ones dropped (clear); none reach Harvest from here
+  export function timesheet(tools: Tools, who: string, args: any): Out {
+    const mem = tools.mem;
+    if (args?.clear === true) {
+      const n = mem.drafts.length;
+      mem.drafts = mem.drafts.filter((d) => d.by !== who || d.state === "sent" || d.state === "sending");
+      Memory.save(mem);
+      tools.hooks.change();
+      return { text: "Dropped " + (n - mem.drafts.length) + " of your drafts.", fail: false };
+    }
+    const given: unknown[] = Array.isArray(args?.entries) ? args.entries : [];
+    if (given.length === 0) {
+      return { text: "Give entries to draft, or clear: true.", fail: true };
+    }
+    if (mem.drafts.filter((d) => d.state !== "sent").length + given.length > DRAFTS) {
+      return { text: "At most " + DRAFTS + " drafts wait for the user: clear some first.", fail: true };
+    }
+    const line = (x: unknown, most: number) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, most);
+    const made: Draft[] = [];
+    for (const [k, e] of given.entries()) {
+      const ok = Harvest.entry_check(e);
+      if (typeof ok === "string") {
+        return { text: "Entry " + (k + 1) + ": " + ok + " No drafts filed.", fail: true };
+      }
+      const x = e as any;
+      made.push({ ...ok, n: 0, project: line(x.project, 120), task: line(x.task, 120), why: String(x.why ?? "").trim().slice(0, 1000), by: who, state: "draft" });
+    }
+    made.forEach((d) => (d.n = mem.drafted += 1));
+    mem.drafts.push(...made);
+    Memory.save(mem);
+    tools.hooks.change();
+    return { text: "Filed " + made.length + " drafts (" + made.map((d) => d.n).join(", ") + ") for the user's review; they reach Harvest only when the user submits them.", fail: false };
   }
 
   // the orchestrator's note for the user (notify): in the questions' pane,

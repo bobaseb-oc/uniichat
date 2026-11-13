@@ -1216,7 +1216,7 @@ function crew_keys(ev: KeyboardEvent): void {
   if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) {
     return;
   }
-  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files" } as Record<string, string>)[ev.key] : undefined;
+  const to = Date.now() - P.g < 1000 ? ({ c: "#crew", m: "#chat", h: "#home", i: "#inbox", r: "#routines", d: "#digest", t: "#transcripts", f: "#files", s: "#timesheet" } as Record<string, string>)[ev.key] : undefined;
   P.g = ev.key === "g" ? Date.now() : 0;
   if (to !== undefined) {
     location.hash = to;
@@ -1250,6 +1250,10 @@ function page_bars(mode: View.Mode): boolean {
     [...C.reading].filter(([id, at]) => v.summaries.has(id) || Date.now() - at > 180e3).forEach(([id]) => C.reading.delete(id));
     markup($("#page .ptop"), []);
     markup($("#page .pbody"), Pages.transcripts_html(v, C.doc, new Set(C.reading.keys())));
+  } else if (mode === "timesheet") {
+    $("#picks").hidden = true;
+    markup($("#page .ptop"), []);
+    markup($("#page .pbody"), Pages.timesheet_html(v));
   } else if (mode === "files") {
     $("#picks").hidden = true;
     markup($("#page .ptop"), []);

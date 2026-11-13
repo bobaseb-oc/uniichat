@@ -261,6 +261,30 @@ test("device_reads reads the inbox at once and on fetch, a transcript on read", 
   expect(sent.filter((m) => m.$ === "transcript")).toEqual([{ $: "transcript", id: "doc1", text: "said in doc1" }]);
 });
 
+// the timesheet's Submit on the device (K5, RED ZONE): each entry the
+// server sent posted once, in order, with the kept token; each one's
+// Harvest id or why not; signed out: all fail, none posted
+test("device_harvest posts each submitted entry once; signed out, none", async () => {
+  const posted: any[] = [];
+  const h: Device.Posts = {
+    creds: async () => ({ token: "t", account: "1" }),
+    post: async (_c, e) => {
+      posted.push(e);
+      if (e.hours === 3) {
+        throw new Error("Harvest: HTTP 422.");
+      }
+      return { id: 100 + posted.length };
+    },
+  };
+  const e = { project_id: 7, task_id: 70, date: "2026-11-12", hours: 1, notes: "x" };
+  const out = await Device.device_harvest("h2", [{ n: 1, ...e }, { n: 4, ...e, hours: 3 }, { n: 5, ...e, hours: 99 }, "junk"] as any, h);
+  expect(out).toEqual({ $: "harvested", id: "h2", results: [{ n: 1, id: 101 }, { n: 4, error: "Harvest: HTTP 422." }, { n: 5, error: expect.stringContaining("hours") }] });
+  expect(posted.map((p) => p.hours)).toEqual([1, 3]);
+  const none = await Device.device_harvest("h3", [{ n: 1, ...e }], { ...h, creds: async () => { throw new Error("not signed in to Harvest: legion harvest-login"); } });
+  expect(none).toEqual({ $: "harvested", id: "h3", results: [{ n: 1, error: "not signed in to Harvest: legion harvest-login" }] });
+  expect(posted).toHaveLength(2);
+});
+
 // the files pane and git tab (K4, Terax-like, read-only): a device shows a
 // file or a repo's git only under its roots (its work dir, home repo,
 // spaces), symlinks followed first; never a secret's file, a binary or one

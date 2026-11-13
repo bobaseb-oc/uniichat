@@ -79,6 +79,7 @@ export type State = {
   plan?     : { text: string; date: string } | null; // the orchestrator's plan waiting for the user's yes
   trouble?  : string | null; // why the last summary failed and asks again (Memory's trouble)
   routines? : Routine[];     // the user's (Routines.ts)
+  drafts?   : Draft[];       // the timesheet's drafts (K5: Tools.timesheet)
 };
 
 // an agent of the chat, at work or done (till dismissed): who started it
@@ -96,6 +97,12 @@ export type DeviceStatus = { device: string; dir: string; branch: string | null;
 // a question the orchestrator asked the user (Tools.question), open till
 // answered or dismissed: its number, its text, answers it offers, the
 // chat message count when asked, when
+// a timesheet entry an agent drafted (Tools.timesheet; K5, RED ZONE): its
+// number, Harvest's ids and names, date, hours, notes, why (its evidence),
+// who drafted it; draft, sending (the user submitted it), sent (its
+// Harvest id) or failed (why)
+export type Draft = { n: number; project_id: number; task_id: number; project: string; task: string; date: string; hours: number; notes: string; why: string; by: string; state: "draft" | "sending" | "sent" | "failed"; harvest?: number; error?: string };
+
 export type Question = { id: number; text: string; options?: string[]; at: number; date: string; fyi?: true }; // fyi: a note (notify), no answer awaited
 
 // an item of an agent's checklist (Tools.todo): what, and how far
@@ -126,7 +133,7 @@ export type TreeRow = CrewRow & { kids: number; rollup: string; open: boolean };
 export type Mode = "chat" | "crew" | Deck;
 // the cockpit's pages (Cockpit.ts, web/src/Pages.ts): #home, #inbox, ...
 // (not "Page": an agent's page is)
-export const PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files"] as const;
+export const PAGES = ["home", "inbox", "routines", "digest", "transcripts", "files", "timesheet"] as const;
 export type Deck = (typeof PAGES)[number];
 
 // a tile of the Crew grid: an agent Unii started, a dot per agent under
@@ -190,11 +197,13 @@ export type Server =
   | { $: "read"; id: string }             // to devices: read that transcript Doc (Device.device_transcript)
   | { $: "summary"; id: string; summary: Summary } // a transcript's summary (Chat.transcript)
   | { $: "look"; id: string; what: Look }  // to devices: show a file or a repo's git (Device.device_look)
+  | { $: "harvest"; id: string; entries: unknown[] } // to one device: post the user's submitted timesheet entries (Device.device_harvest)
   | Looked;                                 // to views: what a device showed
 
 // the files pane and git tab (K4): what a view asks a device to show, and
 // what it showed (or why not)
 export type Look = { kind: "file"; path: string; agent?: string } | { kind: "git"; repo: string; op: string; rev?: string };
+export type Harvested = { n: number; id?: number; error?: string };
 export type Looked = { $: "looked"; id: string; kind: "file" | "git"; path?: string; op?: string; text?: string; error?: string };
 
 // a message a person sends: its text, its images
@@ -236,6 +245,8 @@ export type Client =
   | { $: "themes" } // the digest's merged PRs summarized by theme
   | { $: "transcript"; id: string; text?: string; error?: string } // a view: that transcript summarized; a device: its text, or why not
   | { $: "look"; what: Look } // a view: show a file or a repo's git (a device shows it)
+  | { $: "timesheet"; op: "submit" | "drop"; ns: number[] } // a view: the user's Submit (or drop) of timesheet drafts
+  | { $: "harvested"; id: string; results: Harvested[] } // a device: each submitted entry's Harvest id, or why not
   | Looked // a device: what it showed
   | { $: "routine"; op: "add"; routine: Given } // a routine added (Routines.ts)
   | { $: "routine"; op: "toggle"; n: number; on: boolean } // routine n on or off
@@ -289,6 +300,7 @@ export type Act =
   | { $: "Themes" }                             // the digest summarized by theme
   | { $: "Transcript"; id: string }             // a meeting transcript summarized
   | { $: "Look"; what: Look }                    // a file or a repo's git shown (the files pane)
+  | { $: "Timesheet"; op: "submit" | "drop"; ns: number[] } // timesheet drafts submitted to Harvest, or dropped (K5)
 
 // what a page draws, top to bottom
 export type Row =
@@ -464,7 +476,8 @@ export function view_hear(v: View, msg: Server): Client[] {
       v.looked = msg;
       return [];
     }
-    case "look": {
+    case "look":
+    case "harvest": {
       return [];
     }
     case "summary": {
@@ -668,6 +681,9 @@ export function view_act(v: View, act: Act): Client[] {
     }
     case "Look": {
       return [{ $: "look", what: act.what }];
+    }
+    case "Timesheet": {
+      return act.ns.length === 0 ? [] : [{ $: "timesheet", op: act.op, ns: act.ns }];
     }
     case "Transcript": {
       return [{ $: "transcript", id: act.id }];
@@ -1162,7 +1178,7 @@ export function view_path(text: string): string | null {
 
 // the web's route by its hash, and back
 export function view_route(hash: string): Route {
-  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files)(?:\/(.+))?$/.exec(hash);
+  const m = /^#(chat|crew|home|inbox|routines|digest|transcripts|files|timesheet)(?:\/(.+))?$/.exec(hash);
   if (m === null || m[1] === "chat") {
     return { mode: "chat", name: null };
   }

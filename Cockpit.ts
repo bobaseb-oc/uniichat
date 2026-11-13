@@ -285,6 +285,7 @@ const PAGE_ITEMS: Item[] = [
   { label: "Digest", hint: "page · g d", go: { href: "#digest" } },
   { label: "Transcripts", hint: "page · g t", go: { href: "#transcripts" } },
   { label: "Files", hint: "page · g f", go: { href: "#files" } },
+  { label: "Timesheet", hint: "page · g s", go: { href: "#timesheet" } },
   { label: "New agent…", hint: "command · /agent", go: { cmd: "new-agent" } },
   { label: "Refresh the inbox", hint: "command", go: { act: { $: "Fetch" } } },
   { label: "Focus", hint: "command · hide the side columns", go: { cmd: "focus" } },
