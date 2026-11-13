@@ -525,16 +525,95 @@ var DOTS = String.raw`\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|\.clau
 var DIRS = String.raw`\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.azure|\.config\/(gh|gcloud)|Library\/Keychains`;
 var SECRET = new RegExp(String.raw`^(\.env.*|.*\.(pem|key|p12|pfx|keychain)|id_[a-z0-9]+|${DOTS}|credentials.*|\.credentials.*|secrets?(\..*)?|tokens?|.*(credential|service[-_]?account|secret|token).*\.json|(.*[-_.])?keys?([-_.].*)?\.json)$`, "i");
 var SECRET_AT = new RegExp(String.raw`(^|\/)(${DIRS})(\/|$)|\/\.git\/config$`, "i");
-var SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\bset\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
+var SECRETS = new RegExp(String.raw`printenv|environ|\benv\b|\.env|(${DIRS})\b|${DOTS}|\.git\/config|secret|credential|token|passw|keychain|\.pem\b|\bid_[a-z0-9]+`, "i");
 var PLAIN = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "du", "df", "which", "diff", "cut", "jq", "basename", "dirname", "realpath", "true", "grep", "egrep", "fgrep", "nl", "whoami", "printenv", "tr", "column", "comm"]);
 var GIT = new Set(["status", "log", "diff", "show", "branch", "rev-parse", "ls-files", "blame", "grep", "describe", "shortlog", "ls-tree", "cat-file", "reflog", "tag"]);
 var GIT_WRITES = ["--delete", "--move", "--copy", "--force", "--set-upstream-to", "--unset-upstream", "--edit-description", "--annotate", "--sign"];
 var GIT_SHORTS = /^-[A-Za-z]*[dDmMcCfuas]/;
-var GH = { pr: ["view", "diff", "checks", "list"], issue: ["view", "list"], repo: ["view"] };
+var GH = {
+  pr: ["view", "list", "diff", "checks", "status"],
+  issue: ["view", "list", "status"],
+  repo: ["view", "list"],
+  run: ["view", "list"],
+  workflow: ["view", "list"],
+  release: ["view", "list"],
+  search: ["prs", "issues", "repos", "code", "commits"],
+  auth: ["status"]
+};
 var HOME_WIDE = /^(~\/?|\$HOME\/?|\$\{HOME\}\/?|\/|\/Users(\/[^\/]+)?\/?)$/;
 var GH_REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
-var GH_FLAGS = new Set(["--repo", "-R", "--json", "--jq", "-q", "--template", "-t", "--comments", "-c", "--name-only", "--patch", "--color", "--limit", "-L", "--state", "-s", "--author", "-A", "--label", "-l", "--base", "-B", "--head", "-H", "--search", "-S", "--assignee", "-a", "--branch", "-b", "--required", "--draft", "-d", "--app", "--mention", "--milestone", "-m"]);
+var GH_FLAGS = new Set([
+  "--repo",
+  "-R",
+  "--json",
+  "--jq",
+  "-q",
+  "--template",
+  "-t",
+  "--comments",
+  "-c",
+  "--name-only",
+  "--patch",
+  "--color",
+  "--limit",
+  "-L",
+  "--state",
+  "-s",
+  "--author",
+  "-A",
+  "--label",
+  "-l",
+  "--base",
+  "-B",
+  "--head",
+  "-H",
+  "--search",
+  "-S",
+  "--assignee",
+  "-a",
+  "--branch",
+  "-b",
+  "--required",
+  "--draft",
+  "-d",
+  "--app",
+  "--mention",
+  "--milestone",
+  "-m",
+  "--log",
+  "--log-failed",
+  "--job",
+  "-j",
+  "--exit-status",
+  "--attempt",
+  "--verbose",
+  "--workflow",
+  "--event",
+  "--status",
+  "--user",
+  "--commit",
+  "--created",
+  "--owner",
+  "--language",
+  "--sort",
+  "--order",
+  "--match",
+  "--updated",
+  "--visibility",
+  "--topic",
+  "--archived",
+  "--no-archived",
+  "--fork",
+  "--source",
+  "--exclude-drafts",
+  "--exclude-pre-releases",
+  "--all",
+  "--yaml",
+  "--ref"
+]);
 var GH_API = new Set(["--paginate", "--jq", "-q", "--template", "-t", "--include", "-i", "--silent", "--slurp", "--verbose"]);
+var PROTECTED = /^(main|master|develop|trunk|HEAD|gh-pages|release(\/.*)?|\d+(\.\d+)*\.x)$/;
+var PUSH_FLAGS = new Set(["-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose"]);
 var FIND_WRITES = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]);
 var Modes;
 ((Modes2) => {
@@ -558,6 +637,7 @@ var Modes;
     return why + ": " + tool + " can change things. " + AFTER;
   }
   Modes2.allows = allows;
+  const MCP_FILE = /file|path|dir/i;
   Modes2.MCP_READS = [
     ...["getJiraIssue", "searchJiraIssuesUsingJql", "listJiraIssueComments", "getConfluenceContent", "searchConfluence", "search", "getAccessibleAtlassianResources", "atlassianUserInfo"].map((t) => "mcp__atlassian__" + t),
     ...["browser_snapshot", "browser_console_messages", "browser_network_requests"].map((t) => "mcp__playwright__" + t),
@@ -568,13 +648,13 @@ var Modes;
       return false;
     }
     if (tool.startsWith("mcp__")) {
-      return /_[0-9a-f]{8}$/.test(tool) || !(Modes2.MCP_READS.includes(tool) || reads.includes(tool));
+      return /_[0-9a-f]{8}$/.test(tool) || Object.keys(input ?? {}).some((k) => MCP_FILE.test(k)) || !(Modes2.MCP_READS.includes(tool) || reads.includes(tool));
     }
     if (!REVIEWED.includes(tool)) {
       return false;
     }
     const command = tool === "shell" && typeof input?.command === "string" ? input.command : null;
-    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || Modes.readonly(command) !== null) {
+    if (command === null || /[^\x00-\x7f]/.test(command) || SECRETS.test(command) || Modes.readonly(command) !== null && !Modes.feature_push(command)) {
       return true;
     }
     const lexed = lex(command);
@@ -698,6 +778,13 @@ var Modes;
     if (group === "api") {
       for (let k = 1;k < args.length; k++) {
         const a = args[k];
+        const header = a === "-H" || a === "--header" ? args[++k] ?? "" : /^(?:-H|--header=)(.+)$/.exec(a)?.[1];
+        if (header !== undefined) {
+          if (!/^\s*accept\s*:/i.test(header)) {
+            return "gh api -H other than Accept (" + header + ")";
+          }
+          continue;
+        }
         const method = a === "-X" || a === "--method" ? args[++k] : /^(-X|--method=)(.*)$/.exec(a)?.[2];
         if (method !== undefined ? method.toUpperCase() !== "GET" : a.startsWith("-") ? !GH_API.has(a.split("=")[0]) : a.includes("://")) {
           return "gh api other than a GET of a path on GitHub (" + a + ")";
@@ -705,8 +792,11 @@ var Modes;
       }
       return null;
     }
-    if (!GH[group]?.includes(sub)) {
+    if (!Object.hasOwn(GH, group) || !GH[group].includes(sub)) {
       return "gh " + [group, sub].join(" ").trim() + " is not one that only reads";
+    }
+    if (group === "auth" && rest.length > 0) {
+      return "gh auth status takes no flag here (-t prints the token)";
     }
     const bad = rest.find((a) => a.startsWith("-") && !GH_FLAGS.has(a.split("=")[0]));
     if (bad !== undefined) {
@@ -721,6 +811,24 @@ var Modes;
     }
     return null;
   }
+  function feature_push(command) {
+    const lexed = lex(command);
+    if (typeof lexed === "string" || lexed.length !== 1) {
+      return false;
+    }
+    const [git, push, ...rest] = lexed[0];
+    if (git !== "git" || push !== "push") {
+      return false;
+    }
+    const flags = rest.filter((a) => a.startsWith("-"));
+    const places = rest.filter((a) => !a.startsWith("-"));
+    if (flags.some((f) => !PUSH_FLAGS.has(f)) || places.length !== 2 || places[0] !== "origin") {
+      return false;
+    }
+    const branch = /^(?:HEAD:)?([\w./-]+)$/.exec(places[1])?.[1];
+    return branch !== undefined && !PROTECTED.test(branch) && !branch.startsWith("-") && !branch.includes("..");
+  }
+  Modes2.feature_push = feature_push;
   function check(words) {
     const [cmd, ...args] = words;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cmd)) {
@@ -748,6 +856,9 @@ var Modes;
       case "rg": {
         return args.some((a) => a === "--pre" || a.startsWith("--pre=") || a === "--pre-glob" || a.startsWith("--pre-glob=")) ? "rg --pre runs another program" : null;
       }
+      case "gh": {
+        return gh(args);
+      }
       case "find": {
         const act = args.find((a) => FIND_WRITES.has(a));
         return act === undefined ? null : "find " + act + " writes or runs";
@@ -756,6 +867,9 @@ var Modes;
         const sub = args[0];
         if (sub === undefined || sub.startsWith("-")) {
           return "git with options before its subcommand";
+        }
+        if (sub === "fetch") {
+          return args.some((a) => long(a, ["--upload-pack"])) ? "git fetch --upload-pack runs another program" : null;
         }
         if (!GIT.has(sub)) {
           return "git " + sub + " is not one that only reads";
@@ -771,9 +885,6 @@ var Modes;
           return "git " + sub + " that makes, moves or deletes one";
         }
         return null;
-      }
-      case "gh": {
-        return gh(args);
       }
       default: {
         return cmd + " is not on plan mode's read-only list";
@@ -2782,8 +2893,22 @@ function home_html(v, now) {
   const next = up_next(v, now.getTime());
   const meet = (url) => url === "" ? "" : `<a class="pbtn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Join</a>`;
   const upnext = `<section><h3>Up next</h3>${v.inbox?.google ? next.map((e) => `<div class="next"><span class="when">${esc(e.time)}<span class="meta">${e.day}</span></span><span class="t">${esc(e.title)}</span>${meet(e.meet)}</div>`).join("") || `<p class="meta">Nothing coming up.</p>` : `<p class="meta">${esc(signed !== undefined ? signed.replace(/^google: /, "Google: ") : "Calendar: run legion google-login on your device.")}</p>`}</section>`;
-  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
+  const side = `<div class="hside">${upnext}<section><h3>Apps</h3>${app("#inbox", "Inbox", apps.inbox)}${app("#chat", "Questions", apps.questions)}${app("#routines", "Routines", apps.routines)}${app("#transcripts", "Transcripts", String(v.inbox?.google?.docs.length ?? 0) + " in 14 days")}` + `${app("#digest", "Digest", String(v.inbox?.digest?.merged.length ?? 0) + " merged this week")}${app("#files", "Files", files_line(v))}${app("#timesheet", "Timesheet", sheet_line(v))}</section>` + `<section><h3>Activity</h3>${home_activity(v).map((n) => `<a class="act" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer"><span class="mk">${KIND_MARK[n.kind]}</span><span class="t">${esc(n.title)}</span><span class="meta">${esc(n.repo)}</span></a>`).join("") || `<p class="meta">Nothing yet.</p>`}</section></div>`;
   return [head, stats, `<div class="hcols"><div class="hmain">${group("Working", working, false)}${group("Done", done, true)}${empty}</div>${side}</div>`];
+}
+function with_files(v) {
+  return v.crew.filter((c) => (c.files ?? []).length > 0).length;
+}
+function drafts_open(v) {
+  return (v.drafts ?? []).filter((d) => d.state === "draft" || d.state === "failed").length;
+}
+function files_line(v) {
+  const n = with_files(v);
+  return n === 0 ? "what agents read and change" : n + (n === 1 ? " agent's" : " agents'") + " files";
+}
+function sheet_line(v) {
+  const n = drafts_open(v);
+  return n === 0 ? "Harvest drafts" : n + (n === 1 ? " draft" : " drafts") + " to review";
 }
 var SPACES = 12;
 var MARK = { asking: "?", failed: "✗", working: "●", waiting: "◐", stopped: "■", done: "✓" };
@@ -2798,7 +2923,9 @@ function side_html(v, mode, now) {
     ["crew", "Crew", working],
     ["routines", "Routines", (v.routines ?? []).filter((r) => r.on).length],
     ["digest", "Digest", 0],
-    ["transcripts", "Transcripts", 0]
+    ["transcripts", "Transcripts", 0],
+    ["files", "Files", with_files(v)],
+    ["timesheet", "Timesheet", drafts_open(v)]
   ];
   const nav = `<nav class="spages">${pages.map(([m, label, k]) => `<a href="#${m}"${here(m)}>${label}${n(k)}</a>`).join("")}</nav>`;
   const search = `<button class="ssearch" data-palette title="⌘K or Ctrl+P">Search or run… <kbd>⌘K</kbd></button>`;
