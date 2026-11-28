@@ -4386,8 +4386,8 @@ function directives_html(note) {
   if (note === undefined) {
     return `<section class="mdirs">${head}<p class="meta">None kept yet: tell Legion in the chat to keep one as a standing directive.</p></section>`;
   }
-  const rows = directive_lines(note.text).map((d, k) => `<form class="mdir" data-n="${k}"><input name="d" value="${esc2(d)}" aria-label="directive ${k + 1}">` + `<button type="submit" class="pbtn">Save</button><button type="submit" name="drop" value="1" class="pbtn">Delete</button></form>`).join("");
-  const add = `<form class="mdir-add"><input name="d" placeholder="A new standing directive" aria-label="a new standing directive"><button type="submit" class="pbtn">Add</button></form>`;
+  const rows = directive_lines(note.text).map((d, k) => `<form class="mdir" data-n="${k}"><textarea name="d" data-keep="dir-${k}" rows="3" aria-label="directive ${k + 1}">${esc2(d)}</textarea>` + `<div class="acts"><button type="submit" class="pbtn">Save</button><button type="submit" name="drop" value="1" class="pbtn">Delete</button></div></form>`).join("");
+  const add = `<form class="mdir-add"><textarea name="d" data-keep="dir-add" rows="2" placeholder="A new standing directive" aria-label="a new standing directive"></textarea><div class="acts"><button type="submit" class="pbtn">Add</button></div></form>`;
   return `<section class="mdirs">${head}${rows || `<p class="meta">No directives in the note.</p>`}${add}</section>`;
 }
 function marked(text, q) {
@@ -5861,7 +5861,7 @@ function directive_edit(ev) {
     return;
   }
   ev.preventDefault();
-  const text = form.querySelector("input")?.value ?? "";
+  const text = form.querySelector("textarea")?.value ?? "";
   const op = form.classList.contains("mdir-add") ? { add: text } : ev.submitter?.name === "drop" ? { n: Number(form.dataset.n), drop: true } : { n: Number(form.dataset.n), text };
   const next = directives_edit(note.text, op);
   if (next !== note.text) {
