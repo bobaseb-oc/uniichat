@@ -1815,7 +1815,7 @@ function directive_edit(ev: SubmitEvent): void {
     return;
   }
   ev.preventDefault();
-  const text = form.querySelector("input")?.value ?? "";
+  const text = form.querySelector("textarea")?.value ?? "";
   const op: Pages.DirectiveOp = form.classList.contains("mdir-add") ? { add: text }
     : (ev.submitter as HTMLButtonElement | null)?.name === "drop" ? { n: Number(form.dataset.n), drop: true }
     : { n: Number(form.dataset.n), text };

@@ -755,7 +755,9 @@ test("directives: one row per line of the note, each an edit box and a Delete, a
   const html = Pages.memory_html(v).join("");
   expect(html).toMatch(/>Standing directives</);
   expect(html.match(/<form class="mdir" data-n="\d+"/g)?.length).toBe(2);
-  expect(html).toContain('value="Open PRs by default"');
+  // a box as the Notes' (2026-11-28): a long directive shows whole, not cut to one line
+  expect(html).toContain('<textarea name="d" data-keep="dir-0" rows="3" aria-label="directive 1">Open PRs by default</textarea>');
+  expect(html).not.toContain('<input name="d" value=');
   expect(html).toContain("Never &lt;b&gt;overrule&lt;/b&gt; a refused write");
   expect(html).not.toContain("<b>overrule");
   expect(html).toContain('<form class="mdir-add"');

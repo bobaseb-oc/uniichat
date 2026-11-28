@@ -665,7 +665,8 @@ export function memory_html(v: View.View): string[] {
 // -------------------
 // Legion's standing orders: the note Directives.NAME, a line each (its
 // "- " lines), listed on the Memory page (user's ask 2026-11-27), each an
-// edit box (emptied, it drops) and a Delete, then an Add box. main.ts
+// edit box as the Notes' (2026-11-28: a long one shows whole; emptied, it
+// drops) and a Delete, then an Add box. main.ts
 // (directive_edit) saves the whole note through the Note act, as the
 // Notes section's Edit; only Legion makes a note (Chat.noted), so with
 // none kept there's nothing to add to
@@ -714,9 +715,9 @@ function directives_html(note: Note | undefined): string {
   if (note === undefined) {
     return `<section class="mdirs">${head}<p class="meta">None kept yet: tell Legion in the chat to keep one as a standing directive.</p></section>`;
   }
-  const rows = directive_lines(note.text).map((d, k) => `<form class="mdir" data-n="${k}"><input name="d" value="${esc(d)}" aria-label="directive ${k + 1}">`
-    + `<button type="submit" class="pbtn">Save</button><button type="submit" name="drop" value="1" class="pbtn">Delete</button></form>`).join("");
-  const add = `<form class="mdir-add"><input name="d" placeholder="A new standing directive" aria-label="a new standing directive"><button type="submit" class="pbtn">Add</button></form>`;
+  const rows = directive_lines(note.text).map((d, k) => `<form class="mdir" data-n="${k}"><textarea name="d" data-keep="dir-${k}" rows="3" aria-label="directive ${k + 1}">${esc(d)}</textarea>`
+    + `<div class="acts"><button type="submit" class="pbtn">Save</button><button type="submit" name="drop" value="1" class="pbtn">Delete</button></div></form>`).join("");
+  const add = `<form class="mdir-add"><textarea name="d" data-keep="dir-add" rows="2" placeholder="A new standing directive" aria-label="a new standing directive"></textarea><div class="acts"><button type="submit" class="pbtn">Add</button></div></form>`;
   return `<section class="mdirs">${head}${rows || `<p class="meta">No directives in the note.</p>`}${add}</section>`;
 }
 
